@@ -1,0 +1,299 @@
+import createClient from "openapi-fetch";
+
+import { authenticatedFetch, authenticatedHeaders } from "./auth";
+import { ApiError, apiErrorFromResponse, errorFromFetchResponse, toApiError } from "./error";
+import type { components, paths } from "./schema";
+
+export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+export type Paper = components["schemas"]["PaperSummary"];
+export type Citation = components["schemas"]["Citation"];
+export type SearchRequest = components["schemas"]["SearchRequest"];
+export type UploadResult = components["schemas"]["UploadResult"];
+export type CompareRow = components["schemas"]["ComparisonRow"];
+export type Gap = components["schemas"]["ResearchGap"];
+export type Chunk = components["schemas"]["Chunk"];
+export type PaperDetail = components["schemas"]["PaperDetail"];
+export type PaperPage = components["schemas"]["PaperPage"];
+export type Me = components["schemas"]["MeResponse"];
+export type Workspace = components["schemas"]["Workspace"];
+export type Tag = components["schemas"]["Tag"];
+export type Note = components["schemas"]["Note"];
+export type SearchHistory = components["schemas"]["SearchHistory"];
+export type SavedComparison = components["schemas"]["SavedComparison"];
+export type ExportFormat = "bibtex" | "ris" | "csv";
+export type IngestionJob = components["schemas"]["IngestionJob"];
+export type DocumentElement = components["schemas"]["DocumentElement"];
+
+const api = createClient<paths>({ baseUrl: API_BASE_URL, credentials: "include", fetch: authenticatedFetch });
+
+type ApiResult<T> = { data?: T; error?: unknown; response: Response };
+
+async function unwrap<T>(result: ApiResult<T>, fallback: string): Promise<T> {
+  if (result.error !== undefined || !result.response.ok) {
+    throw apiErrorFromResponse(result.response, result.error, fallback);
+  }
+  if (result.data === undefined) {
+    throw toApiError(new Error("APIレスポンスが空です"), fallback);
+  }
+  return result.data;
+}
+
+export async function getMe(signal?: AbortSignal): Promise<Me> {
+  const result = await api.GET("/api/me", { signal });
+  return unwrap(result, "ユーザー情報を取得できませんでした");
+}
+
+export async function listWorkspaces(signal?: AbortSignal): Promise<Workspace[]> {
+  const result = await api.GET("/api/workspaces", { signal });
+  return unwrap(result, "ワークスペース一覧を取得できませんでした");
+}
+
+export async function createWorkspace(name: string, signal?: AbortSignal): Promise<Workspace> {
+  const result = await api.POST("/api/workspaces", { body: { name }, signal });
+  return unwrap(result, "ワークスペースを作成できませんでした");
+}
+
+export async function listPapers(signal?: AbortSignal): Promise<Paper[]> {
+  const result = await api.GET("/api/papers", { signal });
+  return unwrap(result, "論文一覧を取得できませんでした");
+}
+
+export async function getPaperDetail(paperId: string, signal?: AbortSignal): Promise<PaperDetail> {
+  const result = await api.GET("/api/papers/{paper_id}", {
+    params: { path: { paper_id: paperId } },
+    signal,
+  });
+  return unwrap(result, "論文詳細を取得できませんでした");
+}
+
+export async function getPaperPage(paperId: string, page: number, signal?: AbortSignal): Promise<PaperPage> {
+  const result = await api.GET("/api/papers/{paper_id}/pages/{page}", {
+    params: { path: { paper_id: paperId, page } },
+    signal,
+  });
+  return unwrap(result, "ページの根拠を取得できませんでした");
+}
+
+export async function getPaperChunk(paperId: string, chunkId: string, signal?: AbortSignal): Promise<Chunk> {
+  const result = await api.GET("/api/papers/{paper_id}/chunks/{chunk_id}", {
+    params: { path: { paper_id: paperId, chunk_id: chunkId } },
+    signal,
+  });
+  return unwrap(result, "引用箇所を取得できませんでした");
+}
+
+export async function getPaperFile(paperId: string, signal?: AbortSignal): Promise<Blob> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/api/papers/${encodeURIComponent(paperId)}/file`, {
+      headers: authenticatedHeaders(), credentials: "include", signal,
+    });
+  } catch (error) { throw toApiError(error, "原本ファイルを取得できませんでした"); }
+  if (!response.ok) throw await errorFromFetchResponse(response, "原本ファイルを取得できませんでした");
+  return response.blob();
+}
+
+export async function getJob(jobId: string, signal?: AbortSignal): Promise<IngestionJob> {
+  return unwrap(await api.GET("/api/jobs/{job_id}", { params: { path: { job_id: jobId } }, signal }), "取り込み状況を取得できませんでした");
+}
+
+export async function pollIngestionJob(jobId: string, signal: AbortSignal, onUpdate?: (job: IngestionJob) => void, timeoutMs = 180_000): Promise<IngestionJob> {
+  const startedAt = Date.now(); let delayMs = 1_000;
+  while (true) {
+    if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+    const job = await getJob(jobId, signal); onUpdate?.(job);
+    if (job.status === "succeeded" || job.status === "failed") return job;
+    if (Date.now() - startedAt >= timeoutMs) {
+      throw new ApiError("論文解析がタイムアウトしました。後で一覧を再読み込みしてください。", { code: "job_timeout" });
+    }
+    await new Promise<void>((resolve, reject) => {
+      const timer = window.setTimeout(resolve, delayMs);
+      signal.addEventListener("abort", () => { window.clearTimeout(timer); reject(new DOMException("Aborted", "AbortError")); }, { once: true });
+    });
+    delayMs = Math.min(2_000, Math.round(delayMs * 1.35));
+  }
+}
+
+export async function listAssets(paperId: string, signal?: AbortSignal): Promise<DocumentElement[]> {
+  return unwrap(await api.GET("/api/papers/{paper_id}/assets", { params: { path: { paper_id: paperId } }, signal }), "文書要素を取得できませんでした");
+}
+
+export async function getAssetFile(paperId: string, elementId: string, signal?: AbortSignal): Promise<Blob> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/api/papers/${encodeURIComponent(paperId)}/assets/${encodeURIComponent(elementId)}/file`, {
+      headers: authenticatedHeaders(), credentials: "include", signal,
+    });
+  } catch (error) { throw toApiError(error, "図版を取得できませんでした"); }
+  if (!response.ok) throw await errorFromFetchResponse(response, "図版を取得できませんでした");
+  return response.blob();
+}
+
+function isUploadResult(value: unknown): value is UploadResult {
+  if (!value || typeof value !== "object") return false;
+  const item = value as Partial<UploadResult>;
+  return typeof item.filename === "string" && typeof item.success === "boolean" && typeof item.status === "string";
+}
+
+export async function uploadPapers(files: File[], signal?: AbortSignal): Promise<UploadResult[]> {
+  const form = new FormData();
+  files.forEach(file => form.append("files", file));
+
+  const result = await api.POST("/api/papers/upload", {
+    body: { files: files.map(file => file.name) },
+    bodySerializer: () => form,
+    signal,
+  });
+  const payload = await unwrap(result, "論文をアップロードできませんでした");
+  const unknownPayload: unknown = payload;
+
+  // The compatibility branch can be removed after every deployed backend uses UploadResult.
+  if (Array.isArray(unknownPayload) && unknownPayload.every(isUploadResult)) return unknownPayload;
+  if (Array.isArray(unknownPayload)) {
+    return unknownPayload.map((paper: unknown, index: number) => ({
+      filename: files[index]?.name ?? `file-${index + 1}`,
+      success: true,
+      status: "ready",
+      paper: paper as Paper,
+      error: null,
+      duplicate: false,
+    }));
+  }
+  throw toApiError(new Error("アップロード結果の形式が不正です"));
+}
+
+export async function addExternalPaper(identifier: string, signal?: AbortSignal): Promise<Paper> {
+  const result = await api.POST("/api/papers/external", {
+    body: { identifier, title: null, authors: [], year: null, abstract: "" },
+    signal,
+  });
+  return unwrap(result, "外部論文を取得できませんでした");
+}
+
+export async function deletePaper(paperId: string, signal?: AbortSignal): Promise<void> {
+  const result = await api.DELETE("/api/papers/{paper_id}", {
+    params: { path: { paper_id: paperId } },
+    signal,
+  });
+  if (result.error !== undefined || !result.response.ok) {
+    throw apiErrorFromResponse(result.response, result.error, "論文を削除できませんでした");
+  }
+}
+
+function isCompareRow(value: unknown): value is CompareRow {
+  if (!value || typeof value !== "object") return false;
+  const row = value as Partial<CompareRow>;
+  return [row.paper_id, row.title, row.purpose, row.method, row.results, row.limitations]
+    .every(item => typeof item === "string");
+}
+
+function isGap(value: unknown): value is Gap {
+  if (!value || typeof value !== "object") return false;
+  const gap = value as Partial<Gap>;
+  return [gap.paper_id, gap.paper_title, gap.page, gap.gap, gap.opportunity]
+    .every(item => typeof item === "string");
+}
+
+export async function comparePapers(paperIds: string[], signal?: AbortSignal): Promise<CompareRow[]> {
+  const result = await api.POST("/api/analysis/compare", {
+    body: { paper_ids: paperIds },
+    signal,
+  });
+  const payload = await unwrap(result, "論文比較に失敗しました");
+  if (!Array.isArray(payload) || !payload.every(isCompareRow)) {
+    throw toApiError(new Error("論文比較のレスポンス形式が不正です"));
+  }
+  return payload;
+}
+
+export async function findResearchGaps(paperIds: string[], signal?: AbortSignal): Promise<Gap[]> {
+  const result = await api.POST("/api/analysis/gaps", {
+    body: { paper_ids: paperIds },
+    signal,
+  });
+  const payload = await unwrap(result, "リサーチギャップ分析に失敗しました");
+  if (!Array.isArray(payload) || !payload.every(isGap)) {
+    throw toApiError(new Error("リサーチギャップのレスポンス形式が不正です"));
+  }
+  return payload;
+}
+
+async function expectNoContent(result: { error?: unknown; response: Response }, fallback: string): Promise<void> {
+  if (result.error !== undefined || !result.response.ok) {
+    throw apiErrorFromResponse(result.response, result.error, fallback);
+  }
+}
+
+export async function listTags(signal?: AbortSignal): Promise<Tag[]> {
+  return unwrap(await api.GET("/api/tags", { signal }), "タグ一覧を取得できませんでした");
+}
+
+export async function createTag(name: string, color: string, signal?: AbortSignal): Promise<Tag> {
+  return unwrap(await api.POST("/api/tags", { body: { name, color }, signal }), "タグを作成できませんでした");
+}
+
+export async function updateTag(tagId: string, name: string, color: string, signal?: AbortSignal): Promise<Tag> {
+  return unwrap(await api.PUT("/api/tags/{tag_id}", { params: { path: { tag_id: tagId } }, body: { name, color }, signal }), "タグを更新できませんでした");
+}
+
+export async function deleteTag(tagId: string, signal?: AbortSignal): Promise<void> {
+  return expectNoContent(await api.DELETE("/api/tags/{tag_id}", { params: { path: { tag_id: tagId } }, signal }), "タグを削除できませんでした");
+}
+
+export async function getPaperTags(paperId: string, signal?: AbortSignal): Promise<Tag[]> {
+  return unwrap(await api.GET("/api/papers/{paper_id}/tags", { params: { path: { paper_id: paperId } }, signal }), "論文タグを取得できませんでした");
+}
+
+export async function setPaperTags(paperId: string, tagIds: string[], signal?: AbortSignal): Promise<Tag[]> {
+  return unwrap(await api.PUT("/api/papers/{paper_id}/tags", { params: { path: { paper_id: paperId } }, body: { tag_ids: tagIds }, signal }), "論文タグを更新できませんでした");
+}
+
+export async function listNotes(paperId?: string, signal?: AbortSignal): Promise<Note[]> {
+  return unwrap(await api.GET("/api/notes", { params: { query: { paper_id: paperId } }, signal }), "ノートを取得できませんでした");
+}
+
+export async function createNote(paperId: string | null, title: string, content: string, signal?: AbortSignal): Promise<Note> {
+  return unwrap(await api.POST("/api/notes", { body: { paper_id: paperId, title, content }, signal }), "ノートを作成できませんでした");
+}
+
+export async function updateNote(noteId: string, title: string, content: string, signal?: AbortSignal): Promise<Note> {
+  return unwrap(await api.PATCH("/api/notes/{note_id}", { params: { path: { note_id: noteId } }, body: { title, content }, signal }), "ノートを更新できませんでした");
+}
+
+export async function deleteNote(noteId: string, signal?: AbortSignal): Promise<void> {
+  return expectNoContent(await api.DELETE("/api/notes/{note_id}", { params: { path: { note_id: noteId } }, signal }), "ノートを削除できませんでした");
+}
+
+export async function listSearchHistory(signal?: AbortSignal): Promise<SearchHistory[]> {
+  return unwrap(await api.GET("/api/search/history", { signal }), "検索履歴を取得できませんでした");
+}
+
+export async function deleteSearchHistory(historyId: string, signal?: AbortSignal): Promise<void> {
+  return expectNoContent(await api.DELETE("/api/search/history/{history_id}", { params: { path: { history_id: historyId } }, signal }), "検索履歴を削除できませんでした");
+}
+
+export async function listSavedComparisons(signal?: AbortSignal): Promise<SavedComparison[]> {
+  return unwrap(await api.GET("/api/comparisons", { signal }), "保存済み比較を取得できませんでした");
+}
+
+export async function saveComparison(name: string, paperIds: string[], signal?: AbortSignal): Promise<SavedComparison> {
+  return unwrap(await api.POST("/api/comparisons", { body: { name, paper_ids: paperIds }, signal }), "比較を保存できませんでした");
+}
+
+export async function deleteSavedComparison(comparisonId: string, signal?: AbortSignal): Promise<void> {
+  return expectNoContent(await api.DELETE("/api/comparisons/{comparison_id}", { params: { path: { comparison_id: comparisonId } }, signal }), "保存済み比較を削除できませんでした");
+}
+
+export async function exportPapers(format: ExportFormat, paperIds: string[] = [], signal?: AbortSignal): Promise<{ blob: Blob; filename: string }> {
+  const url = new URL(`${API_BASE_URL}/api/exports/papers`);
+  url.searchParams.set("format", format);
+  paperIds.forEach(paperId => url.searchParams.append("paper_ids", paperId));
+  let response: Response;
+  try { response = await fetch(url, { headers: authenticatedHeaders(), credentials: "include", signal }); }
+  catch (error) { throw toApiError(error, "論文をエクスポートできませんでした"); }
+  if (!response.ok) throw await errorFromFetchResponse(response, "論文をエクスポートできませんでした");
+  const disposition = response.headers.get("content-disposition") ?? "";
+  const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] ?? `paperpilot-export.${format === "bibtex" ? "bib" : format}`;
+  return { blob: await response.blob(), filename };
+}

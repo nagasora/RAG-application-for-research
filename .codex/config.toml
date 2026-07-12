@@ -1,0 +1,6 @@
+[agents]
+# ルートを含めて最大4スレッド。独立した調査・実装・検証を並行化する。
+max_threads = 4
+# サブエージェントからの再委譲は許可せず、調整をルートに集約する。
+max_depth = 1
+interrupt_message = true

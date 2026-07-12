@@ -1,0 +1,13 @@
+node_modules/
+.pnpm-store/
+.next/
+*.tsbuildinfo
+__pycache__/
+.pytest_cache/
+*.py[cod]
+.venv/
+.env
+.env.local
+backend/data/**
+!backend/data/.gitkeep
+frontend/package-lock.json

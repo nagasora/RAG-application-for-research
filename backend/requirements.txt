@@ -1,0 +1,16 @@
+fastapi==0.115.12
+uvicorn[standard]==0.34.2
+python-multipart==0.0.20
+pypdf==5.5.0
+httpx==0.28.1
+openai==1.82.0
+python-dotenv==1.1.0
+SQLAlchemy==2.0.41
+psycopg[binary]==3.2.9
+pytest==8.4.0
+alembic==1.16.2
+PyJWT[crypto]==2.10.1
+pdfplumber==0.11.7
+pytesseract==0.3.13
+pypdfium2==5.11.0
+celery[redis]==5.5.3

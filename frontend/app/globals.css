@@ -1,0 +1,15 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { --ink:#17201d; --muted:#68736f; --paper:#f6f4ee; --card:#fffefa; --line:#deddd5; --forest:#164f3b; }
+* { box-sizing: border-box; }
+body { margin:0; color:var(--ink); background:radial-gradient(circle at 82% 0%,rgba(217,236,226,.72),transparent 29rem),var(--paper); font-family:"Yu Gothic UI","Noto Sans JP",system-ui,sans-serif; }
+button,input,textarea { font:inherit; }
+button { cursor:pointer; }
+::selection { background:#b9dccb; }
+.serif { font-family:Georgia,"Yu Mincho",serif; }
+.paper-card { background:color-mix(in srgb,var(--card) 94%,transparent); border:1px solid var(--line); box-shadow:0 12px 35px rgba(32,47,41,.055); }
+.grain::after { content:""; position:fixed; inset:0; pointer-events:none; opacity:.025; background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.8'/%3E%3C/svg%3E"); z-index:50; }
+@keyframes rise { from { opacity:0; transform:translateY(10px) } to { opacity:1; transform:none } }
+.rise { animation:rise .45s ease-out both; }
