@@ -114,6 +114,38 @@ def parse_csv(data: bytes | str, *, limits: SourceParseLimits | None = None) -> 
     return SourceParseResult("csv", {"headers": headers, "row_count": len(rows) - 1}, _bounded(spans, limits))
 
 
+def _chat_content_text(content: object) -> str:
+    """Normalize supported chat content without stringifying opaque blocks.
+
+    OpenAI exports commonly encode a message as a list of ``{"type":
+    "text", "text": "..."}`` blocks.  Treating unknown blocks as strings
+    would make an image/tool payload look like grounded research text, so this
+    boundary is intentionally strict.
+    """
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        raise ValueError("chat message content must be a string or a list of text blocks")
+
+    parts: list[str] = []
+    for block in content:
+        # Preserve the historical list[str] representation used by simple chat
+        # exports while also accepting OpenAI's structured text blocks.
+        if isinstance(block, str):
+            parts.append(block)
+            continue
+        if not isinstance(block, dict):
+            raise ValueError("chat content block must be a string or an object")
+        block_type = block.get("type")
+        if block_type not in {"text", "input_text", "output_text"}:
+            raise ValueError("unsupported chat content block type")
+        block_text = block.get("text")
+        if not isinstance(block_text, str):
+            raise ValueError("chat text content block requires a string text field")
+        parts.append(block_text)
+    return "".join(parts)
+
+
 def parse_chat_json(data: bytes | str, *, limits: SourceParseLimits | None = None) -> SourceParseResult:
     limits = limits or SourceParseLimits(); text = _text(data, limits)
     try: value = json.loads(text)
@@ -122,8 +154,9 @@ def parse_chat_json(data: bytes | str, *, limits: SourceParseLimits | None = Non
     if not isinstance(messages, list): raise ValueError("chat JSON must be a message list")
     spans: list[AtomicSpan] = []
     for index, item in enumerate(messages, 1):
-        if not isinstance(item, dict): continue
-        content = item.get("content", item.get("text", "")); content = "".join(content) if isinstance(content, list) else str(content)
+        if not isinstance(item, dict):
+            raise ValueError("chat message must be an object")
+        content = _chat_content_text(item["content"] if "content" in item else item.get("text", ""))
         if content.strip(): spans.append(AtomicSpan("chat_turn", f"turn:{index}", content, {"role": str(item.get("role", "unknown")), "timestamp": item.get("timestamp")}, cell_index={"ordinal": index}))
     return SourceParseResult("chat", {"turn_count": len(spans), "format": "json"}, _bounded(spans, limits))
 

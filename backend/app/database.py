@@ -366,16 +366,37 @@ class KnowledgeEdgeRecord(Base):
     __tablename__ = "knowledge_edges"
     __table_args__ = (
         CheckConstraint("source_node_id != target_node_id", name="ck_knowledge_edges_distinct_nodes"),
+        CheckConstraint("relation IN ('informs', 'supports', 'extends', 'formulates', 'contradicts', 'implements', 'depends_on', 'related')", name="ck_knowledge_edges_relation"),
+        CheckConstraint("status IN ('review_pending', 'active', 'verified', 'rejected', 'superseded', 'review_required', 'pruned')", name="ck_knowledge_edges_status"),
+        CheckConstraint("origin IN ('manual', 'llm', 'import')", name="ck_knowledge_edges_origin"),
         Index("ix_knowledge_edges_workspace_source", "workspace_id", "source_node_id"),
         Index("ix_knowledge_edges_workspace_target", "workspace_id", "target_node_id"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_by: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
     source_node_id: Mapped[str] = mapped_column(ForeignKey("knowledge_nodes.id", ondelete="CASCADE"), nullable=False, index=True)
     target_node_id: Mapped[str] = mapped_column(ForeignKey("knowledge_nodes.id", ondelete="CASCADE"), nullable=False, index=True)
     relation: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    origin: Mapped[str] = mapped_column(String(32), nullable=False, default="manual")
     metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class KnowledgeEdgeStatusEventRecord(Base):
+    __tablename__ = "knowledge_edge_status_events"
+    __table_args__ = (Index("ix_edge_status_events_edge_created", "knowledge_edge_id", "created_at"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    knowledge_edge_id: Mapped[str] = mapped_column(ForeignKey("knowledge_edges.id", ondelete="CASCADE"), nullable=False, index=True)
+    actor_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    from_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    to_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 

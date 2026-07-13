@@ -44,6 +44,7 @@ export type KnowledgeNode = components["schemas"]["KnowledgeNode"];
 export type KnowledgeNodeCreate = components["schemas"]["KnowledgeNodeCreate"];
 export type KnowledgeEdge = components["schemas"]["KnowledgeEdge"];
 export type KnowledgeEdgeCreate = components["schemas"]["KnowledgeEdgeCreate"];
+export type KnowledgeEdgeStatusUpdate = components["schemas"]["KnowledgeEdgeStatusUpdate"];
 
 export type ResearchMessagePageOptions = { limit?: number; beforeOrdinal?: number | null };
 export type ResearchMemoryPageOptions = ResearchMessagePageOptions & { kind?: ResearchMemoryKind | null };
@@ -135,6 +136,12 @@ export async function createGraphNode(body: KnowledgeNodeCreate, signal?: AbortS
 
 export async function createGraphEdge(body: KnowledgeEdgeCreate, signal?: AbortSignal): Promise<KnowledgeEdge> {
   return unwrap(await api.POST("/api/graph/edges", { body, signal }), "知識エッジを作成できませんでした");
+}
+
+export async function updateGraphEdgeStatus(edgeId: string, body: KnowledgeEdgeStatusUpdate, signal?: AbortSignal): Promise<KnowledgeEdge> {
+  return unwrap(await api.PATCH("/api/graph/edges/{edge_id}/status", {
+    params: { path: { edge_id:edgeId } }, body, signal,
+  }), "知識エッジの状態を更新できませんでした");
 }
 
 export async function getPaperDetail(paperId: string, signal?: AbortSignal): Promise<PaperDetail> {

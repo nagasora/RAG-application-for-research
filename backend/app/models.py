@@ -141,10 +141,14 @@ class KnowledgeEdge(BaseModel):
     workspace_id: str
     source_node_id: str
     target_node_id: str
-    relation: str
+    created_by: str | None = None
+    relation: Literal["informs", "supports", "extends", "formulates", "contradicts", "implements", "depends_on", "related"]
+    status: Literal["review_pending", "active", "verified", "rejected", "superseded", "review_required", "pruned"]
+    origin: Literal["manual", "llm", "import"]
     metadata: dict = Field(default_factory=dict)
     evidence: list[EvidenceRef] = Field(default_factory=list)
     created_at: str
+    updated_at: str
 
 
 class ReasoningRunLink(BaseModel):
@@ -214,19 +218,6 @@ class SourceImportResult(BaseModel):
     spans: list[SourceSpan] = Field(default_factory=list)
 
 
-class SourceSpanCreate(BaseModel):
-    source_version_id: str
-    page: int | None = Field(default=None, ge=1)
-    line_start: int | None = Field(default=None, ge=1)
-    line_end: int | None = Field(default=None, ge=1)
-    char_start: int | None = Field(default=None, ge=0)
-    char_end: int | None = Field(default=None, ge=0)
-    bbox: list[float] | None = Field(default=None, min_length=4, max_length=4)
-    cell: dict | list | None = None
-    locator: dict = Field(default_factory=dict)
-    text: str = Field(default="", max_length=100_000)
-
-
 class KnowledgeNodeCreate(BaseModel):
     node_type: Literal["source", "idea", "constraint", "hypothesis"]
     content: str = Field(min_length=1, max_length=100_000)
@@ -251,10 +242,15 @@ class KnowledgeNodeStatusResult(BaseModel):
 class KnowledgeEdgeCreate(BaseModel):
     source_node_id: str
     target_node_id: str
-    relation: str = Field(min_length=1, max_length=64)
+    relation: Literal["informs", "supports", "extends", "formulates", "contradicts", "implements", "depends_on", "related"]
     evidence_span_ids: list[str] = Field(min_length=1, max_length=32)
     metadata: dict = Field(default_factory=dict)
     evidence_excerpt: str = Field(default="", max_length=10_000)
+
+
+class KnowledgeEdgeStatusUpdate(BaseModel):
+    status: Literal["review_pending", "active", "verified", "rejected", "superseded", "review_required", "pruned"]
+    reason: str = Field(min_length=1, max_length=10_000)
 
 
 class ReasoningRunCreate(BaseModel):

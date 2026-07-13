@@ -1,6 +1,6 @@
 "use client";
 
-import { KeyboardEvent, useId, useMemo } from "react";
+import { KeyboardEvent, useId, useMemo, useState } from "react";
 
 export type GraphNodeType = "source" | "idea" | "constraint" | "hypothesis";
 export type GraphNodeStatus = "active" | "review_pending" | "review_required" | "verified" | "rejected" | "superseded" | "pruned";
@@ -113,6 +113,8 @@ export function GraphCanvas({
   className = "",
 }: GraphCanvasProps) {
   const markerId = useId().replace(/[^a-zA-Z0-9_-]/g, "");
+  const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
+  const [focusedEdgeId, setFocusedEdgeId] = useState<string | null>(null);
   const selected = useMemo(() => new Set(selectedNodeIds), [selectedNodeIds]);
   const { positionedNodes, layers, width, height } = useMemo(() => {
     const grouped = new Map<number, GraphNode[]>();
@@ -169,18 +171,21 @@ export function GraphCanvas({
           const relation = RELATION_LABEL[edge.relation as keyof typeof RELATION_LABEL] ?? edge.relation;
           const path = `M ${startX} ${startY} C ${startX + 36} ${startY}, ${endX - 36} ${endY}, ${endX} ${endY}`;
           const selectable = Boolean(onEdgeSelect);
-          return <g key={edge.id} role={selectable ? "button" : undefined} tabIndex={selectable ? 0 : undefined} aria-label={selectable ? `${relation}: ${source.label} から ${target.label}` : undefined} className={selectable ? "cursor-pointer focus:outline-none" : ""} onClick={selectable ? () => onEdgeSelect?.(edge) : undefined} onKeyDown={selectable ? event => nodeKeyboardSelect(event, () => onEdgeSelect?.(edge)) : undefined}>
+          const isFocused = focusedEdgeId === edge.id;
+          return <g key={edge.id} role={selectable ? "button" : undefined} tabIndex={selectable ? 0 : undefined} aria-label={selectable ? `${relation}: ${source.label} から ${target.label}` : undefined} className={selectable ? "cursor-pointer focus:outline-none" : ""} onClick={selectable ? () => onEdgeSelect?.(edge) : undefined} onKeyDown={selectable ? event => nodeKeyboardSelect(event, () => onEdgeSelect?.(edge)) : undefined} onFocus={selectable ? () => setFocusedEdgeId(edge.id) : undefined} onBlur={selectable ? () => setFocusedEdgeId(current => current === edge.id ? null : current) : undefined}>
+            {isFocused && <path d={path} fill="none" stroke="#10231b" strokeWidth="6" strokeOpacity=".72" strokeLinecap="round" pointerEvents="none" />}
             <path d={path} fill="none" stroke={style.color} strokeWidth="2.25" strokeDasharray={style.dash} markerEnd={`url(#graph-arrow-${markerId})`} className="transition-opacity group-hover:opacity-80" />
             <rect x={midpointX - 36} y={midpointY - 12} width="72" height="19" rx="8" fill="#f8faf7" stroke={style.color} strokeOpacity=".28" />
             <text x={midpointX} y={midpointY + 1.5} textAnchor="middle" className="fill-[#52605b] text-[9px] font-semibold">{relation}</text>
           </g>;
         })}
         {positionedNodes.map(node => {
-          const style = STATUS_STYLE[node.status]; const isSelected = selected.has(node.id); const isSuperseded = node.status === "superseded";
+          const style = STATUS_STYLE[node.status]; const isSelected = selected.has(node.id); const isFocused = focusedNodeId === node.id; const isSuperseded = node.status === "superseded";
           const select = () => onNodeSelect?.(node);
-          return <g key={node.id} role="button" tabIndex={0} aria-pressed={isSelected} aria-label={`${node.label}、${TYPE_LABEL[node.type]}、${STATUS_LABEL[node.status]}、Layer ${node.layer}`} className="cursor-pointer outline-none" onClick={select} onKeyDown={event => nodeKeyboardSelect(event, select)}>
-            <rect x={node.x - (isSelected ? 4 : 0)} y={node.y - (isSelected ? 4 : 0)} width={NODE_WIDTH + (isSelected ? 8 : 0)} height={NODE_HEIGHT + (isSelected ? 8 : 0)} rx="17" fill={isSelected ? "#dcefe3" : "transparent"} className="[&:focus]:stroke-[#164f3b]" />
+          return <g key={node.id} role="button" tabIndex={0} aria-pressed={isSelected} aria-label={`${node.label}、${TYPE_LABEL[node.type]}、${STATUS_LABEL[node.status]}、Layer ${node.layer}`} className="cursor-pointer outline-none" onClick={select} onKeyDown={event => nodeKeyboardSelect(event, select)} onFocus={() => setFocusedNodeId(node.id)} onBlur={() => setFocusedNodeId(current => current === node.id ? null : current)}>
+            <rect x={node.x - (isSelected ? 4 : 0)} y={node.y - (isSelected ? 4 : 0)} width={NODE_WIDTH + (isSelected ? 8 : 0)} height={NODE_HEIGHT + (isSelected ? 8 : 0)} rx="17" fill={isSelected ? "#dcefe3" : "transparent"} />
             <rect x={node.x} y={node.y} width={NODE_WIDTH} height={NODE_HEIGHT} rx="14" fill={style.fill} stroke={isSelected ? "#164f3b" : style.stroke} strokeWidth={isSelected ? "3" : "1.5"} strokeDasharray={isSuperseded ? "6 4" : undefined} />
+            {isFocused && <rect x={node.x - 6} y={node.y - 6} width={NODE_WIDTH + 12} height={NODE_HEIGHT + 12} rx="20" fill="none" stroke="#10231b" strokeWidth="3" strokeDasharray="7 4" pointerEvents="none" />}
             <rect x={node.x + 12} y={node.y + 12} width="6" height="6" rx="3" fill={style.stroke} />
             <text x={node.x + 25} y={node.y + 18} className="fill-[#68736f] text-[9px] font-bold" letterSpacing=".7">{TYPE_LABEL[node.type].toUpperCase()} · {STATUS_LABEL[node.status]}</text>
             <text x={node.x + 12} y={node.y + 43} className="fill-[#17201d] text-[13px] font-semibold">{truncate(node.label, 23)}</text>

@@ -35,10 +35,10 @@ from .models import (
     ResearchConversation, ResearchConversationCreate, ResearchConversationDetail,
     ResearchMemoryPage, ResearchMessagePage,
     CanvasLayout, CanvasLayoutUpdate, GraphRetrieveRequest, GraphRetrievalHit,
-    GraphSnapshot, KnowledgeEdge, KnowledgeEdgeCreate, KnowledgeNode,
+    GraphSnapshot, KnowledgeEdge, KnowledgeEdgeCreate, KnowledgeEdgeStatusUpdate, KnowledgeNode,
     KnowledgeNodeCreate, KnowledgeNodeStatusResult, KnowledgeNodeStatusUpdate, NodeFeedback,
     NodeFeedbackCreate, ReasoningRun, ReasoningRunCreate, SourceSpan,
-    SourceImportCreate, SourceImportResult, SourceSpanCreate, SourceVersion, SourceVersionCreate,
+    SourceImportCreate, SourceImportResult, SourceVersion, SourceVersionCreate,
 )
 from .graph_rag import GraphEdge as RetrievalGraphEdge, PrunedTwoHopConfig, RetrievalSeed, pruned_two_hop_retrieve
 from .source_parsers import SourceParseLimitError, parse_source
@@ -1077,8 +1077,12 @@ def create_graph_source(
     require_workspace_write(context)
     content_hash = body.content_hash.lower()
     metadata = dict(body.metadata)
-    if body.content is None and body.paper_id is None:
-        raise HTTPException(status_code=422, detail="source content or paper_id is required")
+    if body.paper_id is not None:
+        raise HTTPException(status_code=422, detail="paper sources are created only by the ingestion pipeline")
+    if body.kind.strip().casefold() == "paper":
+        raise HTTPException(status_code=422, detail="paper source kind is reserved for the ingestion pipeline")
+    if body.content is None:
+        raise HTTPException(status_code=422, detail="source content is required")
     if body.content is not None:
         calculated_hash = hashlib.sha256(body.content.encode("utf-8")).hexdigest()
         if calculated_hash != content_hash:
@@ -1167,27 +1171,6 @@ def list_graph_source_spans(
         raise _graph_not_found(exc) from exc
 
 
-@app.post("/api/graph/sources/{source_version_id}/spans", response_model=SourceSpan, status_code=201)
-def create_graph_source_span(
-    source_version_id: str, body: SourceSpanCreate, store: PaperStore = Depends(get_store),
-    context: WorkspaceContext = Depends(get_workspace_context),
-):
-    require_workspace_write(context)
-    if body.source_version_id != source_version_id:
-        raise HTTPException(status_code=422, detail="source_version_id does not match path")
-    try:
-        return store.create_source_span(
-            context.workspace.id, source_version_id, page=body.page,
-            line_start=body.line_start, line_end=body.line_end,
-            char_start=body.char_start, char_end=body.char_end, bbox=body.bbox,
-            cell=body.cell, locator=body.locator, text_value=body.text,
-        )
-    except PaperNotFoundError as exc:
-        raise _graph_not_found(exc) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-
 @app.get("/api/graph/nodes", response_model=list[KnowledgeNode])
 def list_graph_nodes(
     status: str | None = Query(default=None, max_length=32), layer: int | None = Query(default=None, ge=0),
@@ -1252,7 +1235,25 @@ def create_graph_edge(
             context.workspace.id, source_node_id=body.source_node_id,
             target_node_id=body.target_node_id, relation=body.relation,
             evidence_span_ids=body.evidence_span_ids, metadata=body.metadata,
-            evidence_excerpt=body.evidence_excerpt,
+            evidence_excerpt=body.evidence_excerpt, created_by=context.user.id,
+        )
+    except PaperNotFoundError as exc:
+        raise _graph_not_found(exc) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.patch("/api/graph/edges/{edge_id}/status", response_model=KnowledgeEdge)
+def update_graph_edge_status(
+    edge_id: str, body: KnowledgeEdgeStatusUpdate,
+    store: PaperStore = Depends(get_store),
+    context: WorkspaceContext = Depends(get_workspace_context),
+):
+    require_workspace_write(context)
+    try:
+        return store.set_knowledge_edge_status(
+            context.workspace.id, edge_id, status=body.status,
+            actor_id=context.user.id, reason=body.reason,
         )
     except PaperNotFoundError as exc:
         raise _graph_not_found(exc) from exc
@@ -1317,7 +1318,16 @@ def retrieve_graph(
     body: GraphRetrieveRequest, store: PaperStore = Depends(get_store),
     context: WorkspaceContext = Depends(get_workspace_context),
 ):
-    graph_edges = store.list_knowledge_edges(context.workspace.id)
+    retrievable_statuses = {"active", "verified"}
+    retrievable_node_ids = {
+        node.id for node in store.list_knowledge_nodes(context.workspace.id)
+        if node.status in retrievable_statuses
+    }
+    graph_edges = [
+        edge for edge in store.list_knowledge_edges(context.workspace.id)
+        if edge.status in {"active", "verified"}
+        and edge.source_node_id in retrievable_node_ids and edge.target_node_id in retrievable_node_ids
+    ]
     outgoing: dict[str, list[RetrievalGraphEdge]] = {}
     for edge in graph_edges:
         raw_confidence = edge.metadata.get("confidence", 1.0)
@@ -1341,7 +1351,7 @@ def retrieve_graph(
         [RetrievalSeed(
             node_id=seed.node_id, relevance=seed.relevance, confidence=seed.confidence,
             retrieval_reason=seed.retrieval_reason,
-        ) for seed in body.seeds],
+        ) for seed in body.seeds if seed.node_id in retrievable_node_ids],
         AuthorizedNeighbors(),
         config=PrunedTwoHopConfig(
             top_k=body.top_k, max_degree=body.max_degree,
@@ -1353,6 +1363,8 @@ def retrieve_graph(
         try:
             node = store.get_knowledge_node(context.workspace.id, hit.node_id)
         except PaperNotFoundError:
+            continue
+        if node.status not in retrievable_statuses:
             continue
         result.append(GraphRetrievalHit(
             node=node, score=hit.score, retrieval_reason=hit.retrieval_reason,

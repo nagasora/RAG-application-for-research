@@ -29,3 +29,30 @@ def test_python_spans_have_stable_ast_hash_and_lines():
 def test_parser_rejects_excessive_input():
     with pytest.raises(SourceParseLimitError):
         parse_source("csv", "a\n1\n", limits=SourceParseLimits(max_input_bytes=2))
+
+
+def test_chat_json_accepts_openai_text_content_blocks_and_legacy_strings():
+    structured = parse_source("chat", '''{
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "first "},
+                {"type": "input_text", "text": "second"}
+            ]
+        }]
+    }''')
+    legacy = parse_source("chat", '[{"role":"assistant","content":["first ","second"]}]')
+
+    assert structured.spans[0].text == "first second"
+    assert structured.spans[0].metadata["role"] == "user"
+    assert legacy.spans[0].text == "first second"
+
+
+@pytest.mark.parametrize("content", [
+    '[{"role":"user","content":[{"type":"image_url","image_url":"https://example.test/x"}]}]',
+    '[{"role":"user","content":[{"type":"text","text":42}]}]',
+    '[{"role":"user","content":[42]}]',
+])
+def test_chat_json_rejects_unknown_or_malformed_content_blocks(content):
+    with pytest.raises(ValueError):
+        parse_source("chat", content)

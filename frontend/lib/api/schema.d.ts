@@ -124,6 +124,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/graph/edges/{edge_id}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update Graph Edge Status */
+        patch: operations["update_graph_edge_status_api_graph_edges__edge_id__status_patch"];
+        trace?: never;
+    };
     "/api/graph/nodes": {
         parameters: {
             query?: never;
@@ -292,8 +309,7 @@ export interface paths {
         /** List Graph Source Spans */
         get: operations["list_graph_source_spans_api_graph_sources__source_version_id__spans_get"];
         put?: never;
-        /** Create Graph Source Span */
-        post: operations["create_graph_source_span_api_graph_sources__source_version_id__spans_post"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1086,6 +1102,8 @@ export interface components {
         KnowledgeEdge: {
             /** Created At */
             created_at: string;
+            /** Created By */
+            created_by?: string | null;
             /** Evidence */
             evidence?: components["schemas"]["EvidenceRef"][];
             /** Id */
@@ -1094,12 +1112,27 @@ export interface components {
             metadata?: {
                 [key: string]: unknown;
             };
-            /** Relation */
-            relation: string;
+            /**
+             * Origin
+             * @enum {string}
+             */
+            origin: "manual" | "llm" | "import";
+            /**
+             * Relation
+             * @enum {string}
+             */
+            relation: "informs" | "supports" | "extends" | "formulates" | "contradicts" | "implements" | "depends_on" | "related";
             /** Source Node Id */
             source_node_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "review_pending" | "active" | "verified" | "rejected" | "superseded" | "review_required" | "pruned";
             /** Target Node Id */
             target_node_id: string;
+            /** Updated At */
+            updated_at: string;
             /** Workspace Id */
             workspace_id: string;
         };
@@ -1116,12 +1149,25 @@ export interface components {
             metadata?: {
                 [key: string]: unknown;
             };
-            /** Relation */
-            relation: string;
+            /**
+             * Relation
+             * @enum {string}
+             */
+            relation: "informs" | "supports" | "extends" | "formulates" | "contradicts" | "implements" | "depends_on" | "related";
             /** Source Node Id */
             source_node_id: string;
             /** Target Node Id */
             target_node_id: string;
+        };
+        /** KnowledgeEdgeStatusUpdate */
+        KnowledgeEdgeStatusUpdate: {
+            /** Reason */
+            reason: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "review_pending" | "active" | "verified" | "rejected" | "superseded" | "review_required" | "pruned";
         };
         /** KnowledgeNode */
         KnowledgeNode: {
@@ -1757,36 +1803,6 @@ export interface components {
             /** Workspace Id */
             workspace_id: string;
         };
-        /** SourceSpanCreate */
-        SourceSpanCreate: {
-            /** Bbox */
-            bbox?: number[] | null;
-            /** Cell */
-            cell?: {
-                [key: string]: unknown;
-            } | unknown[] | null;
-            /** Char End */
-            char_end?: number | null;
-            /** Char Start */
-            char_start?: number | null;
-            /** Line End */
-            line_end?: number | null;
-            /** Line Start */
-            line_start?: number | null;
-            /** Locator */
-            locator?: {
-                [key: string]: unknown;
-            };
-            /** Page */
-            page?: number | null;
-            /** Source Version Id */
-            source_version_id: string;
-            /**
-             * Text
-             * @default
-             */
-            text: string;
-        };
         /** SourceVersion */
         SourceVersion: {
             /** Content Hash */
@@ -2150,6 +2166,41 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeEdge"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_graph_edge_status_api_graph_edges__edge_id__status_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                edge_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeEdgeStatusUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2550,41 +2601,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SourceSpan"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    create_graph_source_span_api_graph_sources__source_version_id__spans_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                source_version_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SourceSpanCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SourceSpan"];
                 };
             };
             /** @description Validation Error */

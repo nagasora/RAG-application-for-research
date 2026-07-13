@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
+import json
 import os
 import re
 from uuid import uuid4
@@ -15,7 +16,7 @@ from sqlalchemy.orm import Session, selectinload, sessionmaker
 
 from .database import (
     Base, CanvasLayoutRecord, ChunkEmbeddingRecord, ChunkRecord, DocumentElementRecord,
-    EmbeddingJobRecord, EvidenceRefRecord, IngestionJobRecord, KnowledgeEdgeRecord,
+    EmbeddingJobRecord, EvidenceRefRecord, IngestionJobRecord, KnowledgeEdgeRecord, KnowledgeEdgeStatusEventRecord,
     KnowledgeNodeRecord, NodeFeedbackRecord, NoteRecord, PaperPageRecord, PaperRecord,
     PaperTagRecord, ReasoningRunInputRecord, ReasoningRunOutputRecord, ReasoningRunRecord,
     ResearchConversationRecord, ResearchMemoryEventRecord, ResearchMessageRecord,
@@ -52,6 +53,28 @@ class WorkspacePermissionError(Exception):
 
 class ResourceConflictError(Exception):
     pass
+
+
+_FORWARD_DEPENDENCY_RELATIONS = {"informs", "supports", "formulates"}
+_REVERSE_DEPENDENCY_RELATIONS = {"extends", "depends_on", "implements"}
+_KNOWLEDGE_RELATIONS = _FORWARD_DEPENDENCY_RELATIONS | _REVERSE_DEPENDENCY_RELATIONS | {"contradicts", "related"}
+_KNOWLEDGE_STATUSES = {"review_pending", "active", "verified", "rejected", "superseded", "review_required", "pruned"}
+
+
+def _source_span_set_hash(spans: list[dict]) -> str:
+    """Hash the complete immutable span set independent of database row order."""
+    normalized: list[str] = []
+    for item in spans:
+        payload = {
+            "page": item.get("page"), "line_start": item.get("line_start"),
+            "line_end": item.get("line_end"), "char_start": item.get("char_start"),
+            "char_end": item.get("char_end"), "bbox": item.get("bbox"),
+            "cell": item.get("cell"), "locator": dict(item.get("locator") or {}),
+            "text": str(item.get("text") or ""),
+        }
+        normalized.append(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+    normalized.sort()
+    return hashlib.sha256("\n".join(normalized).encode("utf-8")).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -249,11 +272,12 @@ def _knowledge_edge_model(
     record: KnowledgeEdgeRecord, evidence: list[EvidenceRefRecord] | None = None,
 ) -> KnowledgeEdge:
     return KnowledgeEdge(
-        id=record.id, workspace_id=record.workspace_id,
+        id=record.id, workspace_id=record.workspace_id, created_by=record.created_by,
         source_node_id=record.source_node_id, target_node_id=record.target_node_id,
-        relation=record.relation, metadata=dict(record.metadata_json or {}),
+        relation=record.relation, status=record.status, origin=record.origin,
+        metadata=dict(record.metadata_json or {}),
         evidence=[_evidence_ref_model(item) for item in evidence or []],
-        created_at=record.created_at.isoformat(),
+        created_at=record.created_at.isoformat(), updated_at=record.updated_at.isoformat(),
     )
 
 
@@ -670,6 +694,19 @@ class PaperStore:
             if has_grounded_graph_reference is not None:
                 raise ResourceConflictError("paper is retained because it grounds knowledge graph evidence")
             paper = _to_model(record)
+            source_ids = session.scalars(select(SourceVersionRecord.id).where(
+                SourceVersionRecord.workspace_id == workspace_id,
+                SourceVersionRecord.paper_id == paper_id,
+            )).all()
+            if source_ids:
+                session.execute(delete(SourceSpanRecord).where(
+                    SourceSpanRecord.workspace_id == workspace_id,
+                    SourceSpanRecord.source_version_id.in_(source_ids),
+                ))
+                session.execute(delete(SourceVersionRecord).where(
+                    SourceVersionRecord.workspace_id == workspace_id,
+                    SourceVersionRecord.id.in_(source_ids),
+                ))
             session.delete(record)
             return paper
 
@@ -1268,15 +1305,19 @@ class PaperStore:
         """
         if not paper.content_hash:
             return
+        expected_locator = paper.storage_key or f"paper:{paper.id}"
         existing = session.scalar(select(SourceVersionRecord).where(
             SourceVersionRecord.workspace_id == paper.workspace_id,
+            SourceVersionRecord.paper_id == paper.id,
+            SourceVersionRecord.kind == "paper",
+            SourceVersionRecord.locator == expected_locator,
             SourceVersionRecord.content_hash == paper.content_hash,
         ))
         if existing is not None:
             return
         source = SourceVersionRecord(
             id=str(uuid4()), workspace_id=paper.workspace_id, paper_id=paper.id,
-            kind="paper", locator=paper.storage_key or f"paper:{paper.id}",
+            kind="paper", locator=expected_locator,
             content_hash=paper.content_hash,
             metadata_json={"mime_type": paper.mime_type, "title": paper.title},
             created_at=datetime.now(timezone.utc),
@@ -1572,6 +1613,8 @@ class PaperStore:
         """Create or return an immutable content-addressed source version."""
         if not kind.strip() or not locator.strip() or not re.fullmatch(r"[0-9a-fA-F]{64}", content_hash):
             raise ValueError("kind, locator, and a SHA-256 hex content_hash are required")
+        if paper_id is None and kind.strip().casefold() == "paper":
+            raise ValueError("paper source versions are reserved for the ingestion pipeline")
         with self.session_factory.begin() as session:
             self._require_workspace(session, workspace_id)
             if paper_id is not None:
@@ -1580,6 +1623,11 @@ class PaperStore:
                 ))
                 if paper is None:
                     raise PaperNotFoundError(paper_id)
+                expected_locator = paper.storage_key or f"paper:{paper.id}"
+                if kind.strip() != "paper" or content_hash.lower() != (paper.content_hash or "").lower():
+                    raise ValueError("paper source kind and content_hash must match the immutable paper")
+                if locator.strip() != expected_locator:
+                    raise ValueError("paper source locator must match the immutable paper storage key")
             existing = session.scalar(select(SourceVersionRecord).where(
                 SourceVersionRecord.workspace_id == workspace_id,
                 SourceVersionRecord.kind == kind.strip()[:32],
@@ -1611,6 +1659,7 @@ class PaperStore:
             raise ValueError("kind, locator, and a SHA-256 hex content_hash are required")
         normalized_kind = kind.strip()[:32]
         normalized_locator = locator.strip()
+        incoming_span_set_hash = _source_span_set_hash(spans)
         with self.session_factory.begin() as session:
             self._require_workspace(session, workspace_id)
             existing = session.scalar(select(SourceVersionRecord).where(
@@ -1624,14 +1673,24 @@ class PaperStore:
                     SourceSpanRecord.workspace_id == workspace_id,
                     SourceSpanRecord.source_version_id == existing.id,
                 ).order_by(SourceSpanRecord.page, SourceSpanRecord.created_at, SourceSpanRecord.id)).all()
-                if len(existing_spans) != len(spans):
+                persisted_span_set_hash = _source_span_set_hash([{
+                    "page": item.page, "line_start": item.line_start, "line_end": item.line_end,
+                    "char_start": item.char_start, "char_end": item.char_end, "bbox": item.bbox,
+                    "cell": item.cell, "locator": item.locator_json, "text": item.text,
+                } for item in existing_spans])
+                recorded_span_set_hash = (existing.metadata_json or {}).get("span_set_hash")
+                if persisted_span_set_hash != incoming_span_set_hash or (
+                    recorded_span_set_hash is not None and recorded_span_set_hash != persisted_span_set_hash
+                ):
                     raise ResourceConflictError("source version already exists with a different immutable span set")
                 return _source_version_model(existing), [_source_span_model(row) for row in existing_spans]
 
+            source_metadata = dict(metadata or {})
+            source_metadata["span_set_hash"] = incoming_span_set_hash
             source = SourceVersionRecord(
                 id=str(uuid4()), workspace_id=workspace_id, paper_id=None,
                 kind=normalized_kind, locator=normalized_locator, content_hash=content_hash,
-                metadata_json=dict(metadata or {}), created_at=datetime.now(timezone.utc),
+                metadata_json=source_metadata, created_at=datetime.now(timezone.utc),
             )
             session.add(source)
             records: list[SourceSpanRecord] = []
@@ -1671,36 +1730,6 @@ class PaperStore:
                 statement = statement.where(SourceVersionRecord.kind == kind)
             rows = session.scalars(statement.order_by(SourceVersionRecord.created_at.desc())).all()
             return [_source_version_model(row) for row in rows]
-
-    def create_source_span(
-        self, workspace_id: str, source_version_id: str, *, page: int | None = None,
-        line_start: int | None = None, line_end: int | None = None,
-        char_start: int | None = None, char_end: int | None = None,
-        bbox: list[float] | None = None, cell: dict | list | None = None,
-        locator: dict | None = None, text_value: str = "",
-    ) -> SourceSpan:
-        if line_start is not None and line_end is not None and line_end < line_start:
-            raise ValueError("line_end must be greater than or equal to line_start")
-        if char_start is not None and char_end is not None and char_end < char_start:
-            raise ValueError("char_end must be greater than or equal to char_start")
-        with self.session_factory.begin() as session:
-            self._require_workspace(session, workspace_id)
-            version = session.scalar(select(SourceVersionRecord).where(
-                SourceVersionRecord.workspace_id == workspace_id,
-                SourceVersionRecord.id == source_version_id,
-            ))
-            if version is None:
-                raise PaperNotFoundError(source_version_id)
-            record = SourceSpanRecord(
-                id=str(uuid4()), workspace_id=workspace_id, source_version_id=source_version_id,
-                page=page, line_start=line_start, line_end=line_end,
-                char_start=char_start, char_end=char_end, bbox=bbox, cell=cell,
-                locator_json=dict(locator or {}), text=text_value,
-                created_at=datetime.now(timezone.utc),
-            )
-            session.add(record)
-            session.flush()
-            return _source_span_model(record)
 
     def get_source_span(self, workspace_id: str, source_span_id: str) -> SourceSpan:
         with self.session_factory() as session:
@@ -1800,6 +1829,31 @@ class PaperStore:
             evidence = self._node_evidence_map(session, [node_id]).get(node_id, [])
             return _knowledge_node_model(record, evidence)
 
+    @staticmethod
+    def _dependent_node_ids(
+        session: Session, workspace_id: str, premise_ids: set[str],
+    ) -> set[str]:
+        """Return nodes whose validity depends on the supplied premises.
+
+        Most relations point from premise to derived node. ``extends``,
+        ``depends_on`` and ``implements`` express the dependency in the
+        opposite direction (the source depends on the target).
+        Contradiction and generic relation edges never trigger invalidation.
+        """
+        forward = session.scalars(select(KnowledgeEdgeRecord.target_node_id).where(
+            KnowledgeEdgeRecord.workspace_id == workspace_id,
+            KnowledgeEdgeRecord.source_node_id.in_(premise_ids),
+            KnowledgeEdgeRecord.status.in_({"active", "verified"}),
+            KnowledgeEdgeRecord.relation.in_(_FORWARD_DEPENDENCY_RELATIONS),
+        )).all()
+        reverse = session.scalars(select(KnowledgeEdgeRecord.source_node_id).where(
+            KnowledgeEdgeRecord.workspace_id == workspace_id,
+            KnowledgeEdgeRecord.target_node_id.in_(premise_ids),
+            KnowledgeEdgeRecord.status.in_({"active", "verified"}),
+            KnowledgeEdgeRecord.relation.in_(_REVERSE_DEPENDENCY_RELATIONS),
+        )).all()
+        return set(forward) | set(reverse)
+
     def propagate_downstream_review_required(
         self, workspace_id: str, node_id: str,
     ) -> list[str]:
@@ -1810,10 +1864,7 @@ class PaperStore:
             frontier = {node_id}
             descendants: list[str] = []
             while frontier:
-                targets = session.scalars(select(KnowledgeEdgeRecord.target_node_id).where(
-                    KnowledgeEdgeRecord.workspace_id == workspace_id,
-                    KnowledgeEdgeRecord.source_node_id.in_(frontier),
-                )).all()
+                targets = self._dependent_node_ids(session, workspace_id, frontier)
                 frontier = {target for target in targets if target not in visited}
                 visited.update(frontier)
                 descendants.extend(sorted(frontier))
@@ -1843,10 +1894,7 @@ class PaperStore:
                 visited = {node_id}
                 frontier = {node_id}
                 while frontier:
-                    targets = session.scalars(select(KnowledgeEdgeRecord.target_node_id).where(
-                        KnowledgeEdgeRecord.workspace_id == workspace_id,
-                        KnowledgeEdgeRecord.source_node_id.in_(frontier),
-                    )).all()
+                    targets = self._dependent_node_ids(session, workspace_id, frontier)
                     frontier = {target for target in targets if target not in visited}
                     visited.update(frontier)
                     affected.extend(sorted(frontier))
@@ -1866,21 +1914,28 @@ class PaperStore:
     def create_knowledge_edge(
         self, workspace_id: str, *, source_node_id: str, target_node_id: str,
         relation: str, evidence_span_ids: list[str], metadata: dict | None = None,
-        evidence_excerpt: str = "",
+        evidence_excerpt: str = "", created_by: str | None = None,
+        status: str = "active", origin: str = "manual",
     ) -> KnowledgeEdge:
         if source_node_id == target_node_id:
             raise ValueError("knowledge edges must connect distinct nodes")
-        if not relation.strip() or not evidence_span_ids:
+        normalized_relation = relation.strip().casefold()
+        if normalized_relation not in _KNOWLEDGE_RELATIONS or not evidence_span_ids:
             raise ValueError("knowledge edges require a relation and at least one evidence span")
+        if status not in _KNOWLEDGE_STATUSES or origin not in {"manual", "llm", "import"}:
+            raise ValueError("invalid knowledge edge status or origin")
         with self.session_factory.begin() as session:
             self._require_workspace(session, workspace_id)
+            if created_by is not None and session.get(UserRecord, created_by) is None:
+                raise PaperNotFoundError(created_by)
             self._scoped_node(session, workspace_id, source_node_id)
             self._scoped_node(session, workspace_id, target_node_id)
+            now = datetime.now(timezone.utc)
             record = KnowledgeEdgeRecord(
-                id=str(uuid4()), workspace_id=workspace_id,
+                id=str(uuid4()), workspace_id=workspace_id, created_by=created_by,
                 source_node_id=source_node_id, target_node_id=target_node_id,
-                relation=relation.strip()[:64], metadata_json=dict(metadata or {}),
-                created_at=datetime.now(timezone.utc),
+                relation=normalized_relation, status=status, origin=origin,
+                metadata_json=dict(metadata or {}), created_at=now, updated_at=now,
             )
             session.add(record)
             session.flush()
@@ -1889,6 +1944,31 @@ class PaperStore:
                 excerpt=evidence_excerpt,
             )
             return _knowledge_edge_model(record, evidence)
+
+    def set_knowledge_edge_status(
+        self, workspace_id: str, edge_id: str, *, status: str,
+        actor_id: str | None, reason: str,
+    ) -> KnowledgeEdge:
+        if status not in _KNOWLEDGE_STATUSES or not reason.strip():
+            raise ValueError("valid edge status and transition reason are required")
+        with self.session_factory.begin() as session:
+            self._require_workspace(session, workspace_id)
+            edge = session.scalar(select(KnowledgeEdgeRecord).where(
+                KnowledgeEdgeRecord.workspace_id == workspace_id,
+                KnowledgeEdgeRecord.id == edge_id,
+            ))
+            if edge is None:
+                raise PaperNotFoundError(edge_id)
+            previous, now = edge.status, datetime.now(timezone.utc)
+            if previous != status:
+                session.add(KnowledgeEdgeStatusEventRecord(
+                    id=str(uuid4()), workspace_id=workspace_id, knowledge_edge_id=edge.id,
+                    actor_id=actor_id, from_status=previous, to_status=status,
+                    reason=reason.strip(), created_at=now,
+                ))
+                edge.status, edge.updated_at = status, now
+            evidence = self._edge_evidence_map(session, [edge.id]).get(edge.id, [])
+            return _knowledge_edge_model(edge, evidence)
 
     def list_knowledge_edges(self, workspace_id: str, node_id: str | None = None) -> list[KnowledgeEdge]:
         with self.session_factory() as session:
@@ -1915,6 +1995,7 @@ class PaperStore:
         now = datetime.now(timezone.utc)
         with self.session_factory.begin() as session:
             self._require_workspace(session, workspace_id)
+            self._lock_reasoning_lineage(session, workspace_id)
             node_ids = list(dict.fromkeys(input_node_ids + output_node_ids))
             if node_ids:
                 rows = session.scalars(select(KnowledgeNodeRecord.id).where(
@@ -1923,6 +2004,9 @@ class PaperStore:
                 )).all()
                 if len(rows) != len(node_ids):
                     raise PaperNotFoundError("knowledge node")
+            self._assert_reasoning_lineage_acyclic(
+                session, workspace_id, input_node_ids, output_node_ids,
+            )
             record = ReasoningRunRecord(
                 id=str(uuid4()), workspace_id=workspace_id, created_by=created_by,
                 operator=operator.strip()[:64], status=status, prompt=prompt,
@@ -1938,6 +2022,66 @@ class PaperStore:
             session.add_all(inputs + outputs)
             session.flush()
             return _reasoning_run_model(record, inputs, outputs)
+
+    @staticmethod
+    def _lock_reasoning_lineage(session: Session, workspace_id: str) -> None:
+        """Serialize lineage validation and writes within one workspace.
+
+        PostgreSQL honors ``FOR UPDATE`` on the workspace row, so concurrent
+        A→B and B→A runs cannot both validate against stale lineage. SQLite
+        ignores the clause and retains its normal database-writer serialization.
+        """
+        locked_workspace = session.scalar(
+            select(WorkspaceRecord.id)
+            .where(WorkspaceRecord.id == workspace_id)
+            .with_for_update()
+        )
+        if locked_workspace is None:
+            raise PaperNotFoundError(workspace_id)
+
+    @staticmethod
+    def _assert_reasoning_lineage_acyclic(
+        session: Session, workspace_id: str, input_node_ids: list[str],
+        output_node_ids: list[str], *, exclude_run_id: str | None = None,
+    ) -> None:
+        """Reject self-supporting or transitive cycles in immutable run lineage."""
+        input_ids, output_ids = set(input_node_ids), set(output_node_ids)
+        if input_ids & output_ids:
+            raise ValueError("reasoning run inputs and outputs must be disjoint")
+        if not input_ids or not output_ids:
+            return
+        statement = (
+            select(
+                ReasoningRunInputRecord.knowledge_node_id,
+                ReasoningRunOutputRecord.knowledge_node_id,
+            )
+            .join(
+                ReasoningRunOutputRecord,
+                ReasoningRunOutputRecord.reasoning_run_id
+                == ReasoningRunInputRecord.reasoning_run_id,
+            )
+            .join(
+                ReasoningRunRecord,
+                ReasoningRunRecord.id == ReasoningRunInputRecord.reasoning_run_id,
+            )
+            .where(ReasoningRunRecord.workspace_id == workspace_id)
+        )
+        if exclude_run_id is not None:
+            statement = statement.where(ReasoningRunRecord.id != exclude_run_id)
+        adjacency: dict[str, set[str]] = {}
+        for source_id, target_id in session.execute(statement).all():
+            adjacency.setdefault(source_id, set()).add(target_id)
+
+        for output_id in output_ids:
+            frontier, visited = [output_id], set()
+            while frontier:
+                current = frontier.pop()
+                if current in input_ids:
+                    raise ValueError("reasoning run would create a provenance cycle")
+                if current in visited:
+                    continue
+                visited.add(current)
+                frontier.extend(adjacency.get(current, ()))
 
     def get_reasoning_run(self, workspace_id: str, reasoning_run_id: str) -> ReasoningRun:
         with self.session_factory() as session:
@@ -1960,6 +2104,8 @@ class PaperStore:
         output_node_ids: list[str] | None = None, metadata: dict | None = None,
     ) -> ReasoningRun:
         with self.session_factory.begin() as session:
+            self._require_workspace(session, workspace_id)
+            self._lock_reasoning_lineage(session, workspace_id)
             record = session.scalar(select(ReasoningRunRecord).where(
                 ReasoningRunRecord.workspace_id == workspace_id,
                 ReasoningRunRecord.id == reasoning_run_id,
@@ -1981,6 +2127,13 @@ class PaperStore:
                     )).all()
                     if len(owned) != len(unique_ids):
                         raise PaperNotFoundError("knowledge node")
+                input_ids = session.scalars(select(ReasoningRunInputRecord.knowledge_node_id).where(
+                    ReasoningRunInputRecord.reasoning_run_id == reasoning_run_id,
+                )).all()
+                self._assert_reasoning_lineage_acyclic(
+                    session, workspace_id, list(input_ids), unique_ids,
+                    exclude_run_id=reasoning_run_id,
+                )
                 session.execute(delete(ReasoningRunOutputRecord).where(
                     ReasoningRunOutputRecord.reasoning_run_id == reasoning_run_id,
                 ))
