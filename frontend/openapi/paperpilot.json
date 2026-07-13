@@ -92,6 +92,142 @@
         "title": "Body_upload_papers_api_papers_upload_post",
         "type": "object"
       },
+      "CanvasLayout": {
+        "properties": {
+          "canvas_id": {
+            "default": "default",
+            "title": "Canvas Id",
+            "type": "string"
+          },
+          "collapsed": {
+            "default": false,
+            "title": "Collapsed",
+            "type": "boolean"
+          },
+          "height": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Height"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "knowledge_node_id": {
+            "title": "Knowledge Node Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          },
+          "width": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Width"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          },
+          "x": {
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "title": "Y",
+            "type": "number"
+          },
+          "z_index": {
+            "default": 0,
+            "title": "Z Index",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "workspace_id",
+          "knowledge_node_id",
+          "x",
+          "y",
+          "updated_at"
+        ],
+        "title": "CanvasLayout",
+        "type": "object"
+      },
+      "CanvasLayoutUpdate": {
+        "properties": {
+          "canvas_id": {
+            "default": "default",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Canvas Id",
+            "type": "string"
+          },
+          "collapsed": {
+            "default": false,
+            "title": "Collapsed",
+            "type": "boolean"
+          },
+          "height": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Height"
+          },
+          "width": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Width"
+          },
+          "x": {
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "title": "Y",
+            "type": "number"
+          },
+          "z_index": {
+            "default": 0,
+            "maximum": 10000.0,
+            "minimum": -10000.0,
+            "title": "Z Index",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "x",
+          "y"
+        ],
+        "title": "CanvasLayoutUpdate",
+        "type": "object"
+      },
       "Chunk": {
         "properties": {
           "id": {
@@ -290,6 +426,61 @@
         "title": "DocumentElement",
         "type": "object"
       },
+      "EvidenceRef": {
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "excerpt": {
+            "default": "",
+            "title": "Excerpt",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "knowledge_edge_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Knowledge Edge Id"
+          },
+          "knowledge_node_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Knowledge Node Id"
+          },
+          "source_span_id": {
+            "title": "Source Span Id",
+            "type": "string"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "workspace_id",
+          "source_span_id",
+          "created_at"
+        ],
+        "title": "EvidenceRef",
+        "type": "object"
+      },
       "ExternalPaperRequest": {
         "properties": {
           "abstract": {
@@ -346,6 +537,140 @@
           "identifier"
         ],
         "title": "ExternalPaperRequest",
+        "type": "object"
+      },
+      "GraphRetrievalHit": {
+        "properties": {
+          "hop_count": {
+            "title": "Hop Count",
+            "type": "integer"
+          },
+          "hop_path": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Hop Path",
+            "type": "array"
+          },
+          "node": {
+            "$ref": "#/components/schemas/KnowledgeNode"
+          },
+          "retrieval_reason": {
+            "title": "Retrieval Reason",
+            "type": "string"
+          },
+          "score": {
+            "title": "Score",
+            "type": "number"
+          }
+        },
+        "required": [
+          "node",
+          "score",
+          "retrieval_reason",
+          "hop_count"
+        ],
+        "title": "GraphRetrievalHit",
+        "type": "object"
+      },
+      "GraphRetrievalSeed": {
+        "properties": {
+          "confidence": {
+            "default": 1,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Confidence",
+            "type": "number"
+          },
+          "node_id": {
+            "title": "Node Id",
+            "type": "string"
+          },
+          "relevance": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Relevance",
+            "type": "number"
+          },
+          "retrieval_reason": {
+            "default": "base_retrieval",
+            "maxLength": 500,
+            "title": "Retrieval Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "node_id",
+          "relevance"
+        ],
+        "title": "GraphRetrievalSeed",
+        "type": "object"
+      },
+      "GraphRetrieveRequest": {
+        "properties": {
+          "max_degree": {
+            "default": 12,
+            "maximum": 50.0,
+            "minimum": 1.0,
+            "title": "Max Degree",
+            "type": "integer"
+          },
+          "max_first_hop_candidates": {
+            "default": 16,
+            "maximum": 50.0,
+            "minimum": 1.0,
+            "title": "Max First Hop Candidates",
+            "type": "integer"
+          },
+          "seeds": {
+            "items": {
+              "$ref": "#/components/schemas/GraphRetrievalSeed"
+            },
+            "maxItems": 32,
+            "minItems": 1,
+            "title": "Seeds",
+            "type": "array"
+          },
+          "top_k": {
+            "default": 8,
+            "maximum": 20.0,
+            "minimum": 1.0,
+            "title": "Top K",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "seeds"
+        ],
+        "title": "GraphRetrieveRequest",
+        "type": "object"
+      },
+      "GraphSnapshot": {
+        "properties": {
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeEdge"
+            },
+            "title": "Edges",
+            "type": "array"
+          },
+          "layouts": {
+            "items": {
+              "$ref": "#/components/schemas/CanvasLayout"
+            },
+            "title": "Layouts",
+            "type": "array"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeNode"
+            },
+            "title": "Nodes",
+            "type": "array"
+          }
+        },
+        "title": "GraphSnapshot",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -419,6 +744,420 @@
           "updated_at"
         ],
         "title": "IngestionJob",
+        "type": "object"
+      },
+      "KnowledgeEdge": {
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/EvidenceRef"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          },
+          "origin": {
+            "enum": [
+              "manual",
+              "llm",
+              "import"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "relation": {
+            "enum": [
+              "informs",
+              "supports",
+              "extends",
+              "formulates",
+              "contradicts",
+              "implements",
+              "depends_on",
+              "related"
+            ],
+            "title": "Relation",
+            "type": "string"
+          },
+          "source_node_id": {
+            "title": "Source Node Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "review_pending",
+              "active",
+              "verified",
+              "rejected",
+              "superseded",
+              "review_required",
+              "pruned"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "target_node_id": {
+            "title": "Target Node Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "workspace_id",
+          "source_node_id",
+          "target_node_id",
+          "relation",
+          "status",
+          "origin",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "KnowledgeEdge",
+        "type": "object"
+      },
+      "KnowledgeEdgeCreate": {
+        "properties": {
+          "evidence_excerpt": {
+            "default": "",
+            "maxLength": 10000,
+            "title": "Evidence Excerpt",
+            "type": "string"
+          },
+          "evidence_span_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 32,
+            "minItems": 1,
+            "title": "Evidence Span Ids",
+            "type": "array"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          },
+          "relation": {
+            "enum": [
+              "informs",
+              "supports",
+              "extends",
+              "formulates",
+              "contradicts",
+              "implements",
+              "depends_on",
+              "related"
+            ],
+            "title": "Relation",
+            "type": "string"
+          },
+          "source_node_id": {
+            "title": "Source Node Id",
+            "type": "string"
+          },
+          "target_node_id": {
+            "title": "Target Node Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_node_id",
+          "target_node_id",
+          "relation",
+          "evidence_span_ids"
+        ],
+        "title": "KnowledgeEdgeCreate",
+        "type": "object"
+      },
+      "KnowledgeEdgeStatusUpdate": {
+        "properties": {
+          "reason": {
+            "maxLength": 10000,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "review_pending",
+              "active",
+              "verified",
+              "rejected",
+              "superseded",
+              "review_required",
+              "pruned"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "reason"
+        ],
+        "title": "KnowledgeEdgeStatusUpdate",
+        "type": "object"
+      },
+      "KnowledgeNode": {
+        "properties": {
+          "confidence": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/EvidenceRef"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "layer": {
+            "minimum": 0.0,
+            "title": "Layer",
+            "type": "integer"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          },
+          "node_type": {
+            "enum": [
+              "source",
+              "idea",
+              "constraint",
+              "hypothesis"
+            ],
+            "title": "Node Type",
+            "type": "string"
+          },
+          "phase": {
+            "title": "Phase",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "review_pending",
+              "active",
+              "verified",
+              "rejected",
+              "superseded",
+              "review_required",
+              "pruned"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "workspace_id",
+          "node_type",
+          "status",
+          "layer",
+          "content",
+          "phase",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "KnowledgeNode",
+        "type": "object"
+      },
+      "KnowledgeNodeCreate": {
+        "properties": {
+          "confidence": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "content": {
+            "maxLength": 100000,
+            "minLength": 1,
+            "title": "Content",
+            "type": "string"
+          },
+          "evidence_excerpt": {
+            "default": "",
+            "maxLength": 10000,
+            "title": "Evidence Excerpt",
+            "type": "string"
+          },
+          "evidence_span_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Evidence Span Ids",
+            "type": "array"
+          },
+          "layer": {
+            "default": 0,
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Layer",
+            "type": "integer"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          },
+          "node_type": {
+            "enum": [
+              "source",
+              "idea",
+              "constraint",
+              "hypothesis"
+            ],
+            "title": "Node Type",
+            "type": "string"
+          },
+          "phase": {
+            "default": "unclassified",
+            "maxLength": 64,
+            "title": "Phase",
+            "type": "string"
+          },
+          "status": {
+            "default": "review_pending",
+            "enum": [
+              "review_pending",
+              "active",
+              "verified",
+              "rejected",
+              "superseded",
+              "review_required",
+              "pruned"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "node_type",
+          "content"
+        ],
+        "title": "KnowledgeNodeCreate",
+        "type": "object"
+      },
+      "KnowledgeNodeStatusResult": {
+        "properties": {
+          "affected_node_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Affected Node Ids",
+            "type": "array"
+          },
+          "node": {
+            "$ref": "#/components/schemas/KnowledgeNode"
+          }
+        },
+        "required": [
+          "node"
+        ],
+        "title": "KnowledgeNodeStatusResult",
+        "type": "object"
+      },
+      "KnowledgeNodeStatusUpdate": {
+        "properties": {
+          "status": {
+            "enum": [
+              "review_pending",
+              "active",
+              "verified",
+              "rejected",
+              "superseded",
+              "review_required",
+              "pruned"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "KnowledgeNodeStatusUpdate",
         "type": "object"
       },
       "LLMStatus": {
@@ -498,6 +1237,111 @@
           "personal_workspace"
         ],
         "title": "MeResponse",
+        "type": "object"
+      },
+      "NodeFeedback": {
+        "properties": {
+          "comment": {
+            "default": "",
+            "title": "Comment",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "knowledge_node_id": {
+            "title": "Knowledge Node Id",
+            "type": "string"
+          },
+          "rating": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": -1.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rating"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "string"
+          },
+          "verdict": {
+            "enum": [
+              "helpful",
+              "not_helpful",
+              "accepted",
+              "rejected"
+            ],
+            "title": "Verdict",
+            "type": "string"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "workspace_id",
+          "knowledge_node_id",
+          "user_id",
+          "verdict",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "NodeFeedback",
+        "type": "object"
+      },
+      "NodeFeedbackCreate": {
+        "properties": {
+          "comment": {
+            "default": "",
+            "maxLength": 10000,
+            "title": "Comment",
+            "type": "string"
+          },
+          "rating": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": -1.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rating"
+          },
+          "verdict": {
+            "enum": [
+              "helpful",
+              "not_helpful",
+              "accepted",
+              "rejected"
+            ],
+            "title": "Verdict",
+            "type": "string"
+          }
+        },
+        "required": [
+          "verdict"
+        ],
+        "title": "NodeFeedbackCreate",
         "type": "object"
       },
       "Note": {
@@ -892,6 +1736,146 @@
           }
         },
         "title": "PaperTagsUpdate",
+        "type": "object"
+      },
+      "ReasoningRun": {
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "inputs": {
+            "items": {
+              "$ref": "#/components/schemas/ReasoningRunLink"
+            },
+            "title": "Inputs",
+            "type": "array"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          },
+          "operator": {
+            "title": "Operator",
+            "type": "string"
+          },
+          "outputs": {
+            "items": {
+              "$ref": "#/components/schemas/ReasoningRunLink"
+            },
+            "title": "Outputs",
+            "type": "array"
+          },
+          "prompt": {
+            "default": "",
+            "title": "Prompt",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "succeeded",
+              "failed",
+              "cancelled"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "workspace_id",
+          "operator",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ReasoningRun",
+        "type": "object"
+      },
+      "ReasoningRunCreate": {
+        "properties": {
+          "input_node_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Input Node Ids",
+            "type": "array"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          },
+          "operator": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Operator",
+            "type": "string"
+          },
+          "output_node_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Output Node Ids",
+            "type": "array"
+          },
+          "prompt": {
+            "default": "",
+            "maxLength": 20000,
+            "title": "Prompt",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operator"
+        ],
+        "title": "ReasoningRunCreate",
+        "type": "object"
+      },
+      "ReasoningRunLink": {
+        "properties": {
+          "knowledge_node_id": {
+            "title": "Knowledge Node Id",
+            "type": "string"
+          },
+          "ordinal": {
+            "title": "Ordinal",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "knowledge_node_id",
+          "ordinal"
+        ],
+        "title": "ReasoningRunLink",
         "type": "object"
       },
       "ResearchConversation": {
@@ -1517,6 +2501,306 @@
         "title": "SearchResponse",
         "type": "object"
       },
+      "SourceImportCreate": {
+        "properties": {
+          "content": {
+            "maxLength": 5242880,
+            "minLength": 1,
+            "title": "Content",
+            "type": "string"
+          },
+          "content_hash": {
+            "maxLength": 64,
+            "minLength": 64,
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "latex",
+              "python",
+              "notebook",
+              "csv",
+              "chat",
+              "markdown"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "locator": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Locator",
+            "type": "string"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          }
+        },
+        "required": [
+          "kind",
+          "locator",
+          "content",
+          "content_hash"
+        ],
+        "title": "SourceImportCreate",
+        "type": "object"
+      },
+      "SourceImportResult": {
+        "properties": {
+          "source": {
+            "$ref": "#/components/schemas/SourceVersion"
+          },
+          "spans": {
+            "items": {
+              "$ref": "#/components/schemas/SourceSpan"
+            },
+            "title": "Spans",
+            "type": "array"
+          }
+        },
+        "required": [
+          "source"
+        ],
+        "title": "SourceImportResult",
+        "type": "object"
+      },
+      "SourceSpan": {
+        "properties": {
+          "bbox": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bbox"
+          },
+          "cell": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "items": {},
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cell"
+          },
+          "char_end": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Char End"
+          },
+          "char_start": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Char Start"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "line_end": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Line End"
+          },
+          "line_start": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Line Start"
+          },
+          "locator": {
+            "additionalProperties": true,
+            "title": "Locator",
+            "type": "object"
+          },
+          "page": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page"
+          },
+          "source_version_id": {
+            "title": "Source Version Id",
+            "type": "string"
+          },
+          "text": {
+            "default": "",
+            "title": "Text",
+            "type": "string"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "workspace_id",
+          "source_version_id",
+          "created_at"
+        ],
+        "title": "SourceSpan",
+        "type": "object"
+      },
+      "SourceVersion": {
+        "properties": {
+          "content_hash": {
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "locator": {
+            "title": "Locator",
+            "type": "string"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          },
+          "paper_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paper Id"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "workspace_id",
+          "kind",
+          "locator",
+          "content_hash",
+          "created_at"
+        ],
+        "title": "SourceVersion",
+        "type": "object"
+      },
+      "SourceVersionCreate": {
+        "properties": {
+          "content": {
+            "anyOf": [
+              {
+                "maxLength": 10000000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content"
+          },
+          "content_hash": {
+            "maxLength": 64,
+            "minLength": 64,
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "kind": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Kind",
+            "type": "string"
+          },
+          "locator": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Locator",
+            "type": "string"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          },
+          "paper_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paper Id"
+          }
+        },
+        "required": [
+          "kind",
+          "locator",
+          "content_hash"
+        ],
+        "title": "SourceVersionCreate",
+        "type": "object"
+      },
       "Tag": {
         "properties": {
           "color": {
@@ -2004,6 +3288,674 @@
           }
         },
         "summary": "Export Papers"
+      }
+    },
+    "/api/graph": {
+      "get": {
+        "operationId": "graph_snapshot_api_graph_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "canvas_id",
+            "required": false,
+            "schema": {
+              "default": "default",
+              "maxLength": 64,
+              "minLength": 1,
+              "title": "Canvas Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphSnapshot"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Graph Snapshot"
+      }
+    },
+    "/api/graph/edges": {
+      "post": {
+        "operationId": "create_graph_edge_api_graph_edges_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeEdgeCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeEdge"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Graph Edge"
+      }
+    },
+    "/api/graph/edges/{edge_id}/status": {
+      "patch": {
+        "operationId": "update_graph_edge_status_api_graph_edges__edge_id__status_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "edge_id",
+            "required": true,
+            "schema": {
+              "title": "Edge Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeEdgeStatusUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeEdge"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Graph Edge Status"
+      }
+    },
+    "/api/graph/nodes": {
+      "get": {
+        "operationId": "list_graph_nodes_api_graph_nodes_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 32,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "layer",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Layer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/KnowledgeNode"
+                  },
+                  "title": "Response List Graph Nodes Api Graph Nodes Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Graph Nodes"
+      },
+      "post": {
+        "operationId": "create_graph_node_api_graph_nodes_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeNodeCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeNode"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Graph Node"
+      }
+    },
+    "/api/graph/nodes/{node_id}": {
+      "get": {
+        "operationId": "get_graph_node_api_graph_nodes__node_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "title": "Node Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeNode"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Graph Node"
+      }
+    },
+    "/api/graph/nodes/{node_id}/feedback": {
+      "post": {
+        "operationId": "add_graph_node_feedback_api_graph_nodes__node_id__feedback_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "title": "Node Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NodeFeedbackCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NodeFeedback"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add Graph Node Feedback"
+      }
+    },
+    "/api/graph/nodes/{node_id}/layout": {
+      "put": {
+        "operationId": "update_graph_layout_api_graph_nodes__node_id__layout_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "title": "Node Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CanvasLayoutUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanvasLayout"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Graph Layout"
+      }
+    },
+    "/api/graph/nodes/{node_id}/status": {
+      "patch": {
+        "operationId": "update_graph_node_status_api_graph_nodes__node_id__status_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "title": "Node Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeNodeStatusUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeNodeStatusResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Graph Node Status"
+      }
+    },
+    "/api/graph/retrieve": {
+      "post": {
+        "operationId": "retrieve_graph_api_graph_retrieve_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GraphRetrieveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/GraphRetrievalHit"
+                  },
+                  "title": "Response Retrieve Graph Api Graph Retrieve Post",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Retrieve Graph"
+      }
+    },
+    "/api/graph/runs": {
+      "post": {
+        "operationId": "create_graph_reasoning_run_api_graph_runs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReasoningRunCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReasoningRun"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Graph Reasoning Run"
+      }
+    },
+    "/api/graph/sources": {
+      "get": {
+        "operationId": "list_graph_sources_api_graph_sources_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 32,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SourceVersion"
+                  },
+                  "title": "Response List Graph Sources Api Graph Sources Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Graph Sources"
+      },
+      "post": {
+        "operationId": "create_graph_source_api_graph_sources_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SourceVersionCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceVersion"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Graph Source"
+      }
+    },
+    "/api/graph/sources/import": {
+      "post": {
+        "description": "Store a content-verified source and derive bounded, typed provenance spans.",
+        "operationId": "import_graph_source_api_graph_sources_import_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SourceImportCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceImportResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Import Graph Source"
+      }
+    },
+    "/api/graph/sources/{source_version_id}/spans": {
+      "get": {
+        "operationId": "list_graph_source_spans_api_graph_sources__source_version_id__spans_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "source_version_id",
+            "required": true,
+            "schema": {
+              "title": "Source Version Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SourceSpan"
+                  },
+                  "title": "Response List Graph Source Spans Api Graph Sources  Source Version Id  Spans Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Graph Source Spans"
       }
     },
     "/api/health": {

@@ -34,6 +34,17 @@ export type ResearchMemoryEvent = components["schemas"]["ResearchMemoryEvent"];
 export type ResearchMemoryPage = components["schemas"]["ResearchMemoryPage"];
 export type ResearchMemoryKind = ResearchMemoryEvent["kind"];
 export type LLMStatus = components["schemas"]["LLMStatus"];
+export type GraphSnapshot = components["schemas"]["GraphSnapshot"];
+export type SourceVersion = components["schemas"]["SourceVersion"];
+export type SourceVersionCreate = components["schemas"]["SourceVersionCreate"];
+export type SourceImportCreate = components["schemas"]["SourceImportCreate"];
+export type SourceImportResult = components["schemas"]["SourceImportResult"];
+export type SourceSpan = components["schemas"]["SourceSpan"];
+export type KnowledgeNode = components["schemas"]["KnowledgeNode"];
+export type KnowledgeNodeCreate = components["schemas"]["KnowledgeNodeCreate"];
+export type KnowledgeEdge = components["schemas"]["KnowledgeEdge"];
+export type KnowledgeEdgeCreate = components["schemas"]["KnowledgeEdgeCreate"];
+export type KnowledgeEdgeStatusUpdate = components["schemas"]["KnowledgeEdgeStatusUpdate"];
 
 export type ResearchMessagePageOptions = { limit?: number; beforeOrdinal?: number | null };
 export type ResearchMemoryPageOptions = ResearchMessagePageOptions & { kind?: ResearchMemoryKind | null };
@@ -95,6 +106,42 @@ export async function renameWorkspace(workspaceId: string, name: string, signal?
 export async function listPapers(signal?: AbortSignal): Promise<Paper[]> {
   const result = await api.GET("/api/papers", { signal });
   return unwrap(result, "論文一覧を取得できませんでした");
+}
+
+export async function getGraphSnapshot(canvasId = "default", signal?: AbortSignal): Promise<GraphSnapshot> {
+  return unwrap(await api.GET("/api/graph", { params: { query: { canvas_id:canvasId } }, signal }), "知識グラフを取得できませんでした");
+}
+
+export async function listGraphSources(signal?: AbortSignal): Promise<SourceVersion[]> {
+  return unwrap(await api.GET("/api/graph/sources", { signal }), "Source一覧を取得できませんでした");
+}
+
+export async function createGraphSource(body: SourceVersionCreate, signal?: AbortSignal): Promise<SourceVersion> {
+  return unwrap(await api.POST("/api/graph/sources", { body, signal }), "Sourceを作成できませんでした");
+}
+
+export async function importGraphSource(body: SourceImportCreate, signal?: AbortSignal): Promise<SourceImportResult> {
+  return unwrap(await api.POST("/api/graph/sources/import", { body, signal }), "Sourceを取り込めませんでした");
+}
+
+export async function listGraphSourceSpans(sourceVersionId: string, signal?: AbortSignal): Promise<SourceSpan[]> {
+  return unwrap(await api.GET("/api/graph/sources/{source_version_id}/spans", {
+    params: { path: { source_version_id:sourceVersionId } }, signal,
+  }), "Source Spanを取得できませんでした");
+}
+
+export async function createGraphNode(body: KnowledgeNodeCreate, signal?: AbortSignal): Promise<KnowledgeNode> {
+  return unwrap(await api.POST("/api/graph/nodes", { body, signal }), "知識ノードを作成できませんでした");
+}
+
+export async function createGraphEdge(body: KnowledgeEdgeCreate, signal?: AbortSignal): Promise<KnowledgeEdge> {
+  return unwrap(await api.POST("/api/graph/edges", { body, signal }), "知識エッジを作成できませんでした");
+}
+
+export async function updateGraphEdgeStatus(edgeId: string, body: KnowledgeEdgeStatusUpdate, signal?: AbortSignal): Promise<KnowledgeEdge> {
+  return unwrap(await api.PATCH("/api/graph/edges/{edge_id}/status", {
+    params: { path: { edge_id:edgeId } }, body, signal,
+  }), "知識エッジの状態を更新できませんでした");
 }
 
 export async function getPaperDetail(paperId: string, signal?: AbortSignal): Promise<PaperDetail> {

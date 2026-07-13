@@ -296,6 +296,208 @@ class DocumentElementRecord(Base):
     asset_key: Mapped[str | None] = mapped_column(Text, unique=True)
 
 
+# The research graph deliberately does not reuse ``papers``/``chunks`` as its
+# primary identity.  A paper can be re-imported, while a source version and its
+# spans must remain immutable so every generated node can be audited later.
+class SourceVersionRecord(Base):
+    __tablename__ = "source_versions"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "kind", "locator", "content_hash", name="uq_source_versions_workspace_kind_locator_content_hash"),
+        Index("ix_source_versions_workspace_kind_created", "workspace_id", "kind", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    paper_id: Mapped[str | None] = mapped_column(ForeignKey("papers.id", ondelete="SET NULL"), index=True)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    locator: Mapped[str] = mapped_column(Text, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class SourceSpanRecord(Base):
+    __tablename__ = "source_spans"
+    __table_args__ = (
+        Index("ix_source_spans_source_version_page", "source_version_id", "page"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    source_version_id: Mapped[str] = mapped_column(ForeignKey("source_versions.id", ondelete="CASCADE"), nullable=False, index=True)
+    page: Mapped[int | None] = mapped_column(Integer)
+    line_start: Mapped[int | None] = mapped_column(Integer)
+    line_end: Mapped[int | None] = mapped_column(Integer)
+    char_start: Mapped[int | None] = mapped_column(Integer)
+    char_end: Mapped[int | None] = mapped_column(Integer)
+    bbox: Mapped[list[float] | None] = mapped_column(JSON)
+    cell: Mapped[dict | list | None] = mapped_column(JSON)
+    locator_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    text: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class KnowledgeNodeRecord(Base):
+    __tablename__ = "knowledge_nodes"
+    __table_args__ = (
+        CheckConstraint("node_type IN ('source', 'idea', 'constraint', 'hypothesis')", name="ck_knowledge_nodes_type"),
+        CheckConstraint("status IN ('review_pending', 'active', 'verified', 'rejected', 'superseded', 'review_required', 'pruned')", name="ck_knowledge_nodes_status"),
+        CheckConstraint("layer >= 0", name="ck_knowledge_nodes_layer"),
+        CheckConstraint("confidence IS NULL OR (confidence >= 0 AND confidence <= 1)", name="ck_knowledge_nodes_confidence"),
+        Index("ix_knowledge_nodes_workspace_layer_status", "workspace_id", "layer", "status"),
+        Index("ix_knowledge_nodes_workspace_phase", "workspace_id", "phase"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_by: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    node_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="review_pending")
+    layer: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    phase: Mapped[str] = mapped_column(String(64), nullable=False, default="unclassified")
+    confidence: Mapped[float | None] = mapped_column(Float)
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class KnowledgeEdgeRecord(Base):
+    __tablename__ = "knowledge_edges"
+    __table_args__ = (
+        CheckConstraint("source_node_id != target_node_id", name="ck_knowledge_edges_distinct_nodes"),
+        CheckConstraint("relation IN ('informs', 'supports', 'extends', 'formulates', 'contradicts', 'implements', 'depends_on', 'related')", name="ck_knowledge_edges_relation"),
+        CheckConstraint("status IN ('review_pending', 'active', 'verified', 'rejected', 'superseded', 'review_required', 'pruned')", name="ck_knowledge_edges_status"),
+        CheckConstraint("origin IN ('manual', 'llm', 'import')", name="ck_knowledge_edges_origin"),
+        Index("ix_knowledge_edges_workspace_source", "workspace_id", "source_node_id"),
+        Index("ix_knowledge_edges_workspace_target", "workspace_id", "target_node_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_by: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    source_node_id: Mapped[str] = mapped_column(ForeignKey("knowledge_nodes.id", ondelete="CASCADE"), nullable=False, index=True)
+    target_node_id: Mapped[str] = mapped_column(ForeignKey("knowledge_nodes.id", ondelete="CASCADE"), nullable=False, index=True)
+    relation: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    origin: Mapped[str] = mapped_column(String(32), nullable=False, default="manual")
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class KnowledgeEdgeStatusEventRecord(Base):
+    __tablename__ = "knowledge_edge_status_events"
+    __table_args__ = (Index("ix_edge_status_events_edge_created", "knowledge_edge_id", "created_at"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    knowledge_edge_id: Mapped[str] = mapped_column(ForeignKey("knowledge_edges.id", ondelete="CASCADE"), nullable=False, index=True)
+    actor_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    from_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    to_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class EvidenceRefRecord(Base):
+    __tablename__ = "evidence_refs"
+    __table_args__ = (
+        CheckConstraint(
+            "(knowledge_node_id IS NOT NULL AND knowledge_edge_id IS NULL) OR "
+            "(knowledge_node_id IS NULL AND knowledge_edge_id IS NOT NULL)",
+            name="ck_evidence_refs_one_subject",
+        ),
+        Index("ix_evidence_refs_node", "knowledge_node_id"),
+        Index("ix_evidence_refs_edge", "knowledge_edge_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    source_span_id: Mapped[str] = mapped_column(ForeignKey("source_spans.id", ondelete="RESTRICT"), nullable=False, index=True)
+    knowledge_node_id: Mapped[str | None] = mapped_column(ForeignKey("knowledge_nodes.id", ondelete="CASCADE"))
+    knowledge_edge_id: Mapped[str | None] = mapped_column(ForeignKey("knowledge_edges.id", ondelete="CASCADE"))
+    excerpt: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ReasoningRunRecord(Base):
+    __tablename__ = "reasoning_runs"
+    __table_args__ = (
+        CheckConstraint("status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')", name="ck_reasoning_runs_status"),
+        Index("ix_reasoning_runs_workspace_created", "workspace_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_by: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    operator: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
+    prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ReasoningRunInputRecord(Base):
+    __tablename__ = "reasoning_run_inputs"
+    __table_args__ = (UniqueConstraint("reasoning_run_id", "knowledge_node_id", name="uq_reasoning_run_inputs_run_node"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    reasoning_run_id: Mapped[str] = mapped_column(ForeignKey("reasoning_runs.id", ondelete="CASCADE"), nullable=False, index=True)
+    knowledge_node_id: Mapped[str] = mapped_column(ForeignKey("knowledge_nodes.id", ondelete="RESTRICT"), nullable=False, index=True)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class ReasoningRunOutputRecord(Base):
+    __tablename__ = "reasoning_run_outputs"
+    __table_args__ = (UniqueConstraint("reasoning_run_id", "knowledge_node_id", name="uq_reasoning_run_outputs_run_node"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    reasoning_run_id: Mapped[str] = mapped_column(ForeignKey("reasoning_runs.id", ondelete="CASCADE"), nullable=False, index=True)
+    knowledge_node_id: Mapped[str] = mapped_column(ForeignKey("knowledge_nodes.id", ondelete="RESTRICT"), nullable=False, index=True)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class NodeFeedbackRecord(Base):
+    __tablename__ = "node_feedback"
+    __table_args__ = (
+        CheckConstraint("verdict IN ('helpful', 'not_helpful', 'accepted', 'rejected')", name="ck_node_feedback_verdict"),
+        CheckConstraint("rating IS NULL OR (rating >= -1 AND rating <= 1)", name="ck_node_feedback_rating"),
+        UniqueConstraint("knowledge_node_id", "user_id", name="uq_node_feedback_node_user"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    knowledge_node_id: Mapped[str] = mapped_column(ForeignKey("knowledge_nodes.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    verdict: Mapped[str] = mapped_column(String(32), nullable=False)
+    rating: Mapped[float | None] = mapped_column(Float)
+    comment: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class CanvasLayoutRecord(Base):
+    __tablename__ = "canvas_layouts"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "canvas_id", "knowledge_node_id", name="uq_canvas_layouts_canvas_node"),
+        Index("ix_canvas_layouts_workspace_canvas", "workspace_id", "canvas_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    canvas_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default")
+    knowledge_node_id: Mapped[str] = mapped_column(ForeignKey("knowledge_nodes.id", ondelete="CASCADE"), nullable=False, index=True)
+    x: Mapped[float] = mapped_column(Float, nullable=False)
+    y: Mapped[float] = mapped_column(Float, nullable=False)
+    width: Mapped[float | None] = mapped_column(Float)
+    height: Mapped[float | None] = mapped_column(Float)
+    z_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    collapsed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 def create_database_engine(database_url: str) -> Engine:
     if not database_url:
         raise ValueError("DATABASE_URL is required; no implicit database fallback is configured")

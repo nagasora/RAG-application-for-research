@@ -34,13 +34,20 @@ from .models import (
     SearchResponse, Tag, TagCreate, UploadResult, User, Workspace, WorkspaceCreate,
     ResearchConversation, ResearchConversationCreate, ResearchConversationDetail,
     ResearchMemoryPage, ResearchMessagePage,
+    CanvasLayout, CanvasLayoutUpdate, GraphRetrieveRequest, GraphRetrievalHit,
+    GraphSnapshot, KnowledgeEdge, KnowledgeEdgeCreate, KnowledgeEdgeStatusUpdate, KnowledgeNode,
+    KnowledgeNodeCreate, KnowledgeNodeStatusResult, KnowledgeNodeStatusUpdate, NodeFeedback,
+    NodeFeedbackCreate, ReasoningRun, ReasoningRunCreate, SourceSpan,
+    SourceImportCreate, SourceImportResult, SourceVersion, SourceVersionCreate,
 )
+from .graph_rag import GraphEdge as RetrievalGraphEdge, PrunedTwoHopConfig, RetrievalSeed, pruned_two_hop_retrieve
+from .source_parsers import SourceParseLimitError, parse_source
 from .rag import (
     ANSWER_MODEL, chunk_pages, citations_from, compare_papers, embed_texts, embedding_config, embedding_model, extractive_answer,
     hybrid_search, research_gaps, search,
 )
 from .ingestion import process_ingestion_job
-from .storage import LocalOriginalStorage, OriginalStorage
+from .storage import ImmutableObjectExists, LocalOriginalStorage, OriginalStorage
 from .store import DuplicatePaperError, PaperNotFoundError, PaperStore, ResourceConflictError, WorkspaceAccessError, WorkspacePermissionError
 
 load_dotenv()
@@ -617,7 +624,13 @@ def delete_paper(
         extracted_assets = [element.asset_key for element in store.list_document_elements(context.workspace.id, paper_id) if element.asset_key]
     except PaperNotFoundError:
         extracted_assets = []
-    deleted = store.delete(context.workspace.id, paper_id)
+    try:
+        deleted = store.delete(context.workspace.id, paper_id)
+    except ResourceConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="この論文は知識グラフの根拠として使用されているため削除できません",
+        ) from exc
     if not deleted:
         raise HTTPException(status_code=404, detail="論文が見つかりません")
     if deleted.storage_key:
@@ -1027,6 +1040,342 @@ def gaps(
     context: WorkspaceContext = Depends(get_workspace_context),
 ):
     return research_gaps(selected_papers(body, store, context.workspace.id))
+
+
+def _graph_not_found(exc: Exception) -> HTTPException:
+    return HTTPException(status_code=404, detail="graph resource not found")
+
+
+@app.get("/api/graph", response_model=GraphSnapshot)
+def graph_snapshot(
+    canvas_id: str = Query(default="default", min_length=1, max_length=64),
+    store: PaperStore = Depends(get_store),
+    context: WorkspaceContext = Depends(get_workspace_context),
+):
+    return GraphSnapshot(
+        nodes=store.list_knowledge_nodes(context.workspace.id),
+        edges=store.list_knowledge_edges(context.workspace.id),
+        layouts=store.list_canvas_layouts(context.workspace.id, canvas_id),
+    )
+
+
+@app.get("/api/graph/sources", response_model=list[SourceVersion])
+def list_graph_sources(
+    kind: str | None = Query(default=None, max_length=32),
+    store: PaperStore = Depends(get_store),
+    context: WorkspaceContext = Depends(get_workspace_context),
+):
+    return store.list_source_versions(context.workspace.id, kind)
+
+
+@app.post("/api/graph/sources", response_model=SourceVersion, status_code=201)
+def create_graph_source(
+    body: SourceVersionCreate, store: PaperStore = Depends(get_store),
+    originals: OriginalStorage = Depends(get_original_storage),
+    context: WorkspaceContext = Depends(get_workspace_context),
+):
+    require_workspace_write(context)
+    content_hash = body.content_hash.lower()
+    metadata = dict(body.metadata)
+    if body.paper_id is not None:
+        raise HTTPException(status_code=422, detail="paper sources are created only by the ingestion pipeline")
+    if body.kind.strip().casefold() == "paper":
+        raise HTTPException(status_code=422, detail="paper source kind is reserved for the ingestion pipeline")
+    if body.content is None:
+        raise HTTPException(status_code=422, detail="source content is required")
+    if body.content is not None:
+        calculated_hash = hashlib.sha256(body.content.encode("utf-8")).hexdigest()
+        if calculated_hash != content_hash:
+            raise HTTPException(status_code=422, detail="content_hash does not match source content")
+        storage_key = f"originals/sources/{content_hash}/source.txt"
+        try:
+            originals.put(storage_key, body.content.encode("utf-8"))
+        except ImmutableObjectExists:
+            pass
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail="source content could not be persisted") from exc
+        metadata["storage_key"] = storage_key
+    try:
+        return store.create_source_version(
+            context.workspace.id, kind=body.kind, locator=body.locator,
+            content_hash=content_hash, paper_id=body.paper_id, metadata=metadata,
+        )
+    except PaperNotFoundError as exc:
+        raise _graph_not_found(exc) from exc
+    except ResourceConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/graph/sources/import", response_model=SourceImportResult, status_code=201)
+def import_graph_source(
+    body: SourceImportCreate, store: PaperStore = Depends(get_store),
+    originals: OriginalStorage = Depends(get_original_storage),
+    context: WorkspaceContext = Depends(get_workspace_context),
+):
+    """Store a content-verified source and derive bounded, typed provenance spans."""
+    require_workspace_write(context)
+    encoded = body.content.encode("utf-8")
+    content_hash = hashlib.sha256(encoded).hexdigest()
+    if content_hash != body.content_hash.lower():
+        raise HTTPException(status_code=422, detail="content_hash does not match source content")
+    try:
+        parsed = parse_source(body.kind, encoded)
+    except SourceParseLimitError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if len(parsed.spans) > 10_000:
+        raise HTTPException(status_code=413, detail="parsed source has too many spans")
+    storage_key = f"originals/sources/{content_hash}/source.txt"
+    try:
+        originals.put(storage_key, encoded)
+    except ImmutableObjectExists:
+        pass
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="source content could not be persisted") from exc
+
+    metadata = dict(body.metadata)
+    metadata.update(dict(parsed.metadata))
+    metadata["storage_key"] = storage_key
+    try:
+        source, spans = store.create_source_import(
+            context.workspace.id, kind=parsed.source_kind, locator=body.locator,
+            content_hash=content_hash, metadata=metadata,
+            spans=[{
+                "page": item.page, "line_start": item.line_start, "line_end": item.line_end,
+                "char_start": item.char_start, "char_end": item.char_end,
+                "cell": item.cell_index,
+                "locator": {"kind": item.kind, "anchor": item.locator, **dict(item.metadata)},
+                "text": item.text,
+            } for item in parsed.spans],
+        )
+        return SourceImportResult(source=source, spans=spans)
+    except PaperNotFoundError as exc:
+        raise _graph_not_found(exc) from exc
+    except ResourceConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/graph/sources/{source_version_id}/spans", response_model=list[SourceSpan])
+def list_graph_source_spans(
+    source_version_id: str, store: PaperStore = Depends(get_store),
+    context: WorkspaceContext = Depends(get_workspace_context),
+):
+    try:
+        return store.list_source_spans(context.workspace.id, source_version_id)
+    except PaperNotFoundError as exc:
+        raise _graph_not_found(exc) from exc
+
+
+@app.get("/api/graph/nodes", response_model=list[KnowledgeNode])
+def list_graph_nodes(
+    status: str | None = Query(default=None, max_length=32), layer: int | None = Query(default=None, ge=0),
+    store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context),
+):
+    return store.list_knowledge_nodes(context.workspace.id, status=status, layer=layer)
+
+
+@app.post("/api/graph/nodes", response_model=KnowledgeNode, status_code=201)
+def create_graph_node(
+    body: KnowledgeNodeCreate, store: PaperStore = Depends(get_store),
+    context: WorkspaceContext = Depends(get_workspace_context),
+):
+    require_workspace_write(context)
+    try:
+        return store.create_knowledge_node(
+            context.workspace.id, node_type=body.node_type, content=body.content,
+            layer=body.layer, status=body.status, phase=body.phase,
+            confidence=body.confidence, created_by=context.user.id, metadata=body.metadata,
+            evidence_span_ids=body.evidence_span_ids, evidence_excerpt=body.evidence_excerpt,
+        )
+    except PaperNotFoundError as exc:
+        raise _graph_not_found(exc) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/graph/nodes/{node_id}", response_model=KnowledgeNode)
+def get_graph_node(
+    node_id: str, store: PaperStore = Depends(get_store),
+    context: WorkspaceContext = Depends(get_workspace_context),
+):
+    try:
+        return store.get_knowledge_node(context.workspace.id, node_id)
+    except PaperNotFoundError as exc:
+        raise _graph_not_found(exc) from exc
+
+
+@app.patch("/api/graph/nodes/{node_id}/status", response_model=KnowledgeNodeStatusResult)
+def update_graph_node_status(
+    node_id: str, body: KnowledgeNodeStatusUpdate, store: PaperStore = Depends(get_store),
+    context: WorkspaceContext = Depends(get_workspace_context),
+):
+    require_workspace_write(context)
+    try:
+        node, affected = store.set_knowledge_node_status(context.workspace.id, node_id, body.status)
+        return KnowledgeNodeStatusResult(node=node, affected_node_ids=affected)
+    except PaperNotFoundError as exc:
+        raise _graph_not_found(exc) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/graph/edges", response_model=KnowledgeEdge, status_code=201)
+def create_graph_edge(
+    body: KnowledgeEdgeCreate, store: PaperStore = Depends(get_store),
+    context: WorkspaceContext = Depends(get_workspace_context),
+):
+    require_workspace_write(context)
+    try:
+        return store.create_knowledge_edge(
+            context.workspace.id, source_node_id=body.source_node_id,
+            target_node_id=body.target_node_id, relation=body.relation,
+            evidence_span_ids=body.evidence_span_ids, metadata=body.metadata,
+            evidence_excerpt=body.evidence_excerpt, created_by=context.user.id,
+        )
+    except PaperNotFoundError as exc:
+        raise _graph_not_found(exc) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.patch("/api/graph/edges/{edge_id}/status", response_model=KnowledgeEdge)
+def update_graph_edge_status(
+    edge_id: str, body: KnowledgeEdgeStatusUpdate,
+    store: PaperStore = Depends(get_store),
+    context: WorkspaceContext = Depends(get_workspace_context),
+):
+    require_workspace_write(context)
+    try:
+        return store.set_knowledge_edge_status(
+            context.workspace.id, edge_id, status=body.status,
+            actor_id=context.user.id, reason=body.reason,
+        )
+    except PaperNotFoundError as exc:
+        raise _graph_not_found(exc) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/graph/runs", response_model=ReasoningRun, status_code=201)
+def create_graph_reasoning_run(
+    body: ReasoningRunCreate, store: PaperStore = Depends(get_store),
+    context: WorkspaceContext = Depends(get_workspace_context),
+):
+    require_workspace_write(context)
+    try:
+        return store.create_reasoning_run(
+            context.workspace.id, operator=body.operator, input_node_ids=body.input_node_ids,
+            output_node_ids=body.output_node_ids, prompt=body.prompt,
+            created_by=context.user.id, metadata=body.metadata,
+        )
+    except PaperNotFoundError as exc:
+        raise _graph_not_found(exc) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/graph/nodes/{node_id}/feedback", response_model=NodeFeedback)
+def add_graph_node_feedback(
+    node_id: str, body: NodeFeedbackCreate, store: PaperStore = Depends(get_store),
+    context: WorkspaceContext = Depends(get_workspace_context),
+):
+    require_workspace_write(context)
+    try:
+        return store.upsert_node_feedback(
+            context.workspace.id, node_id, context.user.id, verdict=body.verdict,
+            rating=body.rating, comment=body.comment,
+        )
+    except PaperNotFoundError as exc:
+        raise _graph_not_found(exc) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.put("/api/graph/nodes/{node_id}/layout", response_model=CanvasLayout)
+def update_graph_layout(
+    node_id: str, body: CanvasLayoutUpdate, store: PaperStore = Depends(get_store),
+    context: WorkspaceContext = Depends(get_workspace_context),
+):
+    require_workspace_write(context)
+    try:
+        return store.upsert_canvas_layout(
+            context.workspace.id, node_id, x=body.x, y=body.y, canvas_id=body.canvas_id,
+            width=body.width, height=body.height, z_index=body.z_index, collapsed=body.collapsed,
+        )
+    except PaperNotFoundError as exc:
+        raise _graph_not_found(exc) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/graph/retrieve", response_model=list[GraphRetrievalHit])
+def retrieve_graph(
+    body: GraphRetrieveRequest, store: PaperStore = Depends(get_store),
+    context: WorkspaceContext = Depends(get_workspace_context),
+):
+    retrievable_statuses = {"active", "verified"}
+    retrievable_node_ids = {
+        node.id for node in store.list_knowledge_nodes(context.workspace.id)
+        if node.status in retrievable_statuses
+    }
+    graph_edges = [
+        edge for edge in store.list_knowledge_edges(context.workspace.id)
+        if edge.status in {"active", "verified"}
+        and edge.source_node_id in retrievable_node_ids and edge.target_node_id in retrievable_node_ids
+    ]
+    outgoing: dict[str, list[RetrievalGraphEdge]] = {}
+    for edge in graph_edges:
+        raw_confidence = edge.metadata.get("confidence", 1.0)
+        try:
+            confidence = float(raw_confidence)
+        except (TypeError, ValueError):
+            confidence = 1.0
+        outgoing.setdefault(edge.source_node_id, []).append(RetrievalGraphEdge(
+            id=edge.id, source_id=edge.source_node_id, target_id=edge.target_node_id,
+            relation=edge.relation, confidence=confidence,
+        ))
+
+    class AuthorizedNeighbors:
+        def outgoing_edges(self, workspace_id: str, node_id: str):
+            if workspace_id != context.workspace.id:
+                return []
+            return outgoing.get(node_id, [])
+
+    hits = pruned_two_hop_retrieve(
+        context.workspace.id,
+        [RetrievalSeed(
+            node_id=seed.node_id, relevance=seed.relevance, confidence=seed.confidence,
+            retrieval_reason=seed.retrieval_reason,
+        ) for seed in body.seeds if seed.node_id in retrievable_node_ids],
+        AuthorizedNeighbors(),
+        config=PrunedTwoHopConfig(
+            top_k=body.top_k, max_degree=body.max_degree,
+            max_first_hop_candidates=body.max_first_hop_candidates,
+        ),
+    )
+    result: list[GraphRetrievalHit] = []
+    for hit in hits:
+        try:
+            node = store.get_knowledge_node(context.workspace.id, hit.node_id)
+        except PaperNotFoundError:
+            continue
+        if node.status not in retrievable_statuses:
+            continue
+        result.append(GraphRetrievalHit(
+            node=node, score=hit.score, retrieval_reason=hit.retrieval_reason,
+            hop_count=hit.hop_count,
+            hop_path=[{
+                "edge_id": step.edge_id, "from_node_id": step.from_node_id,
+                "to_node_id": step.to_node_id, "relation": step.relation,
+                "confidence": step.confidence,
+            } for step in hit.hop_path],
+        ))
+    return result
 
 
 @app.get("/api/tags", response_model=list[Tag])
