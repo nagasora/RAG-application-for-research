@@ -16,7 +16,8 @@ if config.config_file_name is not None:
 
 config_dir = Path(config.config_file_name).resolve().parent if config.config_file_name else Path.cwd()
 load_dotenv(config_dir / ".env")
-database_url = os.getenv("DATABASE_URL") or config.get_main_option("sqlalchemy.url")
+configured_url = config.get_main_option("sqlalchemy.url").strip()
+database_url = configured_url or os.getenv("DATABASE_URL")
 if not database_url:
     raise RuntimeError("DATABASE_URL is required for Alembic")
 config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))

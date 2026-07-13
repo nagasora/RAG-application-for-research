@@ -9,6 +9,8 @@ export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost
 export type Paper = components["schemas"]["PaperSummary"];
 export type Citation = components["schemas"]["Citation"];
 export type SearchRequest = components["schemas"]["SearchRequest"];
+export type SearchResponse = components["schemas"]["SearchResponse"];
+export type AnswerClaim = components["schemas"]["AnswerClaim"];
 export type UploadResult = components["schemas"]["UploadResult"];
 export type CompareRow = components["schemas"]["ComparisonRow"];
 export type Gap = components["schemas"]["ResearchGap"];
@@ -24,6 +26,17 @@ export type SavedComparison = components["schemas"]["SavedComparison"];
 export type ExportFormat = "bibtex" | "ris" | "csv";
 export type IngestionJob = components["schemas"]["IngestionJob"];
 export type DocumentElement = components["schemas"]["DocumentElement"];
+export type ResearchConversation = components["schemas"]["ResearchConversation"];
+export type ResearchConversationDetail = components["schemas"]["ResearchConversationDetail"];
+export type ResearchMessage = components["schemas"]["ResearchMessage"];
+export type ResearchMessagePage = components["schemas"]["ResearchMessagePage"];
+export type ResearchMemoryEvent = components["schemas"]["ResearchMemoryEvent"];
+export type ResearchMemoryPage = components["schemas"]["ResearchMemoryPage"];
+export type ResearchMemoryKind = ResearchMemoryEvent["kind"];
+export type LLMStatus = components["schemas"]["LLMStatus"];
+
+export type ResearchMessagePageOptions = { limit?: number; beforeOrdinal?: number | null };
+export type ResearchMemoryPageOptions = ResearchMessagePageOptions & { kind?: ResearchMemoryKind | null };
 
 const api = createClient<paths>({ baseUrl: API_BASE_URL, credentials: "include", fetch: authenticatedFetch });
 
@@ -39,9 +52,25 @@ async function unwrap<T>(result: ApiResult<T>, fallback: string): Promise<T> {
   return result.data;
 }
 
+async function fetchAuthenticatedBlob(url: string, fallback: string, signal?: AbortSignal): Promise<Blob> {
+  let response: Response;
+  try {
+    response = await fetch(url, { headers:authenticatedHeaders(), credentials:"include", signal });
+  } catch (error) {
+    throw toApiError(error, fallback);
+  }
+  if (!response.ok) throw await errorFromFetchResponse(response, fallback);
+  return response.blob();
+}
+
 export async function getMe(signal?: AbortSignal): Promise<Me> {
   const result = await api.GET("/api/me", { signal });
   return unwrap(result, "ユーザー情報を取得できませんでした");
+}
+
+export async function getLLMStatus(signal?: AbortSignal): Promise<LLMStatus> {
+  const result = await api.GET("/api/llm/status", { signal });
+  return unwrap(result, "LLMの接続状態を取得できませんでした");
 }
 
 export async function listWorkspaces(signal?: AbortSignal): Promise<Workspace[]> {
@@ -52,6 +81,15 @@ export async function listWorkspaces(signal?: AbortSignal): Promise<Workspace[]>
 export async function createWorkspace(name: string, signal?: AbortSignal): Promise<Workspace> {
   const result = await api.POST("/api/workspaces", { body: { name }, signal });
   return unwrap(result, "ワークスペースを作成できませんでした");
+}
+
+export async function renameWorkspace(workspaceId: string, name: string, signal?: AbortSignal): Promise<Workspace> {
+  const result = await api.PATCH("/api/workspaces/{workspace_id}", {
+    params: { path: { workspace_id: workspaceId } },
+    body: { name },
+    signal,
+  });
+  return unwrap(result, "ワークスペース名を変更できませんでした");
 }
 
 export async function listPapers(signal?: AbortSignal): Promise<Paper[]> {
@@ -84,14 +122,10 @@ export async function getPaperChunk(paperId: string, chunkId: string, signal?: A
 }
 
 export async function getPaperFile(paperId: string, signal?: AbortSignal): Promise<Blob> {
-  let response: Response;
-  try {
-    response = await fetch(`${API_BASE_URL}/api/papers/${encodeURIComponent(paperId)}/file`, {
-      headers: authenticatedHeaders(), credentials: "include", signal,
-    });
-  } catch (error) { throw toApiError(error, "原本ファイルを取得できませんでした"); }
-  if (!response.ok) throw await errorFromFetchResponse(response, "原本ファイルを取得できませんでした");
-  return response.blob();
+  return fetchAuthenticatedBlob(
+    `${API_BASE_URL}/api/papers/${encodeURIComponent(paperId)}/file`,
+    "原本ファイルを取得できませんでした", signal,
+  );
 }
 
 export async function getJob(jobId: string, signal?: AbortSignal): Promise<IngestionJob> {
@@ -120,14 +154,10 @@ export async function listAssets(paperId: string, signal?: AbortSignal): Promise
 }
 
 export async function getAssetFile(paperId: string, elementId: string, signal?: AbortSignal): Promise<Blob> {
-  let response: Response;
-  try {
-    response = await fetch(`${API_BASE_URL}/api/papers/${encodeURIComponent(paperId)}/assets/${encodeURIComponent(elementId)}/file`, {
-      headers: authenticatedHeaders(), credentials: "include", signal,
-    });
-  } catch (error) { throw toApiError(error, "図版を取得できませんでした"); }
-  if (!response.ok) throw await errorFromFetchResponse(response, "図版を取得できませんでした");
-  return response.blob();
+  return fetchAuthenticatedBlob(
+    `${API_BASE_URL}/api/papers/${encodeURIComponent(paperId)}/assets/${encodeURIComponent(elementId)}/file`,
+    "図版を取得できませんでした", signal,
+  );
 }
 
 function isUploadResult(value: unknown): value is UploadResult {
@@ -271,6 +301,48 @@ export async function listSearchHistory(signal?: AbortSignal): Promise<SearchHis
 
 export async function deleteSearchHistory(historyId: string, signal?: AbortSignal): Promise<void> {
   return expectNoContent(await api.DELETE("/api/search/history/{history_id}", { params: { path: { history_id: historyId } }, signal }), "検索履歴を削除できませんでした");
+}
+
+export async function listResearchConversations(signal?: AbortSignal): Promise<ResearchConversation[]> {
+  return unwrap(await api.GET("/api/research/conversations", { signal }), "研究対話の一覧を取得できませんでした");
+}
+
+export async function createResearchConversation(title: string, signal?: AbortSignal): Promise<ResearchConversation> {
+  return unwrap(await api.POST("/api/research/conversations", { body: { title }, signal }), "研究対話を作成できませんでした");
+}
+
+export async function getResearchConversation(conversationId: string, signal?: AbortSignal): Promise<ResearchConversationDetail> {
+  return unwrap(await api.GET("/api/research/conversations/{conversation_id}", {
+    params: { path: { conversation_id: conversationId } }, signal,
+  }), "研究対話を取得できませんでした");
+}
+
+export async function getResearchMessagesPage(
+  conversationId: string,
+  options: ResearchMessagePageOptions = {},
+  signal?: AbortSignal,
+): Promise<ResearchMessagePage> {
+  return unwrap(await api.GET("/api/research/conversations/{conversation_id}/messages", {
+    params: {
+      path: { conversation_id: conversationId },
+      query: { limit:options.limit, before_ordinal:options.beforeOrdinal },
+    },
+    signal,
+  }), "研究対話のメッセージを取得できませんでした");
+}
+
+export async function getResearchMemoryPage(
+  conversationId: string,
+  options: ResearchMemoryPageOptions = {},
+  signal?: AbortSignal,
+): Promise<ResearchMemoryPage> {
+  return unwrap(await api.GET("/api/research/conversations/{conversation_id}/memory", {
+    params: {
+      path: { conversation_id:conversationId },
+      query: { kind:options.kind, limit:options.limit, before_ordinal:options.beforeOrdinal },
+    },
+    signal,
+  }), "研究メモリを取得できませんでした");
 }
 
 export async function listSavedComparisons(signal?: AbortSignal): Promise<SavedComparison[]> {

@@ -6,7 +6,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 from app import main
@@ -20,6 +20,11 @@ from app.store import PaperStore
 def setup_app(tmp_path):
     engine = create_engine(
         f"sqlite:///{tmp_path / 'auth.db'}", connect_args={"check_same_thread": False}
+    )
+    event.listen(
+        engine,
+        "connect",
+        lambda connection, _: connection.execute("PRAGMA foreign_keys=ON"),
     )
     Base.metadata.create_all(engine)
     store = PaperStore(session_factory=sessionmaker(bind=engine, expire_on_commit=False))
@@ -51,12 +56,118 @@ def test_first_identity_gets_personal_workspace_and_can_create_more(tmp_path):
                 "/api/workspaces", headers={"X-Dev-User": "alice"}, json={"name": "Lab"}
             )
             listed = client.get("/api/workspaces", headers={"X-Dev-User": "alice"})
+            selected = client.get(
+                f"/api/workspaces/{created.json()['id']}",
+                headers={"X-Dev-User": "alice"},
+            )
+            hidden = client.get(
+                f"/api/workspaces/{created.json()['id']}",
+                headers={"X-Dev-User": "mallory"},
+            )
         assert me.status_code == 200
         assert me.json()["personal_workspace"]["role"] == "owner"
         assert created.status_code == 201
         assert {item["name"] for item in listed.json()} == {
             "alice のワークスペース", "Lab"
         }
+        assert selected.status_code == 200
+        assert selected.json()["id"] == created.json()["id"]
+        assert selected.json()["role"] == "owner"
+        assert hidden.status_code == 404
+    finally:
+        main.app.dependency_overrides.clear()
+
+
+def test_llm_status_is_authenticated_and_never_exposes_credentials(tmp_path, monkeypatch):
+    setup_app(tmp_path)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "local")
+    monkeypatch.setattr(main, "_agentic_dependencies_available", lambda: True)
+    main._set_last_llm_failure("api_key_missing")
+    try:
+        with TestClient(main.app) as client:
+            denied = client.get("/api/llm/status")
+            allowed = client.get("/api/llm/status", headers={"X-Dev-User": "alice"})
+
+        assert denied.status_code == 401
+        assert allowed.status_code == 200
+        assert allowed.json() == {
+            "configured": False,
+            "model": "gpt-5.4-nano",
+            "embedding_model": "local-hash-v1",
+            "agentic_dependencies_available": True,
+            "last_failure_code": "api_key_missing",
+        }
+    finally:
+        main._set_last_llm_failure(None)
+        main.app.dependency_overrides.clear()
+
+
+def test_owner_can_rename_workspace_but_viewer_and_outsider_cannot(tmp_path):
+    store = setup_app(tmp_path)
+    try:
+        with TestClient(main.app) as client:
+            personal = client.get("/api/me", headers={"X-Dev-User": "alice"}).json()[
+                "personal_workspace"
+            ]
+            personal_renamed = client.patch(
+                f"/api/workspaces/{personal['id']}",
+                headers={"X-Dev-User": "alice"},
+                json={"name": "Alice Research"},
+            )
+            refreshed_me = client.get("/api/me", headers={"X-Dev-User": "alice"})
+            created = client.post(
+                "/api/workspaces", headers={"X-Dev-User": "alice"}, json={"name": "Lab"}
+            ).json()
+            renamed = client.patch(
+                f"/api/workspaces/{created['id']}",
+                headers={"X-Dev-User": "alice"},
+                json={"name": "  Evidence Lab  "},
+            )
+            bob, _ = store.ensure_user(Principal(issuer="paperpilot-dev", subject="bob"))
+            store.add_workspace_member(created["id"], bob.id, "viewer")
+            charlie, _ = store.ensure_user(
+                Principal(issuer="paperpilot-dev", subject="charlie")
+            )
+            store.add_workspace_member(created["id"], charlie.id, "editor")
+            viewer = client.patch(
+                f"/api/workspaces/{created['id']}",
+                headers={"X-Dev-User": "bob"},
+                json={"name": "Viewer rename"},
+            )
+            editor = client.patch(
+                f"/api/workspaces/{created['id']}",
+                headers={"X-Dev-User": "charlie"},
+                json={"name": "Editor rename"},
+            )
+            outsider = client.patch(
+                f"/api/workspaces/{created['id']}",
+                headers={"X-Dev-User": "mallory"},
+                json={"name": "Outsider rename"},
+            )
+            blank = client.patch(
+                f"/api/workspaces/{created['id']}",
+                headers={"X-Dev-User": "alice"},
+                json={"name": "   "},
+            )
+            listed = client.get("/api/workspaces", headers={"X-Dev-User": "alice"})
+
+        assert personal_renamed.status_code == 200
+        assert refreshed_me.json()["personal_workspace"]["name"] == "Alice Research"
+        assert renamed.status_code == 200
+        assert renamed.json()["name"] == "Evidence Lab"
+        assert renamed.json()["role"] == "owner"
+        assert viewer.status_code == 403
+        assert editor.status_code == 403
+        assert outsider.status_code == 404
+        assert blank.status_code == 422
+        assert {workspace["name"] for workspace in listed.json()} == {
+            "Alice Research", "Evidence Lab"
+        }
+        assert store.resolve_workspace(
+            store.ensure_user(Principal(issuer="paperpilot-dev", subject="alice"))[0].id,
+            created["id"],
+        ).name == "Evidence Lab"
     finally:
         main.app.dependency_overrides.clear()
 

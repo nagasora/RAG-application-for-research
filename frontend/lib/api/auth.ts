@@ -64,8 +64,16 @@ export function authenticatedHeaders(initial?: HeadersInit, includeWorkspace = t
   return headers;
 }
 
-export const authenticatedFetch: typeof fetch = (input, init = {}) => fetch(input, {
-  ...init,
-  headers: authenticatedHeaders(init.headers),
-  credentials: init.credentials ?? "include",
-});
+export const authenticatedFetch: typeof fetch = (input, init = {}) => {
+  // openapi-fetch passes a Request whose headers include generated values such
+  // as the multipart boundary. Preserve them before adding auth/workspace
+  // headers; replacing them makes FastAPI see an empty multipart body.
+  const headers = new Headers(input instanceof Request ? input.headers : undefined);
+  new Headers(init.headers).forEach((value, key) => headers.set(key, value));
+
+  return fetch(input, {
+    ...init,
+    headers: authenticatedHeaders(headers),
+    credentials: init.credentials ?? "include",
+  });
+};

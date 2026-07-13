@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 def utc_now() -> str:
@@ -131,6 +131,14 @@ class Workspace(BaseModel):
 class WorkspaceCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
 
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("workspace name is required")
+        return cleaned
+
 
 class MeResponse(BaseModel):
     user: User
@@ -150,11 +158,12 @@ class ExternalPaperRequest(BaseModel):
 class SearchRequest(BaseModel):
     # Kept for request compatibility only; authorization always uses the authenticated principal.
     user_id: str | None = None
-    query: str = Field(min_length=2)
+    query: str = Field(min_length=2, max_length=4000)
     paper_ids: list[str] = Field(default_factory=list)
     year_from: int | None = None
     year_to: int | None = None
     limit: int = Field(default=8, ge=1, le=20)
+    conversation_id: str | None = None
 
 
 class Citation(BaseModel):
@@ -168,9 +177,99 @@ class Citation(BaseModel):
     score: float
 
 
+class AnswerClaim(BaseModel):
+    claim_id: str
+    text: str
+    kind: Literal["paper", "general", "hypothesis"]
+    citation_ids: list[int] = Field(default_factory=list)
+
+
 class SearchResponse(BaseModel):
     answer: str
     citations: list[Citation]
+    conversation_id: str | None = None
+    generation_mode: Literal["agentic_rag", "local_fallback"] = "local_fallback"
+    model: str | None = None
+    retrieval_queries: list[str] = Field(default_factory=list)
+    grounded: bool = False
+    llm_attempted: bool = False
+    llm_succeeded: bool = False
+    grounding_status: Literal["verified", "rejected", "not_checked", "no_evidence"] = "not_checked"
+    claims: list[AnswerClaim] = Field(default_factory=list)
+    memory_delta: dict = Field(default_factory=dict)
+    model_calls: int = Field(default=0, ge=0)
+    fallback_reason: Literal[
+        "api_key_missing", "dependency_missing", "no_evidence", "grounding_failed",
+        "authentication_failed", "permission_denied", "model_not_found", "rate_limited",
+        "api_timeout", "network_error", "model_api_error", "deadline_exceeded",
+        "model_timeout", "model_unavailable", "provider_unavailable", "model_call_failed",
+        "generation_failed", "citation_validation_failed", "grounding_audit_failed", "repair_failed",
+        "structured_output_invalid", "verification_skipped_timeout",
+    ] | None = None
+
+
+class LLMStatus(BaseModel):
+    configured: bool
+    model: str
+    embedding_model: str
+    agentic_dependencies_available: bool
+    last_failure_code: Literal[
+        "api_key_missing", "dependency_missing", "no_evidence", "grounding_failed",
+        "authentication_failed", "permission_denied", "model_not_found", "rate_limited",
+        "api_timeout", "network_error", "model_api_error", "deadline_exceeded",
+        "model_timeout", "model_unavailable", "provider_unavailable", "model_call_failed",
+        "generation_failed", "citation_validation_failed", "grounding_audit_failed", "repair_failed",
+        "structured_output_invalid", "verification_skipped_timeout",
+    ] | None = None
+
+
+class ResearchConversationCreate(BaseModel):
+    title: str = Field(default="新しい研究対話", min_length=1, max_length=255)
+
+
+class ResearchConversation(BaseModel):
+    id: str
+    title: str
+    summary: str
+    message_count: int = 0
+    memory_event_count: int = 0
+    created_by: str
+    created_at: str
+    updated_at: str
+
+
+class ResearchMessage(BaseModel):
+    id: str
+    conversation_id: str
+    ordinal: int
+    role: Literal["user", "assistant"]
+    content: str
+    citations: list[Citation] = Field(default_factory=list)
+    created_at: str
+
+
+class ResearchConversationDetail(ResearchConversation):
+    messages: list[ResearchMessage] = Field(default_factory=list)
+
+
+class ResearchMessagePage(BaseModel):
+    items: list[ResearchMessage] = Field(default_factory=list)
+    next_before_ordinal: int | None = None
+
+
+class ResearchMemoryEvent(BaseModel):
+    id: str
+    conversation_id: str
+    source_message_id: str | None = None
+    ordinal: int
+    kind: Literal["hypothesis", "assumption", "unresolved_question", "planned_test"]
+    content: str
+    created_at: str
+
+
+class ResearchMemoryPage(BaseModel):
+    items: list[ResearchMemoryEvent] = Field(default_factory=list)
+    next_before_ordinal: int | None = None
 
 
 class AnalysisRequest(BaseModel):

@@ -1,19 +1,30 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import hashlib
+import os
+import re
 from uuid import uuid4
 
-from sqlalchemy import delete, or_, select, text
+from sqlalchemy import case, delete, func, or_, select, text
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
 from .database import (
-    Base, ChunkRecord, DocumentElementRecord, IngestionJobRecord, NoteRecord, PaperPageRecord,
-    PaperRecord, PaperTagRecord, SavedComparisonRecord, SearchHistoryRecord, TagRecord,
+    Base, ChunkEmbeddingRecord, ChunkRecord, DocumentElementRecord, EmbeddingJobRecord, IngestionJobRecord, NoteRecord, PaperPageRecord,
+    PaperRecord, PaperTagRecord, ResearchConversationRecord, ResearchMemoryEventRecord, ResearchMessageRecord, SavedComparisonRecord, SearchHistoryRecord, TagRecord,
     UserRecord, WorkspaceMemberRecord, WorkspaceRecord,
     create_database_engine, create_session_factory,
 )
-from .models import Chunk, DocumentElement, IngestionJob, Note, Paper, PaperPage, Principal, SavedComparison, SearchHistory, Tag, User, Workspace
+from .models import (
+    Chunk, Citation, DocumentElement, IngestionJob, Note, Paper, PaperPage, Principal,
+    ResearchConversation, ResearchConversationDetail, ResearchMemoryEvent, ResearchMemoryPage,
+    ResearchMessage, ResearchMessagePage, SavedComparison,
+    SearchHistory, Tag, User, Workspace,
+)
 
 
 class DuplicatePaperError(Exception):
@@ -30,8 +41,72 @@ class WorkspaceAccessError(Exception):
     pass
 
 
+class WorkspacePermissionError(Exception):
+    pass
+
+
 class ResourceConflictError(Exception):
     pass
+
+
+@dataclass(frozen=True)
+class EmbeddingJob:
+    id: str
+    workspace_id: str
+    paper_id: str
+    provider: str
+    model: str
+    status: str
+    progress: int
+    attempts: int
+    total_chunks: int
+    completed_chunks: int
+    error_code: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+def _embedding_job_model(record: EmbeddingJobRecord) -> EmbeddingJob:
+    return EmbeddingJob(
+        id=record.id, workspace_id=record.workspace_id, paper_id=record.paper_id,
+        provider=record.provider,
+        model=record.model, status=record.status, progress=record.progress,
+        attempts=record.attempts, total_chunks=record.total_chunks,
+        completed_chunks=record.completed_chunks, error_code=record.error_code,
+        created_at=record.created_at, updated_at=record.updated_at,
+    )
+
+
+def _queue_embedding_job(
+    session: Session, *, paper_id: str, workspace_id: str,
+    provider: str, model: str, total_chunks: int,
+) -> None:
+    if total_chunks < 1:
+        return
+    now = datetime.now(timezone.utc)
+    record = session.scalar(
+        select(EmbeddingJobRecord).where(
+            EmbeddingJobRecord.paper_id == paper_id,
+            EmbeddingJobRecord.provider == provider,
+            EmbeddingJobRecord.model == model,
+        ).with_for_update()
+    )
+    if record is None:
+        session.add(EmbeddingJobRecord(
+            id=str(uuid4()), workspace_id=workspace_id, paper_id=paper_id,
+            provider=provider,
+            model=model, status="queued", progress=0, attempts=0,
+            total_chunks=total_chunks, completed_chunks=0, error_code=None,
+            created_at=now, updated_at=now,
+        ))
+        return
+    record.status = "queued"
+    record.progress = 0
+    record.attempts = 0
+    record.total_chunks = total_chunks
+    record.completed_chunks = 0
+    record.error_code = None
+    record.updated_at = now
 
 
 def _job_model(record: IngestionJobRecord) -> IngestionJob:
@@ -207,11 +282,37 @@ class PaperStore:
         try:
             with self.session_factory.begin() as session:
                 session.add(user)
+                session.flush()
                 session.add(personal)
+                session.flush()
                 session.add(membership)
-        except IntegrityError:
+        except IntegrityError as exc:
             # A concurrent first request may have provisioned the same OIDC subject.
-            return self.ensure_user(principal)
+            # Only recover when that identity now exists; unrelated constraint
+            # violations must remain visible instead of being retried forever.
+            with self.session_factory() as session:
+                concurrent = session.scalar(
+                    select(UserRecord).where(
+                        UserRecord.issuer == principal.issuer,
+                        UserRecord.subject == principal.subject,
+                    )
+                )
+                if concurrent is None:
+                    raise
+                personal = session.scalar(
+                    select(WorkspaceRecord).where(
+                        WorkspaceRecord.personal_owner_id == concurrent.id
+                    )
+                )
+                membership = session.scalar(
+                    select(WorkspaceMemberRecord).where(
+                        WorkspaceMemberRecord.workspace_id == personal.id,
+                        WorkspaceMemberRecord.user_id == concurrent.id,
+                    )
+                ) if personal else None
+                if personal is None or membership is None:
+                    raise RuntimeError("personal workspace invariant is broken") from exc
+                return _user_model(concurrent), _workspace_model(personal, membership.role)
         return _user_model(user), _workspace_model(personal, "owner")
 
     def list_workspaces(self, user_id: str) -> list[Workspace]:
@@ -247,8 +348,34 @@ class PaperStore:
             if session.get(UserRecord, user_id) is None:
                 raise WorkspaceAccessError(user_id)
             session.add(record)
+            session.flush()
             session.add(membership)
         return _workspace_model(record, "owner")
+
+    def rename_workspace(self, user_id: str, workspace_id: str, name: str) -> Workspace:
+        cleaned = name.strip()
+        if not cleaned:
+            raise ValueError("workspace name is required")
+        with self.session_factory.begin() as session:
+            row = session.execute(
+                select(WorkspaceRecord, WorkspaceMemberRecord.role)
+                .join(
+                    WorkspaceMemberRecord,
+                    WorkspaceMemberRecord.workspace_id == WorkspaceRecord.id,
+                )
+                .where(
+                    WorkspaceRecord.id == workspace_id,
+                    WorkspaceMemberRecord.user_id == user_id,
+                )
+            ).one_or_none()
+            if row is None:
+                raise WorkspaceAccessError(workspace_id)
+            record, role = row
+            if role != "owner":
+                raise WorkspacePermissionError(workspace_id)
+            record.name = cleaned
+            session.flush()
+            return _workspace_model(record, role)
 
     def resolve_workspace(self, user_id: str, workspace_id: str | None) -> Workspace:
         with self.session_factory() as session:
@@ -312,7 +439,10 @@ class PaperStore:
             raise
         return paper
 
-    def mark_ready(self, paper: Paper) -> Paper:
+    def mark_ready(
+        self, paper: Paper, embedding_model: str | None = None,
+        embedding_provider: str | None = None,
+    ) -> Paper:
         paper.status = "ready"
         paper.error_message = None
         with self.session_factory.begin() as session:
@@ -344,6 +474,12 @@ class PaperStore:
                 )
                 for chunk in paper.chunks
             ])
+            _queue_embedding_job(
+                session, paper_id=paper.id, workspace_id=paper.workspace_id,
+                provider=embedding_provider or os.getenv("EMBEDDING_PROVIDER", "openai"),
+                model=embedding_model or os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"),
+                total_chunks=len(paper.chunks),
+            )
         return paper
 
     def mark_failed(self, paper_id: str, error_message: str, *, clear_storage: bool = False) -> Paper:
@@ -363,7 +499,10 @@ class PaperStore:
                 record.byte_size = None
         return self.get(paper_id)
 
-    def upsert(self, paper: Paper) -> Paper:
+    def upsert(
+        self, paper: Paper, embedding_model: str | None = None,
+        embedding_provider: str | None = None,
+    ) -> Paper:
         """Compatibility path for external imports; insert atomically and deduplicate by hash."""
         existing = self.get_by_hash(paper.workspace_id, paper.content_hash or "") if paper.content_hash else None
         if existing:
@@ -372,6 +511,12 @@ class PaperStore:
         try:
             with self.session_factory.begin() as session:
                 session.add(_record_from_model(paper))
+                _queue_embedding_job(
+                    session, paper_id=paper.id, workspace_id=paper.workspace_id,
+                    provider=embedding_provider or os.getenv("EMBEDDING_PROVIDER", "openai"),
+                    model=embedding_model or os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"),
+                    total_chunks=len(paper.chunks),
+                )
         except IntegrityError as exc:
             duplicate = self.get_by_hash(paper.workspace_id, paper.content_hash or "")
             if duplicate is not None:
@@ -523,6 +668,377 @@ class PaperStore:
         with self.session_factory.begin() as session:
             return bool(session.execute(delete(SearchHistoryRecord).where(SearchHistoryRecord.workspace_id == workspace_id, SearchHistoryRecord.id == history_id)).rowcount)
 
+    def get_chunk_embeddings(self, workspace_id: str, chunk_ids: list[str], model: str) -> dict[str, list[float]]:
+        if not chunk_ids:
+            return {}
+        with self.session_factory() as session:
+            rows = session.execute(
+                select(ChunkEmbeddingRecord.chunk_id, ChunkEmbeddingRecord.vector)
+                .join(ChunkRecord, ChunkRecord.id == ChunkEmbeddingRecord.chunk_id)
+                .join(PaperRecord, PaperRecord.id == ChunkRecord.paper_id)
+                .where(
+                    PaperRecord.workspace_id == workspace_id,
+                    ChunkEmbeddingRecord.chunk_id.in_(chunk_ids),
+                    ChunkEmbeddingRecord.model == model,
+                )
+            ).all()
+            return {chunk_id: list(vector) for chunk_id, vector in rows}
+
+    def upsert_chunk_embeddings(self, workspace_id: str, model: str, embeddings: dict[str, list[float]]) -> None:
+        if not embeddings:
+            return
+        now = datetime.now(timezone.utc)
+        with self.session_factory.begin() as session:
+            allowed = set(session.scalars(
+                select(ChunkRecord.id)
+                .join(PaperRecord, PaperRecord.id == ChunkRecord.paper_id)
+                .where(PaperRecord.workspace_id == workspace_id, ChunkRecord.id.in_(embeddings))
+            ).all())
+            values = [
+                {
+                    "chunk_id": chunk_id,
+                    "model": model,
+                    "dimensions": len(vector),
+                    "vector": vector,
+                    "updated_at": now,
+                }
+                for chunk_id, vector in embeddings.items()
+                if chunk_id in allowed
+            ]
+            if not values:
+                return
+
+            dialect_name = session.get_bind().dialect.name
+            if dialect_name == "postgresql":
+                statement = postgresql_insert(ChunkEmbeddingRecord).values(values)
+                statement = statement.on_conflict_do_update(
+                    index_elements=[ChunkEmbeddingRecord.chunk_id],
+                    set_={
+                        "model": statement.excluded.model,
+                        "dimensions": statement.excluded.dimensions,
+                        "vector": statement.excluded.vector,
+                        "updated_at": statement.excluded.updated_at,
+                    },
+                )
+                session.execute(statement)
+            elif dialect_name == "sqlite":
+                statement = sqlite_insert(ChunkEmbeddingRecord).values(values)
+                statement = statement.on_conflict_do_update(
+                    index_elements=[ChunkEmbeddingRecord.chunk_id],
+                    set_={
+                        "model": statement.excluded.model,
+                        "dimensions": statement.excluded.dimensions,
+                        "vector": statement.excluded.vector,
+                        "updated_at": statement.excluded.updated_at,
+                    },
+                )
+                session.execute(statement)
+            else:
+                # Tests and supported deployments use SQLite or PostgreSQL. Keep a
+                # conservative fallback for other SQLAlchemy dialects.
+                for value in values:
+                    record = session.get(ChunkEmbeddingRecord, value["chunk_id"])
+                    if record is None:
+                        session.add(ChunkEmbeddingRecord(**value))
+                    else:
+                        record.model = value["model"]
+                        record.dimensions = value["dimensions"]
+                        record.vector = value["vector"]
+                        record.updated_at = value["updated_at"]
+
+    @staticmethod
+    def _conversation_model(record: ResearchConversationRecord) -> ResearchConversation:
+        return ResearchConversation(
+            id=record.id, title=record.title, summary=record.summary, created_by=record.created_by,
+            message_count=record.message_count, memory_event_count=record.memory_event_count,
+            created_at=record.created_at.isoformat(), updated_at=record.updated_at.isoformat(),
+        )
+
+    @staticmethod
+    def _message_model(record: ResearchMessageRecord) -> ResearchMessage:
+        return ResearchMessage(
+            id=record.id, conversation_id=record.conversation_id, role=record.role,
+            ordinal=record.ordinal,
+            content=record.content,
+            citations=[Citation.model_validate(item) for item in (record.citations or [])],
+            created_at=record.created_at.isoformat(),
+        )
+
+    @staticmethod
+    def _memory_event_model(record: ResearchMemoryEventRecord) -> ResearchMemoryEvent:
+        return ResearchMemoryEvent(
+            id=record.id, conversation_id=record.conversation_id,
+            source_message_id=record.source_message_id, ordinal=record.ordinal,
+            kind=record.kind, content=record.content,
+            created_at=record.created_at.isoformat(),
+        )
+
+    @staticmethod
+    def _scoped_conversation_record(
+        session: Session, workspace_id: str, conversation_id: str, *, lock: bool = False,
+    ) -> ResearchConversationRecord:
+        statement = select(ResearchConversationRecord).where(
+            ResearchConversationRecord.workspace_id == workspace_id,
+            ResearchConversationRecord.id == conversation_id,
+        )
+        if lock:
+            statement = statement.with_for_update()
+        record = session.scalar(statement)
+        if record is None:
+            raise PaperNotFoundError(conversation_id)
+        return record
+
+    @staticmethod
+    def _ordinal_page_rows(session: Session, statement, ordinal_column, limit: int):
+        bounded_limit = max(1, min(limit, 200))
+        rows = list(session.scalars(
+            statement.order_by(ordinal_column.desc()).limit(bounded_limit + 1)
+        ).all())
+        has_more = len(rows) > bounded_limit
+        selected = rows[:bounded_limit]
+        return selected, selected[-1].ordinal if has_more else None
+
+    def create_conversation(self, workspace_id: str, user_id: str, title: str) -> ResearchConversation:
+        now = datetime.now(timezone.utc)
+        record = ResearchConversationRecord(
+            id=str(uuid4()), workspace_id=workspace_id, created_by=user_id,
+            title=title.strip(), summary="", message_count=0, memory_event_count=0,
+            created_at=now, updated_at=now,
+        )
+        with self.session_factory.begin() as session:
+            session.add(record)
+        return self._conversation_model(record)
+
+    def list_conversations(self, workspace_id: str) -> list[ResearchConversation]:
+        with self.session_factory() as session:
+            rows = session.scalars(
+                select(ResearchConversationRecord)
+                .where(ResearchConversationRecord.workspace_id == workspace_id)
+                .order_by(ResearchConversationRecord.updated_at.desc())
+            ).all()
+            return [self._conversation_model(row) for row in rows]
+
+    def get_conversation(self, workspace_id: str, conversation_id: str) -> ResearchConversationDetail:
+        with self.session_factory() as session:
+            record = self._scoped_conversation_record(session, workspace_id, conversation_id)
+            # Compatibility detail stays bounded; older turns are available via
+            # list_research_messages_page and message_count indicates truncation.
+            messages = list(session.scalars(select(ResearchMessageRecord).where(
+                ResearchMessageRecord.conversation_id == conversation_id
+            ).order_by(ResearchMessageRecord.ordinal.desc()).limit(100)).all())
+            base = self._conversation_model(record)
+            return ResearchConversationDetail(
+                **base.model_dump(),
+                messages=[self._message_model(item) for item in reversed(messages)],
+            )
+
+    def get_conversation_metadata(
+        self, workspace_id: str, conversation_id: str,
+    ) -> ResearchConversation:
+        """Load conversation continuity fields without materializing messages."""
+        with self.session_factory() as session:
+            return self._conversation_model(
+                self._scoped_conversation_record(session, workspace_id, conversation_id)
+            )
+
+    def add_research_exchange(
+        self, workspace_id: str, conversation_id: str, query: str, answer: str,
+        citations: list[Citation], memory_delta: dict | None = None,
+    ) -> ResearchConversationDetail:
+        self.record_research_exchange(
+            workspace_id, conversation_id, query, answer, citations,
+            memory_delta=memory_delta,
+        )
+        return self.get_conversation(workspace_id, conversation_id)
+
+    def record_research_exchange(
+        self, workspace_id: str, conversation_id: str, query: str, answer: str,
+        citations: list[Citation], memory_delta: dict | None = None,
+    ) -> None:
+        """Persist one exchange atomically without reloading the conversation."""
+        with self.session_factory.begin() as session:
+            conversation = self._scoped_conversation_record(
+                session, workspace_id, conversation_id, lock=True,
+            )
+            # Timestamp only after acquiring the conversation lock so message order
+            # matches the serialized order used to update the durable memory.
+            now = datetime.now(timezone.utc)
+            first_ordinal = conversation.message_count + 1
+            assistant_message_id = str(uuid4())
+            session.add_all([
+                ResearchMessageRecord(id=str(uuid4()), conversation_id=conversation_id, ordinal=first_ordinal, role="user", content=query, citations=[], created_at=now),
+                ResearchMessageRecord(id=assistant_message_id, conversation_id=conversation_id, ordinal=first_ordinal + 1, role="assistant", content=answer, citations=[c.model_dump(mode="json") for c in citations], created_at=now + timedelta(microseconds=1)),
+            ])
+            conversation.message_count += 2
+            self._append_memory_events(
+                session, conversation=conversation, source_message_id=assistant_message_id,
+                memory_delta=memory_delta, created_at=now + timedelta(microseconds=2),
+            )
+            # Compute from the row locked above, rather than from the snapshot read
+            # before the LLM call. Concurrent turns therefore append to the latest
+            # committed memory instead of overwriting one another.
+            from .rag import update_memory
+
+            conversation.summary = update_memory(
+                conversation.summary, query, answer, memory_delta=memory_delta,
+            )
+            conversation.updated_at = now
+
+    @staticmethod
+    def _append_memory_events(
+        session: Session, *, conversation: ResearchConversationRecord,
+        source_message_id: str, memory_delta: dict | None, created_at: datetime,
+    ) -> None:
+        if not isinstance(memory_delta, dict):
+            return
+        kind_by_key = {
+            "hypotheses": "hypothesis",
+            "assumptions": "assumption",
+            "unresolved_questions": "unresolved_question",
+            "planned_tests": "planned_test",
+        }
+        candidates: list[tuple[str, str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for key, kind in kind_by_key.items():
+            values = memory_delta.get(key)
+            if not isinstance(values, list):
+                continue
+            for value in values:
+                if not isinstance(value, str):
+                    continue
+                content = " ".join(value.split()).strip()[:2000]
+                if not content:
+                    continue
+                content_hash = hashlib.sha256(content.casefold().encode("utf-8")).hexdigest()
+                identity = (kind, content_hash)
+                if identity not in seen:
+                    seen.add(identity)
+                    candidates.append((kind, content, content_hash))
+        if not candidates:
+            return
+
+        existing = set(session.execute(
+            select(ResearchMemoryEventRecord.kind, ResearchMemoryEventRecord.content_hash).where(
+                ResearchMemoryEventRecord.conversation_id == conversation.id,
+                ResearchMemoryEventRecord.content_hash.in_([item[2] for item in candidates]),
+            )
+        ).all())
+        new_items = [item for item in candidates if (item[0], item[2]) not in existing]
+        first_ordinal = conversation.memory_event_count + 1
+        for offset, (kind, content, content_hash) in enumerate(new_items):
+            session.add(ResearchMemoryEventRecord(
+                id=str(uuid4()), workspace_id=conversation.workspace_id,
+                conversation_id=conversation.id, source_message_id=source_message_id,
+                ordinal=first_ordinal + offset, kind=kind, content=content,
+                content_hash=content_hash,
+                created_at=created_at + timedelta(microseconds=offset),
+            ))
+        conversation.memory_event_count += len(new_items)
+
+    def list_research_messages_page(
+        self, workspace_id: str, conversation_id: str, *, limit: int = 100,
+        before_ordinal: int | None = None,
+    ) -> ResearchMessagePage:
+        with self.session_factory() as session:
+            self._scoped_conversation_record(session, workspace_id, conversation_id)
+            statement = select(ResearchMessageRecord).where(
+                ResearchMessageRecord.conversation_id == conversation_id
+            )
+            if before_ordinal is not None:
+                statement = statement.where(ResearchMessageRecord.ordinal < before_ordinal)
+            selected, next_cursor = self._ordinal_page_rows(
+                session, statement, ResearchMessageRecord.ordinal, limit,
+            )
+            items = [self._message_model(row) for row in reversed(selected)]
+            return ResearchMessagePage(
+                items=items, next_before_ordinal=next_cursor,
+            )
+
+    def list_research_memory_page(
+        self, workspace_id: str, conversation_id: str, *, kind: str | None = None,
+        limit: int = 100, before_ordinal: int | None = None,
+    ) -> ResearchMemoryPage:
+        allowed_kinds = {"hypothesis", "assumption", "unresolved_question", "planned_test"}
+        if kind is not None and kind not in allowed_kinds:
+            raise ValueError(f"unsupported research memory kind: {kind}")
+        with self.session_factory() as session:
+            self._scoped_conversation_record(session, workspace_id, conversation_id)
+            statement = select(ResearchMemoryEventRecord).where(
+                ResearchMemoryEventRecord.conversation_id == conversation_id
+            )
+            if kind is not None:
+                statement = statement.where(ResearchMemoryEventRecord.kind == kind)
+            if before_ordinal is not None:
+                statement = statement.where(ResearchMemoryEventRecord.ordinal < before_ordinal)
+            selected, next_cursor = self._ordinal_page_rows(
+                session, statement, ResearchMemoryEventRecord.ordinal, limit,
+            )
+            items = [self._memory_event_model(row) for row in reversed(selected)]
+            return ResearchMemoryPage(
+                items=items, next_before_ordinal=next_cursor,
+            )
+
+    def search_research_memory(
+        self, workspace_id: str, conversation_id: str, query: str, *, limit: int = 20,
+    ) -> list[ResearchMemoryEvent]:
+        """Return a bounded set of query-relevant durable memories.
+
+        Matching and limiting are performed by the database; this method never
+        materializes the full conversation memory in Python. Recent events break
+        equal keyword scores so evolving research context is preferred.
+        """
+        limit = max(1, min(limit, 100))
+        normalized_query = " ".join(query.split()).strip()[:500]
+        terms: list[str] = []
+        if normalized_query:
+            terms.append(normalized_query)
+            for token in re.findall(r"[^\W_]{2,}", normalized_query, flags=re.UNICODE):
+                folded = token.casefold()
+                if folded not in {item.casefold() for item in terms}:
+                    terms.append(token)
+                if len(terms) >= 8:
+                    break
+
+        with self.session_factory() as session:
+            self._scoped_conversation_record(session, workspace_id, conversation_id)
+
+            statement = select(ResearchMemoryEventRecord).where(
+                ResearchMemoryEventRecord.conversation_id == conversation_id
+            )
+            if terms:
+                # Escape SQL wildcard characters before constructing LIKE
+                # patterns so user text cannot broaden the candidate set.
+                escaped_terms = [
+                    term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                    for term in terms
+                ]
+                matches = [
+                    ResearchMemoryEventRecord.content.ilike(f"%{term}%", escape="\\")
+                    for term in escaped_terms
+                ]
+                relevance = sum(
+                    (case((match, len(matches) - index), else_=0)
+                     for index, match in enumerate(matches)),
+                    start=0,
+                )
+                statement = statement.where(or_(*matches)).order_by(
+                    relevance.desc(), ResearchMemoryEventRecord.ordinal.desc()
+                )
+            else:
+                statement = statement.order_by(ResearchMemoryEventRecord.ordinal.desc())
+            rows = list(session.scalars(statement.limit(limit)).all())
+            if terms and not rows:
+                # Japanese research questions often have no whitespace, so a
+                # purely lexical LIKE query can miss a clearly relevant prior
+                # event. Fall back to the most recent bounded slice rather than
+                # loading the full history or silently dropping all memory.
+                rows = list(session.scalars(
+                    select(ResearchMemoryEventRecord).where(
+                        ResearchMemoryEventRecord.conversation_id == conversation_id
+                    ).order_by(ResearchMemoryEventRecord.ordinal.desc()).limit(limit)
+                ).all())
+            return [self._memory_event_model(row) for row in rows]
+
     def save_comparison(self, workspace_id: str, user_id: str, name: str, paper_ids: list[str], result: list[dict]) -> SavedComparison:
         record = SavedComparisonRecord(id=str(uuid4()), workspace_id=workspace_id, user_id=user_id, name=name.strip(), paper_ids=paper_ids, result=result, created_at=datetime.now(timezone.utc))
         with self.session_factory.begin() as session: session.add(record)
@@ -613,7 +1129,12 @@ class PaperStore:
             record.progress = max(record.progress, min(99, progress)); record.updated_at = datetime.now(timezone.utc)
             return True
 
-    def complete_ingestion(self, job_id: str, paper: Paper, pages: list[PaperPage], elements: list[DocumentElement], expected_attempt: int) -> None:
+    def complete_ingestion(
+        self, job_id: str, paper: Paper, pages: list[PaperPage],
+        elements: list[DocumentElement], expected_attempt: int,
+        embedding_model: str = "text-embedding-3-small",
+        embedding_provider: str = "openai",
+    ) -> None:
         with self.session_factory.begin() as session:
             job = session.scalar(select(IngestionJobRecord).where(IngestionJobRecord.id == job_id, IngestionJobRecord.paper_id == paper.id).with_for_update())
             record = session.scalar(select(PaperRecord).where(PaperRecord.id == paper.id).with_for_update())
@@ -625,6 +1146,165 @@ class PaperStore:
             session.add_all([DocumentElementRecord(id=e.id, paper_id=paper.id, page=e.page, kind=e.kind, bbox=e.bbox, text=e.text, structured_data=e.structured_data, asset_key=e.asset_key) for e in elements])
             record.title, record.abstract, record.page_count, record.status, record.error_message = paper.title, paper.abstract, paper.page_count, "ready", None
             job.status, job.progress, job.error_message, job.updated_at = "succeeded", 100, None, datetime.now(timezone.utc)
+            _queue_embedding_job(
+                session, paper_id=paper.id, workspace_id=paper.workspace_id,
+                provider=embedding_provider,
+                model=embedding_model, total_chunks=len(paper.chunks),
+            )
+
+    def get_embedding_job(self, job_id: str) -> EmbeddingJob:
+        with self.session_factory() as session:
+            record = session.get(EmbeddingJobRecord, job_id)
+            if record is None:
+                raise PaperNotFoundError(job_id)
+            return _embedding_job_model(record)
+
+    def ensure_embedding_jobs(self, provider: str, model: str) -> int:
+        """Backfill ready papers for the currently configured embedding identity."""
+        created = 0
+        with self.session_factory.begin() as session:
+            rows = session.execute(
+                select(PaperRecord.id, PaperRecord.workspace_id, func.count(ChunkRecord.id))
+                .join(ChunkRecord, ChunkRecord.paper_id == PaperRecord.id)
+                .where(PaperRecord.status == "ready")
+                .group_by(PaperRecord.id, PaperRecord.workspace_id)
+            ).all()
+            existing = set(session.scalars(select(EmbeddingJobRecord.paper_id).where(
+                EmbeddingJobRecord.provider == provider,
+                EmbeddingJobRecord.model == model,
+            )).all())
+            for paper_id, workspace_id, total_chunks in rows:
+                if paper_id in existing:
+                    continue
+                _queue_embedding_job(
+                    session, paper_id=paper_id, workspace_id=workspace_id,
+                    provider=provider, model=model, total_chunks=int(total_chunks),
+                )
+                created += 1
+        return created
+
+    def embedding_statuses(
+        self, workspace_id: str, paper_ids: list[str], model: str,
+    ) -> dict[str, str]:
+        """Return per-paper readiness without loading chunks or vectors."""
+        if not paper_ids:
+            return {}
+        with self.session_factory() as session:
+            rows = session.execute(
+                select(EmbeddingJobRecord.paper_id, EmbeddingJobRecord.status)
+                .where(
+                    EmbeddingJobRecord.workspace_id == workspace_id,
+                    EmbeddingJobRecord.paper_id.in_(paper_ids),
+                    EmbeddingJobRecord.model == model,
+                )
+            ).all()
+            return dict(rows)
+
+    def claim_embedding_job(
+        self, job_id: str, max_attempts: int, lease_seconds: int = 300,
+    ) -> EmbeddingJob | None:
+        with self.session_factory.begin() as session:
+            record = session.scalar(
+                select(EmbeddingJobRecord)
+                .where(EmbeddingJobRecord.id == job_id)
+                .with_for_update()
+            )
+            if record is None:
+                raise PaperNotFoundError(job_id)
+            now = datetime.now(timezone.utc)
+            updated_at = record.updated_at if record.updated_at.tzinfo else record.updated_at.replace(tzinfo=timezone.utc)
+            stale = now - updated_at > timedelta(seconds=lease_seconds)
+            if record.status == "succeeded" or (record.status == "running" and not stale):
+                return None
+            if record.attempts >= max_attempts:
+                record.status, record.error_code, record.updated_at = "failed", "retry_limit", now
+                return None
+            record.status, record.progress, record.error_code = "running", max(1, record.progress), None
+            record.attempts += 1
+            record.updated_at = now
+            session.flush()
+            return _embedding_job_model(record)
+
+    def update_embedding_progress(
+        self, job_id: str, completed_chunks: int, expected_attempt: int,
+    ) -> bool:
+        with self.session_factory.begin() as session:
+            record = session.scalar(select(EmbeddingJobRecord).where(
+                EmbeddingJobRecord.id == job_id,
+                EmbeddingJobRecord.status == "running",
+                EmbeddingJobRecord.attempts == expected_attempt,
+            ).with_for_update())
+            if record is None:
+                return False
+            record.completed_chunks = max(record.completed_chunks, min(record.total_chunks, completed_chunks))
+            record.progress = min(99, max(record.progress, int(100 * record.completed_chunks / max(1, record.total_chunks))))
+            record.updated_at = datetime.now(timezone.utc)
+            return True
+
+    def complete_embedding_job(self, job_id: str, expected_attempt: int) -> bool:
+        with self.session_factory.begin() as session:
+            record = session.scalar(select(EmbeddingJobRecord).where(
+                EmbeddingJobRecord.id == job_id,
+                EmbeddingJobRecord.status == "running",
+                EmbeddingJobRecord.attempts == expected_attempt,
+            ).with_for_update())
+            if record is None:
+                return False
+            record.status, record.progress = "succeeded", 100
+            record.completed_chunks = record.total_chunks
+            record.error_code = None
+            record.updated_at = datetime.now(timezone.utc)
+            return True
+
+    def fail_embedding_job(
+        self, job_id: str, expected_attempt: int, error_code: str, max_attempts: int,
+    ) -> bool:
+        safe_code = re.sub(r"[^a-z0-9_]", "_", error_code.lower())[:64] or "embedding_failed"
+        with self.session_factory.begin() as session:
+            record = session.scalar(select(EmbeddingJobRecord).where(
+                EmbeddingJobRecord.id == job_id,
+                EmbeddingJobRecord.status == "running",
+                EmbeddingJobRecord.attempts == expected_attempt,
+            ).with_for_update())
+            if record is None:
+                return False
+            record.status = "failed" if record.attempts >= max_attempts else "queued"
+            record.error_code = safe_code
+            record.updated_at = datetime.now(timezone.utc)
+            return True
+
+    def reap_embedding_jobs(
+        self, lease_seconds: int, max_attempts: int, limit: int = 100,
+    ) -> list[str]:
+        now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(seconds=lease_seconds)
+        result: list[str] = []
+        with self.session_factory.begin() as session:
+            records = session.scalars(
+                select(EmbeddingJobRecord)
+                .where(or_(
+                    (EmbeddingJobRecord.status == "queued") & or_(
+                        EmbeddingJobRecord.error_code.is_(None),
+                        EmbeddingJobRecord.error_code != "dispatched",
+                        EmbeddingJobRecord.updated_at < cutoff,
+                    ),
+                    (EmbeddingJobRecord.status == "running") & (EmbeddingJobRecord.updated_at < cutoff),
+                ))
+                .order_by(EmbeddingJobRecord.created_at)
+                .limit(limit)
+                .with_for_update(skip_locked=True)
+            ).all()
+            for record in records:
+                if record.attempts >= max_attempts:
+                    record.status, record.error_code, record.updated_at = "failed", "retry_limit", now
+                    continue
+                if record.status == "running":
+                    record.status, record.error_code, record.updated_at = "queued", "lease_expired", now
+                # Reserve delivery for one dispatch interval. If Redis delivery is
+                # lost, the lease cutoff makes the DB job dispatchable again.
+                record.error_code, record.updated_at = "dispatched", now
+                result.append(record.id)
+        return result
 
     def fail_ingestion(self, job_id: str, paper_id: str, message: str, expected_attempt: int) -> bool:
         with self.session_factory.begin() as session:

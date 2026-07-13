@@ -8,7 +8,7 @@ from sqlalchemy.orm import sessionmaker
 from app.database import Base, IngestionJobRecord, PaperRecord
 from app.models import Paper, Principal
 from app.rag import chunk_pages
-from app.store import DuplicatePaperError, PaperStore, ResourceConflictError
+from app.store import DuplicatePaperError, PaperNotFoundError, PaperStore, ResourceConflictError
 
 
 @pytest.fixture
@@ -81,6 +81,166 @@ def test_content_hash_is_unique_per_workspace(store):
     )
     store.begin_processing(same_user_other_workspace)
     assert len(store.list(second_workspace.id)) == 1
+
+
+def test_chunk_embedding_upsert_updates_atomically_on_sqlite(store):
+    paper = processing_paper(store, content=b"embedding-upsert")
+    store.begin_processing(paper)
+    paper.chunks = chunk_pages([(1, "retrieval evidence")], paper.id)
+    paper.page_count = 1
+    store.mark_ready(paper)
+    chunk_id = paper.chunks[0].id
+
+    store.upsert_chunk_embeddings(paper.workspace_id, "model-a", {chunk_id: [1.0, 0.0]})
+    store.upsert_chunk_embeddings(paper.workspace_id, "model-b", {chunk_id: [0.0, 1.0, 0.0]})
+
+    assert store.get_chunk_embeddings(paper.workspace_id, [chunk_id], "model-a") == {}
+    assert store.get_chunk_embeddings(paper.workspace_id, [chunk_id], "model-b") == {
+        chunk_id: [0.0, 1.0, 0.0]
+    }
+
+
+def test_research_exchange_appends_to_latest_persisted_summary(store):
+    user, workspace = identity(store)
+    conversation = store.create_conversation(workspace.id, user.id, "Theory")
+
+    store.add_research_exchange(workspace.id, conversation.id, "first hypothesis", "first result", [])
+    store.add_research_exchange(workspace.id, conversation.id, "second hypothesis", "second result", [])
+
+    detail = store.get_conversation(workspace.id, conversation.id)
+    assert "first hypothesis" in detail.summary
+    assert "second hypothesis" in detail.summary
+    assert [message.role for message in detail.messages] == [
+        "user", "assistant", "user", "assistant"
+    ]
+
+
+def test_research_memory_is_append_only_deduplicated_and_source_linked(store):
+    user, workspace = identity(store)
+    conversation = store.create_conversation(workspace.id, user.id, "Theory")
+    first_delta = {
+        "hypotheses": ["A causes B", "  A   causes B  "],
+        "assumptions": ["C is controlled"],
+        "unresolved_questions": ["Does D moderate B?"],
+        "planned_tests": ["Run an ablation"],
+    }
+    store.add_research_exchange(
+        workspace.id, conversation.id, "develop theory", "grounded answer", [], first_delta,
+    )
+    store.add_research_exchange(
+        workspace.id, conversation.id, "continue", "next answer", [],
+        {"hypotheses": ["a causes b"], "planned_tests": ["Run a replication"]},
+    )
+
+    detail = store.get_conversation(workspace.id, conversation.id)
+    assert detail.message_count == 4
+    assert detail.memory_event_count == 5
+    assert [message.ordinal for message in detail.messages] == [1, 2, 3, 4]
+
+    memory = store.list_research_memory_page(workspace.id, conversation.id)
+    assert [item.ordinal for item in memory.items] == [1, 2, 3, 4, 5]
+    assert {item.kind for item in memory.items} == {
+        "hypothesis", "assumption", "unresolved_question", "planned_test"
+    }
+    assert all(item.source_message_id for item in memory.items)
+    assert [item.content for item in memory.items if item.kind == "hypothesis"] == ["A causes B"]
+
+
+def test_research_message_and_memory_cursor_pages_are_stable_and_workspace_scoped(store):
+    user, workspace = identity(store)
+    conversation = store.create_conversation(workspace.id, user.id, "Paged")
+    for index in range(3):
+        store.add_research_exchange(
+            workspace.id, conversation.id, f"q{index}", f"a{index}", [],
+            {"planned_tests": [f"test {index}"]},
+        )
+
+    newest = store.list_research_messages_page(workspace.id, conversation.id, limit=2)
+    assert [item.ordinal for item in newest.items] == [5, 6]
+    assert newest.next_before_ordinal == 5
+    middle = store.list_research_messages_page(
+        workspace.id, conversation.id, limit=2,
+        before_ordinal=newest.next_before_ordinal,
+    )
+    assert [item.ordinal for item in middle.items] == [3, 4]
+    assert middle.next_before_ordinal == 3
+    oldest = store.list_research_messages_page(
+        workspace.id, conversation.id, limit=2,
+        before_ordinal=middle.next_before_ordinal,
+    )
+    assert [item.ordinal for item in oldest.items] == [1, 2]
+    assert oldest.next_before_ordinal is None
+
+    latest_memory = store.list_research_memory_page(workspace.id, conversation.id, limit=2)
+    assert [item.ordinal for item in latest_memory.items] == [2, 3]
+    assert latest_memory.next_before_ordinal == 2
+
+    _, other_workspace = identity(store, "other")
+    with pytest.raises(PaperNotFoundError):
+        store.list_research_messages_page(other_workspace.id, conversation.id)
+    with pytest.raises(PaperNotFoundError):
+        store.list_research_memory_page(other_workspace.id, conversation.id)
+
+
+def test_research_memory_search_is_relevant_bounded_recent_and_workspace_scoped(store):
+    user, workspace = identity(store)
+    conversation = store.create_conversation(workspace.id, user.id, "Memory retrieval")
+    memories = [
+        "Transformer attention improves retrieval",
+        "Survey participant recruitment is incomplete",
+        "Compare sparse retrieval with dense retrieval",
+        "Retrieval quality needs a held-out evaluation",
+    ]
+    for index, memory in enumerate(memories):
+        store.add_research_exchange(
+            workspace.id, conversation.id, f"q{index}", f"a{index}", [],
+            {"planned_tests": [memory]},
+        )
+
+    matches = store.search_research_memory(
+        workspace.id, conversation.id, "retrieval quality", limit=2,
+    )
+    assert len(matches) == 2
+    assert matches[0].content == "Retrieval quality needs a held-out evaluation"
+    assert all("retrieval" in item.content.casefold() for item in matches)
+
+    recent = store.search_research_memory(workspace.id, conversation.id, "", limit=2)
+    assert [item.ordinal for item in recent] == [4, 3]
+
+    _, other_workspace = identity(store, "memory-search-other")
+    with pytest.raises(PaperNotFoundError):
+        store.search_research_memory(other_workspace.id, conversation.id, "retrieval")
+
+
+def test_conversation_detail_is_bounded_to_latest_one_hundred_messages(store):
+    user, workspace = identity(store)
+    conversation = store.create_conversation(workspace.id, user.id, "Long running")
+    for index in range(51):
+        store.add_research_exchange(workspace.id, conversation.id, f"q{index}", f"a{index}", [])
+
+    detail = store.get_conversation(workspace.id, conversation.id)
+    assert detail.message_count == 102
+    assert len(detail.messages) == 100
+    assert [detail.messages[0].ordinal, detail.messages[-1].ordinal] == [3, 102]
+
+
+def test_record_research_exchange_does_not_reload_conversation_detail(store, monkeypatch):
+    user, workspace = identity(store)
+    conversation = store.create_conversation(workspace.id, user.id, "Write-only path")
+
+    def fail_detail_reload(*args, **kwargs):
+        raise AssertionError("detail reload is unnecessary on the answer write path")
+
+    monkeypatch.setattr(store, "get_conversation", fail_detail_reload)
+    store.record_research_exchange(
+        workspace.id, conversation.id, "question", "answer", [],
+        memory_delta={"hypotheses": ["bounded persistence"]},
+    )
+
+    metadata = store.get_conversation_metadata(workspace.id, conversation.id)
+    assert metadata.message_count == 2
+    assert metadata.memory_event_count == 1
+    assert len(store.list_research_messages_page(workspace.id, conversation.id).items) == 2
 
 
 def test_ingestion_lease_rejects_fresh_running_and_reclaims_stale(store):

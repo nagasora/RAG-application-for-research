@@ -24,7 +24,7 @@ type EvidenceViewerProps = {
   onClose: () => void;
 };
 
-const FOCUSABLE = "button:not([disabled]), a[href], iframe, [tabindex]:not([tabindex='-1'])";
+const FOCUSABLE = "button:not([disabled]), a[href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), iframe, [tabindex]:not([tabindex='-1'])";
 
 export function EvidenceViewer({ target, canWrite, onClose }: EvidenceViewerProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -178,23 +178,25 @@ export function EvidenceViewer({ target, canWrite, onClose }: EvidenceViewerProp
     finally { setNoteBusy(false); }
   };
 
-  return <div className="fixed inset-0 z-[70] flex items-center justify-center bg-[#101a16]/65 p-2 backdrop-blur-sm md:p-6" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
-    <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="evidence-viewer-title" className="flex h-[96vh] w-full max-w-[1500px] flex-col overflow-hidden rounded-2xl bg-[#f6f4ee] shadow-2xl md:h-[92vh] md:rounded-3xl">
-      <header className="flex shrink-0 items-start justify-between gap-4 border-b border-[#d9dbd4] bg-[#fffefa] px-4 py-4 md:px-6">
+  return <div className="fixed inset-0 z-[105] isolate flex justify-end bg-[#06100c]/80 backdrop-blur-[3px]" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
+    <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="evidence-viewer-title" className="flex h-[100dvh] w-full max-w-[1320px] flex-col overflow-hidden border-l border-white/20 bg-[#f6f4ee] shadow-[-30px_0_90px_rgba(0,0,0,.48)] md:w-[94vw] md:rounded-l-3xl">
+      <header className="flex shrink-0 items-start justify-between gap-4 border-b border-[#cdd3ce] bg-[#fffefa] px-4 py-4 shadow-sm md:px-6">
         <div className="min-w-0">
-          <p className="text-[10px] font-bold uppercase tracking-[.2em] text-[#a06a28]">Evidence viewer · p. {page}</p>
+          <p className="text-[10px] font-bold uppercase tracking-[.2em] text-[#35634f]">Right-side PDF / text viewer · p. {page}</p>
           <h2 id="evidence-viewer-title" className="serif mt-1 truncate text-xl font-semibold md:text-2xl">{title}</h2>
+          <p className="mt-1 text-[10px] font-medium text-[#68736f]">左でPDF原本、右で検索に使われた抽出本文と引用箇所を確認できます</p>
         </div>
         <button ref={closeRef} onClick={onClose} aria-label="根拠ビューアを閉じる" className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-[#d8dad4] bg-white text-[#52605b] hover:bg-[#edf0eb] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#164f3b]"><XMarkIcon className="h-5 w-5" /></button>
       </header>
 
       {error ? <div className="m-5 rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-800" role="alert"><p>{error}</p><button onClick={onClose} className="mt-4 rounded-full border border-red-300 px-4 py-2 font-semibold">閉じる</button></div> :
       <div className={`grid min-h-0 flex-1 ${isPdf && hasOriginal ? "lg:grid-cols-[minmax(0,1.45fr)_minmax(340px,.55fr)]" : "grid-cols-1"}`}>
-        {isPdf && hasOriginal && <section aria-label={`PDF ${page}ページ`} className="min-h-[42vh] border-b border-[#d9dbd4] bg-[#424946] lg:min-h-0 lg:border-b-0 lg:border-r">
+        {isPdf && hasOriginal && <section aria-label={`PDF原本 ${page}ページ`} className="relative min-h-[42vh] border-b border-[#d9dbd4] bg-[#343c38] lg:min-h-0 lg:border-b-0 lg:border-r">
+          <div className="pointer-events-none absolute left-3 top-3 z-10 rounded-full bg-[#10231b] px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-white shadow-lg">PDF原本 · スクロール可能</div>
           {loadingDetail || loadingFile ? <Loading label="認証済みPDFを準備しています" /> : fileUrl ? <iframe key={fileUrl} src={fileUrl} title={`${title} ${page}ページ`} className="h-full min-h-[42vh] w-full bg-white lg:min-h-0" /> : <div role="alert" className="grid h-full min-h-[42vh] place-items-center p-8 text-center text-sm text-red-100">{fileError || "PDFを表示できませんでした"}</div>}
         </section>}
-        <section aria-label="抽出された根拠テキスト" className="min-h-0 overflow-y-auto p-5 md:p-7">
-          <div className="mb-5 flex items-center justify-between gap-3">
+        <section aria-label="抽出された根拠テキスト" className="min-h-0 overflow-y-auto overscroll-contain p-5 md:p-7">
+          <div className="sticky top-0 z-10 -mx-5 -mt-5 mb-5 flex items-center justify-between gap-3 border-b border-[#d9dbd4] bg-[#f6f4ee]/95 px-5 py-4 shadow-sm backdrop-blur md:-mx-7 md:-mt-7 md:px-7">
             <div><div className="flex items-center gap-2"><DocumentTextIcon className="h-5 w-5 text-[#164f3b]" /><h3 className="font-semibold">抽出テキスト</h3></div>{paperPage && <p className="mt-1 text-[10px] text-[#68736f]">{paperPage.text_source === "ocr" ? "OCR" : paperPage.text_source === "native" ? "原文抽出" : "テキストなし"} · 品質 {Math.round(paperPage.quality * 100)}%</p>}</div>
             <div className="flex items-center gap-2">
               <button onClick={() => movePage(page - 1)} disabled={page <= 1 || loadingPage} aria-label="前のページ" className="grid h-9 w-9 place-items-center rounded-full border border-[#d5d8d2] bg-white disabled:opacity-35"><ArrowLeftIcon className="h-4 w-4" /></button>

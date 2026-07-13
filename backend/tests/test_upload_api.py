@@ -118,6 +118,7 @@ def test_detail_evidence_file_range_and_delete_are_owner_scoped(tmp_path):
         assert forbidden.status_code == 404
         assert ranged.status_code == 206
         assert ranged.content == b"grounded"
+        assert ranged.headers["content-disposition"].startswith("inline;")
         assert deleted.status_code == 204
         assert not (tmp_path / "originals" / detail.json()["storage_key"]).exists()
     finally:

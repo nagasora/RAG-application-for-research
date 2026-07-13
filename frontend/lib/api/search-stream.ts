@@ -1,12 +1,31 @@
-import { API_BASE_URL, type Citation, type SearchRequest } from "./client";
+import { API_BASE_URL, type AnswerClaim, type Citation, type SearchRequest, type SearchResponse } from "./client";
 import { authenticatedHeaders } from "./auth";
 import { ApiError, errorFromFetchResponse, toApiError } from "./error";
 
 export type SearchStreamEvent =
   | { type: "token"; value: string }
   | { type: "citations"; value: Citation[] }
+  | { type: "stage"; value: SearchStage }
+  | { type: "meta"; value: SearchStreamMeta }
   | { type: "done" }
   | { type: "error"; message: string };
+
+export type SearchStreamMeta = Required<Pick<SearchResponse,
+  "generation_mode" | "model" | "retrieval_queries" | "grounded" | "llm_attempted"
+  | "llm_succeeded" | "grounding_status" | "fallback_reason" | "claims" | "memory_delta" | "model_calls"
+>> & {
+  model: string | null;
+  fallback_reason: string | null;
+};
+
+export const SEARCH_STAGES = [
+  "accepted", "embedding", "retrieving", "planning", "generating", "auditing", "saving",
+] as const;
+export type SearchStage = (typeof SEARCH_STAGES)[number];
+
+export function isSearchStage(value: unknown): value is SearchStage {
+  return typeof value === "string" && (SEARCH_STAGES as readonly string[]).includes(value);
+}
 
 function isCitation(value: unknown): value is Citation {
   if (!value || typeof value !== "object") return false;
@@ -19,6 +38,19 @@ function isCitation(value: unknown): value is Citation {
     && typeof citation.section === "string"
     && typeof citation.excerpt === "string"
     && typeof citation.score === "number";
+}
+
+function isAnswerClaim(value: unknown): value is AnswerClaim {
+  if (!value || typeof value !== "object") return false;
+  const claim = value as Partial<AnswerClaim>;
+  return typeof claim.claim_id === "string"
+    && typeof claim.text === "string"
+    && ["paper", "general", "hypothesis"].includes(claim.kind ?? "")
+    && Array.isArray(claim.citation_ids) && claim.citation_ids.every(item => typeof item === "number");
+}
+
+function isMemoryDelta(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function decodeEvent(dataLines: string[]): SearchStreamEvent | null {
@@ -37,10 +69,30 @@ function decodeEvent(dataLines: string[]): SearchStreamEvent | null {
   if (!parsed || typeof parsed !== "object" || typeof (parsed as { type?: unknown }).type !== "string") {
     throw new ApiError("SSEイベントの形式が不正です", { code: "invalid_sse_event", details: parsed });
   }
-  const event = parsed as { type: string; value?: unknown; message?: unknown };
+  const event = parsed as { type: string; value?: unknown; stage?: unknown; message?: unknown };
   if (event.type === "token" && typeof event.value === "string") return { type: "token", value: event.value };
   if (event.type === "citations" && Array.isArray(event.value) && event.value.every(isCitation)) {
     return { type: "citations", value: event.value };
+  }
+  if (event.type === "stage") {
+    const stage = event.value ?? event.stage;
+    if (isSearchStage(stage)) return { type: "stage", value: stage };
+  }
+  if (event.type === "meta" && event.value && typeof event.value === "object") {
+    const meta = event.value as Partial<SearchStreamMeta>;
+    if ((meta.generation_mode === "agentic_rag" || meta.generation_mode === "local_fallback")
+      && (typeof meta.model === "string" || meta.model === null)
+      && Array.isArray(meta.retrieval_queries) && meta.retrieval_queries.every(item => typeof item === "string")
+      && typeof meta.grounded === "boolean"
+      && typeof meta.llm_attempted === "boolean"
+      && typeof meta.llm_succeeded === "boolean"
+      && ["verified", "rejected", "not_checked", "no_evidence"].includes(meta.grounding_status ?? "")
+      && (typeof meta.fallback_reason === "string" || meta.fallback_reason === null)
+      && Array.isArray(meta.claims) && meta.claims.every(isAnswerClaim)
+      && isMemoryDelta(meta.memory_delta)
+      && typeof meta.model_calls === "number" && Number.isInteger(meta.model_calls) && meta.model_calls >= 0) {
+      return { type: "meta", value: meta as SearchStreamMeta };
+    }
   }
   if (event.type === "done") return { type: "done" };
   if (event.type === "error" && typeof event.message === "string") return { type: "error", message: event.message };
@@ -109,8 +161,15 @@ export async function* streamSearch(request: SearchRequest, signal?: AbortSignal
   if (!response.ok) throw await errorFromFetchResponse(response, "回答を生成できませんでした");
   if (!response.body) throw new ApiError("ストリームを開始できませんでした", { code: "missing_response_body" });
 
+  let completed = false;
   for await (const event of parseEventStream(response.body)) {
     if (event.type === "error") throw new ApiError(event.message, { code: "stream_error" });
+    if (event.type === "done") completed = true;
     yield event;
+  }
+  if (!completed) {
+    throw new ApiError("回答ストリームが完了前に切断されました。質問を再送できます。", {
+      code: "incomplete_stream",
+    });
   }
 }

@@ -13,3 +13,6 @@ button { cursor:pointer; }
 .grain::after { content:""; position:fixed; inset:0; pointer-events:none; opacity:.025; background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.8'/%3E%3C/svg%3E"); z-index:50; }
 @keyframes rise { from { opacity:0; transform:translateY(10px) } to { opacity:1; transform:none } }
 .rise { animation:rise .45s ease-out both; }
+.research-markdown .katex-display { margin:.9rem 0; max-width:100%; overflow-x:auto; overflow-y:hidden; padding:.4rem 0; }
+.research-markdown .katex { font-size:1.05em; }
+.research-markdown .katex-display > .katex { min-width:max-content; text-align:left; }

@@ -13,6 +13,8 @@ WORKER_GRANTS = {
     "ingestion_jobs": ("SELECT", "UPDATE"),
     "paper_pages": ("SELECT", "INSERT", "UPDATE", "DELETE"),
     "document_elements": ("SELECT", "INSERT", "UPDATE", "DELETE"),
+    "chunk_embeddings": ("SELECT", "INSERT", "UPDATE"),
+    "embedding_jobs": ("SELECT", "INSERT", "UPDATE"),
 }
 
 

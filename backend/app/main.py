@@ -1,15 +1,21 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import csv
 import hashlib
+import importlib.util
 import json
+import logging
 import os
 import re
+import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from threading import Lock
+from typing import Callable, Literal
 from uuid import uuid4
 
 import httpx
@@ -20,18 +26,95 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from pypdf import PdfReader
 
 from .auth import get_current_principal
+from .agentic_rag import AgenticRAG
 from .models import (
-    AnalysisRequest, Chunk, ComparisonRow, ExternalPaperRequest, MeResponse, Paper, PaperDetail,
+    AnalysisRequest, Chunk, ComparisonRow, ExternalPaperRequest, LLMStatus, MeResponse, Paper, PaperDetail,
     DocumentElement, IngestionJob, Note, NoteCreate, NoteUpdate, PaperPage, PaperSummary, PaperTagsUpdate, Principal,
     ResearchGap, SavedComparison, SavedComparisonCreate, SearchHistory, SearchRequest,
     SearchResponse, Tag, TagCreate, UploadResult, User, Workspace, WorkspaceCreate,
+    ResearchConversation, ResearchConversationCreate, ResearchConversationDetail,
+    ResearchMemoryPage, ResearchMessagePage,
 )
-from .rag import chunk_pages, citations_from, compare_papers, extractive_answer, llm_answer, research_gaps, search
+from .rag import (
+    ANSWER_MODEL, chunk_pages, citations_from, compare_papers, embed_texts, embedding_config, embedding_model, extractive_answer,
+    hybrid_search, research_gaps, search,
+)
 from .ingestion import process_ingestion_job
 from .storage import LocalOriginalStorage, OriginalStorage
-from .store import DuplicatePaperError, PaperNotFoundError, PaperStore, ResourceConflictError, WorkspaceAccessError
+from .store import DuplicatePaperError, PaperNotFoundError, PaperStore, ResourceConflictError, WorkspaceAccessError, WorkspacePermissionError
 
 load_dotenv()
+
+logger = logging.getLogger("paperpilot.rag")
+
+FallbackReason = Literal[
+    "api_key_missing", "dependency_missing", "no_evidence", "grounding_failed",
+    "authentication_failed", "permission_denied", "model_not_found", "rate_limited",
+    "api_timeout", "network_error", "model_api_error", "deadline_exceeded",
+    "model_timeout", "model_unavailable", "provider_unavailable", "model_call_failed",
+    "generation_failed", "citation_validation_failed", "grounding_audit_failed", "repair_failed",
+    "structured_output_invalid", "verification_skipped_timeout",
+]
+_last_llm_failure: FallbackReason | None = None
+_last_llm_failure_lock = Lock()
+
+
+def _agentic_dependencies_available() -> bool:
+    return all(
+        importlib.util.find_spec(module) is not None
+        for module in ("langchain_core", "langchain_openai", "langchain_text_splitters")
+    )
+
+
+def _set_last_llm_failure(code: FallbackReason | None) -> None:
+    global _last_llm_failure
+    with _last_llm_failure_lock:
+        _last_llm_failure = code
+
+
+def _get_last_llm_failure() -> FallbackReason | None:
+    with _last_llm_failure_lock:
+        return _last_llm_failure
+
+
+def _classify_llm_failure(exc: Exception) -> FallbackReason:
+    if isinstance(exc, ModuleNotFoundError):
+        return "dependency_missing"
+    status_code = getattr(exc, "status_code", None)
+    if status_code == 401:
+        return "authentication_failed"
+    if status_code == 403:
+        return "permission_denied"
+    if status_code == 404:
+        return "model_not_found"
+    if status_code == 429:
+        return "rate_limited"
+    name = exc.__class__.__name__.lower()
+    if "timeout" in name:
+        return "api_timeout"
+    if "connection" in name:
+        return "network_error"
+    return "model_api_error"
+
+
+def _build_agentic_chat_model(timeout_seconds: float = 12.0):
+    from langchain_openai import ChatOpenAI
+
+    return ChatOpenAI(
+        model=ANSWER_MODEL,
+        api_key=os.environ["OPENAI_API_KEY"],
+        # Respect the Agentic RAG stage budget. The previous 12-second cap cut
+        # gpt-5.4-nano off before its 16-second generation window completed.
+        timeout=max(0.5, min(timeout_seconds, 20.0)),
+        # The request-level deadline owns retries. SDK retries can otherwise
+        # consume the whole response budget before a local fallback is returned.
+        max_retries=0,
+        # This is only an upper bound, not a reserved/charged token count.
+        # Complex Japanese answers with LaTeX can exceed 1,800 tokens and leave
+        # Structured Outputs as truncated, invalid JSON.
+        max_tokens=4000,
+        use_responses_api=True,
+    )
 
 
 def _positive_int_env(name: str, default: int) -> int:
@@ -44,7 +127,18 @@ def _positive_int_env(name: str, default: int) -> int:
     return value
 
 
+def _positive_float_env(name: str, default: float) -> float:
+    try:
+        value = float(os.getenv(name, str(default)))
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be a number") from exc
+    if value <= 0:
+        raise RuntimeError(f"{name} must be positive")
+    return value
+
+
 MAX_UPLOAD_FILES = _positive_int_env("MAX_UPLOAD_FILES", 10)
+RAG_REQUEST_DEADLINE_SECONDS = _positive_float_env("RAG_REQUEST_DEADLINE_SECONDS", 25.0)
 MAX_UPLOAD_BYTES = _positive_int_env("MAX_UPLOAD_BYTES", 25 * 1024 * 1024)
 MAX_PDF_PAGES = _positive_int_env("MAX_PDF_PAGES", 300)
 READ_CHUNK_BYTES = 1024 * 1024
@@ -167,6 +261,18 @@ def me(current: CurrentUser = Depends(get_current_user)) -> MeResponse:
     return MeResponse(user=current.user, personal_workspace=current.personal_workspace)
 
 
+@app.get("/api/llm/status", response_model=LLMStatus)
+def llm_status(current: CurrentUser = Depends(get_current_user)) -> LLMStatus:
+    del current  # Authentication is the purpose of this dependency.
+    return LLMStatus(
+        configured=bool(os.getenv("OPENAI_API_KEY")),
+        model=ANSWER_MODEL,
+        embedding_model=embedding_model(),
+        agentic_dependencies_available=_agentic_dependencies_available(),
+        last_failure_code=_get_last_llm_failure(),
+    )
+
+
 @app.get("/api/workspaces", response_model=list[Workspace])
 def list_workspaces(
     current: CurrentUser = Depends(get_current_user),
@@ -182,6 +288,34 @@ def create_workspace(
     store: PaperStore = Depends(get_store),
 ) -> Workspace:
     return store.create_workspace(current.user.id, body.name)
+
+
+@app.get("/api/workspaces/{workspace_id}", response_model=Workspace)
+def get_workspace(
+    workspace_id: str,
+    current: CurrentUser = Depends(get_current_user),
+    store: PaperStore = Depends(get_store),
+) -> Workspace:
+    """Resolve a switch target without exposing inaccessible workspaces."""
+    try:
+        return store.resolve_workspace(current.user.id, workspace_id)
+    except WorkspaceAccessError as exc:
+        raise HTTPException(status_code=404, detail="workspace not found") from exc
+
+
+@app.patch("/api/workspaces/{workspace_id}", response_model=Workspace)
+def rename_workspace(
+    workspace_id: str,
+    body: WorkspaceCreate,
+    current: CurrentUser = Depends(get_current_user),
+    store: PaperStore = Depends(get_store),
+) -> Workspace:
+    try:
+        return store.rename_workspace(current.user.id, workspace_id, body.name)
+    except WorkspaceAccessError as exc:
+        raise HTTPException(status_code=404, detail="workspace not found") from exc
+    except WorkspacePermissionError as exc:
+        raise HTTPException(status_code=403, detail="workspace owner role is required") from exc
 
 
 @app.get("/api/papers", response_model=list[PaperSummary])
@@ -360,7 +494,10 @@ def add_external_paper(
     if abstract:
         paper.chunks = chunk_pages([(1, abstract)], paper.id)
     try:
-        store.upsert(paper)
+        embedding_provider, configured_model = embedding_config()
+        store.upsert(
+            paper, embedding_model=configured_model, embedding_provider=embedding_provider,
+        )
     except DuplicatePaperError as exc:
         return summary(exc.paper)
     return summary(paper)
@@ -398,7 +535,12 @@ def get_paper_file(
     except FileNotFoundError as exc:
         raise HTTPException(status_code=410, detail="原本ファイルが失われています") from exc
     extension = path.suffix
-    return FileResponse(path, media_type=paper.mime_type, filename=f"{paper.title}{extension}")
+    return FileResponse(
+        path,
+        media_type=paper.mime_type,
+        filename=f"{paper.title}{extension}",
+        content_disposition_type="inline",
+    )
 
 
 @app.get("/api/papers/{paper_id}/pages/{page}", response_model=PaperPage)
@@ -502,34 +644,361 @@ def answer(
     store: PaperStore = Depends(get_store),
     context: WorkspaceContext = Depends(get_workspace_context),
 ):
-    results = search(filtered_papers(body, store, context.workspace.id), body.query, body.limit)
-    citations = citations_from(results)
-    generated = llm_answer(body.query, citations) or extractive_answer(body.query, citations)
-    response = SearchResponse(answer=generated, citations=citations)
-    result_summary = {"citations": [citation.model_dump(mode="json") for citation in citations]}
-    if os.getenv("SEARCH_HISTORY_STORE_ANSWER", "false").lower() in {"1", "true", "yes"}:
-        result_summary["answer"] = generated
-    store.add_search_history(
-        context.workspace.id, context.user.id, body.query,
-        body.paper_ids or list(dict.fromkeys(c.paper_id for c in citations)), result_summary,
+    return _answer(body, store, context)
+
+
+def _load_answer_conversation(
+    body: SearchRequest, store: PaperStore, context: WorkspaceContext,
+) -> ResearchConversation | None:
+    if not body.conversation_id:
+        return None
+    try:
+        conversation = store.get_conversation_metadata(
+            context.workspace.id, body.conversation_id,
+        )
+    except PaperNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="research conversation not found") from exc
+    # Reject read-only users before any embedding or LLM API cost is incurred.
+    require_workspace_write(context)
+    return conversation
+
+
+def _build_research_memory_context(
+    store: PaperStore, workspace_id: str, conversation: ResearchConversation | None,
+    query: str,
+) -> str:
+    if conversation is None:
+        return ""
+    durable = store.search_research_memory(
+        workspace_id, conversation.id, query, limit=8,
     )
+    durable_text = "\n".join(
+        f"- {item.kind}: {item.content}" for item in durable
+    )[:2_500]
+    parts = [conversation.summary[-2_500:]] if conversation.summary else []
+    if durable_text:
+        parts.append("関連する長期研究メモリ:\n" + durable_text)
+    return "\n\n".join(parts)[-5_000:]
+
+
+def _run_agentic_rag(
+    body: SearchRequest, retrieve, conversation: ResearchConversation | None,
+    memory_context: str, deadline: float, emit: Callable[[str], None],
+):
+    agent = AgenticRAG(
+        _build_agentic_chat_model(),
+        retrieve,
+        max_iterations=2,
+        max_execution_seconds=RAG_REQUEST_DEADLINE_SECONDS,
+        max_queries_per_iteration=3,
+        max_evidence=max(body.limit, 10),
+        model_factory=_build_agentic_chat_model,
+        max_sources=6,
+        max_evidence_chars=14_000,
+        # Research memory is persisted only after the semantic audit.
+        verify_clean_claims=conversation is not None,
+        progress_callback=lambda stage: emit({
+            "retrieving": "retrieving",
+            "planning": "planning",
+            "reranking": "planning",
+            "generating": "generating",
+            "verifying": "auditing",
+            "completed": "saving",
+            "fallback": "saving",
+        }.get(stage, "retrieving")),
+    )
+    return agent.run(body.query, memory=memory_context, deadline=deadline)
+
+
+def _search_result_summary(response: SearchResponse) -> dict:
+    result = {
+        "citations": [citation.model_dump(mode="json") for citation in response.citations],
+        "generation_mode": response.generation_mode,
+        "model": response.model,
+        "retrieval_queries": response.retrieval_queries,
+        "grounded": response.grounded,
+        "llm_attempted": response.llm_attempted,
+        "llm_succeeded": response.llm_succeeded,
+        "grounding_status": response.grounding_status,
+        "fallback_reason": response.fallback_reason,
+        "claims": [claim.model_dump(mode="json") for claim in response.claims],
+        "memory_delta": response.memory_delta,
+        "model_calls": response.model_calls,
+    }
+    if os.getenv("SEARCH_HISTORY_STORE_ANSWER", "false").lower() in {"1", "true", "yes"}:
+        result["answer"] = response.answer
+    return result
+
+
+def _persist_search_history_best_effort(
+    store: PaperStore, context: WorkspaceContext, body: SearchRequest,
+    response: SearchResponse, result_summary: dict,
+) -> None:
+    if context.workspace.role == "viewer":
+        return
+    try:
+        store.add_search_history(
+            context.workspace.id, context.user.id, body.query,
+            body.paper_ids or list(dict.fromkeys(
+                citation.paper_id for citation in response.citations
+            )),
+            result_summary,
+        )
+    except Exception:
+        # History is auxiliary. Never turn a committed conversation answer into
+        # a failed API/SSE response, and never log query, answer, or DB details.
+        logger.warning("code=search_history_write_failed")
+
+
+def _answer(
+    body: SearchRequest,
+    store: PaperStore,
+    context: WorkspaceContext,
+    *,
+    progress: Callable[[str], None] | None = None,
+    deadline: float | None = None,
+) -> SearchResponse:
+    """Answer within one absolute budget; retrieval never creates document vectors."""
+    deadline = deadline or (time.monotonic() + RAG_REQUEST_DEADLINE_SECONDS)
+
+    def emit(stage: str) -> None:
+        if progress is not None:
+            progress(stage)
+
+    conversation = _load_answer_conversation(body, store, context)
+
+    papers = filtered_papers(body, store, context.workspace.id)
+    chunks = [chunk for paper in papers for chunk in paper.chunks]
+    vector_model = embedding_model()
+    emit("embedding")
+    embeddings = store.get_chunk_embeddings(context.workspace.id, [chunk.id for chunk in chunks], vector_model)
+    query_vector_cache: dict[str, list[float] | None] = {}
+
+    def retrieve(scoped_query: str, limit: int):
+        emit("retrieving")
+        if scoped_query not in query_vector_cache:
+            # Only the small query vector is generated on the request path. Paper
+            # vectors are populated asynchronously by the embedding worker.
+            remaining = deadline - time.monotonic()
+            query_vectors = (
+                embed_texts(
+                    [scoped_query], timeout_seconds=min(2.5, max(0.5, remaining - 18.0)), max_retries=0,
+                )
+                if embeddings and remaining > 18.5 else []
+            )
+            query_vector_cache[scoped_query] = query_vectors[0] if query_vectors else None
+        query_vector = query_vector_cache[scoped_query]
+        results = (
+            hybrid_search(papers, scoped_query, embeddings, query_vector, limit)
+            if query_vector is not None else search(papers, scoped_query, limit)
+        )
+        return citations_from(results, query=scoped_query)
+
+    model_name = ANSWER_MODEL
+    generated: str | None = None
+    citations = []
+    retrieval_queries = [body.query]
+    grounded = False
+    llm_attempted = False
+    llm_succeeded = False
+    grounding_status: Literal["verified", "rejected", "not_checked", "no_evidence"] = "not_checked"
+    generation_mode = "local_fallback"
+    fallback_reason: FallbackReason | None = None
+    claims: list[dict] = []
+    memory_delta: dict = {}
+    model_calls = 0
+    if not os.getenv("OPENAI_API_KEY"):
+        fallback_reason = "api_key_missing"
+        _set_last_llm_failure(fallback_reason)
+    elif not chunks:
+        fallback_reason = "no_evidence"
+        grounding_status = "no_evidence"
+        _set_last_llm_failure(fallback_reason)
+    elif not _agentic_dependencies_available():
+        fallback_reason = "dependency_missing"
+        _set_last_llm_failure(fallback_reason)
+    else:
+        try:
+            memory_context = _build_research_memory_context(
+                store, context.workspace.id, conversation, body.query,
+            )
+            agent_result = _run_agentic_rag(
+                body, retrieve, conversation, memory_context, deadline, emit,
+            )
+            generated = agent_result.answer
+            citations = agent_result.citations
+            retrieval_queries = agent_result.search_queries
+            grounded = agent_result.grounded
+            # Grounded results from older/custom AgenticRAG implementations necessarily
+            # imply that an LLM was attempted and produced a usable answer.
+            llm_attempted = agent_result.llm_attempted or agent_result.grounded
+            llm_succeeded = agent_result.llm_succeeded or agent_result.grounded
+            grounding_status = agent_result.grounding_status  # type: ignore[assignment]
+            # An LLM generation that passed deterministic citation checks remains
+            # an Agentic RAG answer even if the optional semantic audit timed out.
+            generation_mode = "agentic_rag" if llm_succeeded else "local_fallback"
+            fallback_reason = agent_result.fallback_reason  # type: ignore[assignment]
+            claims = agent_result.claims
+            memory_delta = agent_result.memory_delta
+            model_calls = agent_result.model_calls
+            _set_last_llm_failure(fallback_reason)
+        except Exception as exc:
+            llm_attempted = True
+            fallback_reason = _classify_llm_failure(exc)
+            _set_last_llm_failure(fallback_reason)
+            logger.warning(
+                "Agentic RAG fell back locally: code=%s exception=%s",
+                fallback_reason, exc.__class__.__name__,
+            )
+            citations = retrieve(body.query, body.limit)
+            generated = extractive_answer(body.query, citations)
+    if generated is None:
+        citations = retrieve(body.query, body.limit)
+        generated = extractive_answer(body.query, citations)
+
+    emit("saving")
+    if conversation:
+        store.record_research_exchange(
+            context.workspace.id, conversation.id, body.query, generated, citations,
+            memory_delta=memory_delta,
+        )
+    response = SearchResponse(
+        answer=generated, citations=citations, conversation_id=body.conversation_id,
+        generation_mode=generation_mode, model=model_name if llm_succeeded else None,
+        retrieval_queries=retrieval_queries, grounded=grounded,
+        llm_attempted=llm_attempted, llm_succeeded=llm_succeeded,
+        grounding_status=grounding_status, fallback_reason=fallback_reason,
+        claims=claims, memory_delta=memory_delta, model_calls=model_calls,
+    )
+    result_summary = _search_result_summary(response)
+    _persist_search_history_best_effort(store, context, body, response, result_summary)
     return response
 
 
+@app.get("/api/research/conversations", response_model=list[ResearchConversation])
+def list_research_conversations(
+    store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context),
+):
+    return store.list_conversations(context.workspace.id)
+
+
+@app.post("/api/research/conversations", response_model=ResearchConversation, status_code=201)
+def create_research_conversation(
+    body: ResearchConversationCreate, store: PaperStore = Depends(get_store),
+    context: WorkspaceContext = Depends(get_workspace_context),
+):
+    require_workspace_write(context)
+    return store.create_conversation(context.workspace.id, context.user.id, body.title)
+
+
+@app.get("/api/research/conversations/{conversation_id}", response_model=ResearchConversationDetail)
+def get_research_conversation(
+    conversation_id: str, store: PaperStore = Depends(get_store),
+    context: WorkspaceContext = Depends(get_workspace_context),
+):
+    try:
+        return store.get_conversation(context.workspace.id, conversation_id)
+    except PaperNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="research conversation not found") from exc
+
+
+@app.get(
+    "/api/research/conversations/{conversation_id}/messages",
+    response_model=ResearchMessagePage,
+)
+def get_research_messages_page(
+    conversation_id: str,
+    limit: int = Query(default=100, ge=1, le=200),
+    before_ordinal: int | None = Query(default=None, ge=1),
+    store: PaperStore = Depends(get_store),
+    context: WorkspaceContext = Depends(get_workspace_context),
+):
+    try:
+        return store.list_research_messages_page(
+            context.workspace.id, conversation_id,
+            limit=limit, before_ordinal=before_ordinal,
+        )
+    except PaperNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="research conversation not found") from exc
+
+
+@app.get(
+    "/api/research/conversations/{conversation_id}/memory",
+    response_model=ResearchMemoryPage,
+)
+def get_research_memory_page(
+    conversation_id: str,
+    kind: Literal["hypothesis", "assumption", "unresolved_question", "planned_test"] | None = None,
+    limit: int = Query(default=100, ge=1, le=200),
+    before_ordinal: int | None = Query(default=None, ge=1),
+    store: PaperStore = Depends(get_store),
+    context: WorkspaceContext = Depends(get_workspace_context),
+):
+    try:
+        return store.list_research_memory_page(
+            context.workspace.id, conversation_id,
+            kind=kind, limit=limit, before_ordinal=before_ordinal,
+        )
+    except PaperNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="research conversation not found") from exc
+
+
 @app.post("/api/search/stream")
-def answer_stream(
+async def answer_stream(
     body: SearchRequest,
     store: PaperStore = Depends(get_store),
     context: WorkspaceContext = Depends(get_workspace_context),
 ):
-    response = answer(body, store, context)
+    async def events():
+        # Open the SSE response before retrieval/model work begins. Comment frames
+        # are valid SSE and are deliberately ignored by existing clients.
+        yield ": stream-open\n\n"
+        yield f"data: {json.dumps({'type': 'stage', 'value': 'accepted'})}\n\n"
+        stages: asyncio.Queue[str] = asyncio.Queue()
+        loop = asyncio.get_running_loop()
 
-    def events():
+        def report_progress(stage: str) -> None:
+            loop.call_soon_threadsafe(stages.put_nowait, stage)
+
+        deadline = time.monotonic() + RAG_REQUEST_DEADLINE_SECONDS
+        task = asyncio.create_task(asyncio.to_thread(
+            _answer, body, store, context, progress=report_progress, deadline=deadline,
+        ))
+        try:
+            while not task.done():
+                stage_task = asyncio.create_task(stages.get())
+                done, _ = await asyncio.wait(
+                    {task, stage_task}, timeout=10.0, return_when=asyncio.FIRST_COMPLETED,
+                )
+                if stage_task in done:
+                    stage = stage_task.result()
+                    yield f"data: {json.dumps({'type': 'stage', 'value': stage})}\n\n"
+                else:
+                    stage_task.cancel()
+                if task in done:
+                    break
+                if not done:
+                    yield ": heartbeat\n\n"
+            response = await task
+        except asyncio.CancelledError:
+            # Cancelling the await stops further streaming. Python cannot forcibly
+            # terminate an already-running SDK call in the worker thread; its own
+            # request timeout remains the final bound for that call.
+            task.cancel()
+            raise
+        except HTTPException as exc:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(exc.detail)}, ensure_ascii=False)}\n\n"
+            return
+        except Exception:
+            logger.exception("Streaming RAG generation failed")
+            yield f"data: {json.dumps({'type': 'error', 'message': '回答生成に失敗しました'}, ensure_ascii=False)}\n\n"
+            return
         words = re.split(r"(?<=。)|(?<=\n)", response.answer)
         for word in words:
             if word:
                 yield f"data: {json.dumps({'type': 'token', 'value': word}, ensure_ascii=False)}\n\n"
         yield f"data: {json.dumps({'type': 'citations', 'value': [c.model_dump() for c in response.citations]}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'type': 'meta', 'value': {'generation_mode': response.generation_mode, 'model': response.model, 'retrieval_queries': response.retrieval_queries, 'grounded': response.grounded, 'llm_attempted': response.llm_attempted, 'llm_succeeded': response.llm_succeeded, 'grounding_status': response.grounding_status, 'fallback_reason': response.fallback_reason, 'claims': [claim.model_dump(mode='json') for claim in response.claims], 'memory_delta': response.memory_delta, 'model_calls': response.model_calls}}, ensure_ascii=False)}\n\n"
         yield "data: {\"type\":\"done\"}\n\n"
 
     return StreamingResponse(events(), media_type="text/event-stream")

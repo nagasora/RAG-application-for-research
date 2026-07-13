@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import {
   createWorkspace as createWorkspaceRequest, getMe, listWorkspaces,
+  renameWorkspace as renameWorkspaceRequest,
   type Me, type Workspace,
 } from "@/lib/api/client";
 import {
@@ -23,9 +24,11 @@ export type WorkspaceSession = {
   activeWorkspace: Workspace | null;
   error: ApiError | null;
   creating: boolean;
+  renaming: boolean;
   retry: () => void;
   selectWorkspace: (workspaceId: string) => void;
   createWorkspace: (name: string) => Promise<void>;
+  renameWorkspace: (workspaceId: string, name: string) => Promise<void>;
   useAccessToken: (token: string) => void;
 };
 
@@ -37,6 +40,7 @@ export function useWorkspaceSession(): WorkspaceSession {
   const [activeWorkspace, setActiveWorkspace] = useState<Workspace | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
   const [creating, setCreating] = useState(false);
+  const [renaming, setRenaming] = useState(false);
   const [revision, setRevision] = useState(0);
 
   const retry = useCallback(() => setRevision(value => value + 1), []);
@@ -90,12 +94,24 @@ export function useWorkspaceSession(): WorkspaceSession {
     } finally { setCreating(false); }
   }, []);
 
+  const renameWorkspace = useCallback(async (workspaceId: string, name: string) => {
+    setRenaming(true);
+    try {
+      const updated = await renameWorkspaceRequest(workspaceId, name);
+      setWorkspaces(current => current.map(workspace => workspace.id === updated.id ? updated : workspace));
+      setActiveWorkspace(current => current?.id === updated.id ? updated : current);
+      setMe(current => current?.personal_workspace.id === updated.id
+        ? { ...current, personal_workspace: updated }
+        : current);
+    } finally { setRenaming(false); }
+  }, []);
+
   const useAccessToken = useCallback((token: string) => {
     setSessionAccessToken(token); retry();
   }, [retry]);
 
   return {
-    status, mode, me, workspaces, activeWorkspace, error, creating,
-    retry, selectWorkspace, createWorkspace, useAccessToken,
+    status, mode, me, workspaces, activeWorkspace, error, creating, renaming,
+    retry, selectWorkspace, createWorkspace, renameWorkspace, useAccessToken,
   };
 }

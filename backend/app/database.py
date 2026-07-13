@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, create_engine
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, create_engine
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 
@@ -100,6 +100,18 @@ class ChunkRecord(Base):
     paper: Mapped[PaperRecord] = relationship(back_populates="chunks")
 
 
+class ChunkEmbeddingRecord(Base):
+    __tablename__ = "chunk_embeddings"
+
+    chunk_id: Mapped[str] = mapped_column(
+        ForeignKey("chunks.id", ondelete="CASCADE"), primary_key=True
+    )
+    model: Mapped[str] = mapped_column(String(255), nullable=False)
+    dimensions: Mapped[int] = mapped_column(Integer, nullable=False)
+    vector: Mapped[list[float]] = mapped_column(JSON, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class TagRecord(Base):
     __tablename__ = "tags"
     __table_args__ = (UniqueConstraint("workspace_id", "name", name="uq_tags_workspace_name"),)
@@ -139,6 +151,77 @@ class SearchHistoryRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class ResearchConversationRecord(Base):
+    __tablename__ = "research_conversations"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_by: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    message_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    memory_event_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ResearchMessageRecord(Base):
+    __tablename__ = "research_messages"
+    __table_args__ = (
+        CheckConstraint("role IN ('user', 'assistant')", name="ck_research_messages_role"),
+        UniqueConstraint("conversation_id", "ordinal", name="uq_research_messages_conversation_ordinal"),
+        Index("ix_research_messages_conversation_ordinal", "conversation_id", "ordinal"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    conversation_id: Mapped[str] = mapped_column(ForeignKey("research_conversations.id", ondelete="CASCADE"), nullable=False, index=True)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    citations: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ResearchMemoryEventRecord(Base):
+    """Immutable, source-linked facts extracted from a research conversation."""
+
+    __tablename__ = "research_memory_events"
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('hypothesis', 'assumption', 'unresolved_question', 'planned_test')",
+            name="ck_research_memory_events_kind",
+        ),
+        UniqueConstraint(
+            "conversation_id", "ordinal", name="uq_research_memory_events_conversation_ordinal"
+        ),
+        UniqueConstraint(
+            "conversation_id", "kind", "content_hash",
+            name="uq_research_memory_events_conversation_kind_hash",
+        ),
+        Index(
+            "ix_research_memory_events_workspace_conversation_ordinal",
+            "workspace_id", "conversation_id", "ordinal",
+        ),
+        Index(
+            "ix_research_memory_events_conversation_kind_ordinal",
+            "conversation_id", "kind", "ordinal",
+        ),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    conversation_id: Mapped[str] = mapped_column(
+        ForeignKey("research_conversations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    source_message_id: Mapped[str | None] = mapped_column(
+        ForeignKey("research_messages.id", ondelete="SET NULL"), index=True
+    )
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class SavedComparisonRecord(Base):
     __tablename__ = "saved_comparisons"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
@@ -159,6 +242,35 @@ class IngestionJobRecord(Base):
     progress: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class EmbeddingJobRecord(Base):
+    __tablename__ = "embedding_jobs"
+    __table_args__ = (
+        UniqueConstraint("paper_id", "provider", "model", name="uq_embedding_jobs_paper_provider_model"),
+        CheckConstraint(
+            "status IN ('queued', 'running', 'succeeded', 'failed')",
+            name="ck_embedding_jobs_status",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    paper_id: Mapped[str] = mapped_column(
+        ForeignKey("papers.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    model: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    progress: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_chunks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    completed_chunks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_code: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 

@@ -29,6 +29,41 @@
         "title": "AnalysisRequest",
         "type": "object"
       },
+      "AnswerClaim": {
+        "properties": {
+          "citation_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Citation Ids",
+            "type": "array"
+          },
+          "claim_id": {
+            "title": "Claim Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "paper",
+              "general",
+              "hypothesis"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "claim_id",
+          "text",
+          "kind"
+        ],
+        "title": "AnswerClaim",
+        "type": "object"
+      },
       "Body_upload_papers_api_papers_upload_post": {
         "properties": {
           "files": {
@@ -384,6 +419,69 @@
           "updated_at"
         ],
         "title": "IngestionJob",
+        "type": "object"
+      },
+      "LLMStatus": {
+        "properties": {
+          "agentic_dependencies_available": {
+            "title": "Agentic Dependencies Available",
+            "type": "boolean"
+          },
+          "configured": {
+            "title": "Configured",
+            "type": "boolean"
+          },
+          "embedding_model": {
+            "title": "Embedding Model",
+            "type": "string"
+          },
+          "last_failure_code": {
+            "anyOf": [
+              {
+                "enum": [
+                  "api_key_missing",
+                  "dependency_missing",
+                  "no_evidence",
+                  "grounding_failed",
+                  "authentication_failed",
+                  "permission_denied",
+                  "model_not_found",
+                  "rate_limited",
+                  "api_timeout",
+                  "network_error",
+                  "model_api_error",
+                  "deadline_exceeded",
+                  "model_timeout",
+                  "model_unavailable",
+                  "provider_unavailable",
+                  "model_call_failed",
+                  "generation_failed",
+                  "citation_validation_failed",
+                  "grounding_audit_failed",
+                  "repair_failed",
+                  "structured_output_invalid",
+                  "verification_skipped_timeout"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Failure Code"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          }
+        },
+        "required": [
+          "configured",
+          "model",
+          "embedding_model",
+          "agentic_dependencies_available"
+        ],
+        "title": "LLMStatus",
         "type": "object"
       },
       "MeResponse": {
@@ -796,6 +894,122 @@
         "title": "PaperTagsUpdate",
         "type": "object"
       },
+      "ResearchConversation": {
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "memory_event_count": {
+            "default": 0,
+            "title": "Memory Event Count",
+            "type": "integer"
+          },
+          "message_count": {
+            "default": 0,
+            "title": "Message Count",
+            "type": "integer"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "summary",
+          "created_by",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ResearchConversation",
+        "type": "object"
+      },
+      "ResearchConversationCreate": {
+        "properties": {
+          "title": {
+            "default": "新しい研究対話",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "title": "ResearchConversationCreate",
+        "type": "object"
+      },
+      "ResearchConversationDetail": {
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "memory_event_count": {
+            "default": 0,
+            "title": "Memory Event Count",
+            "type": "integer"
+          },
+          "message_count": {
+            "default": 0,
+            "title": "Message Count",
+            "type": "integer"
+          },
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/ResearchMessage"
+            },
+            "title": "Messages",
+            "type": "array"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "summary",
+          "created_by",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ResearchConversationDetail",
+        "type": "object"
+      },
       "ResearchGap": {
         "properties": {
           "gap": {
@@ -827,6 +1041,158 @@
           "opportunity"
         ],
         "title": "ResearchGap",
+        "type": "object"
+      },
+      "ResearchMemoryEvent": {
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "conversation_id": {
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "hypothesis",
+              "assumption",
+              "unresolved_question",
+              "planned_test"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "ordinal": {
+            "title": "Ordinal",
+            "type": "integer"
+          },
+          "source_message_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Message Id"
+          }
+        },
+        "required": [
+          "id",
+          "conversation_id",
+          "ordinal",
+          "kind",
+          "content",
+          "created_at"
+        ],
+        "title": "ResearchMemoryEvent",
+        "type": "object"
+      },
+      "ResearchMemoryPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ResearchMemoryEvent"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_before_ordinal": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Before Ordinal"
+          }
+        },
+        "title": "ResearchMemoryPage",
+        "type": "object"
+      },
+      "ResearchMessage": {
+        "properties": {
+          "citations": {
+            "items": {
+              "$ref": "#/components/schemas/Citation"
+            },
+            "title": "Citations",
+            "type": "array"
+          },
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "conversation_id": {
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "ordinal": {
+            "title": "Ordinal",
+            "type": "integer"
+          },
+          "role": {
+            "enum": [
+              "user",
+              "assistant"
+            ],
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "conversation_id",
+          "ordinal",
+          "role",
+          "content",
+          "created_at"
+        ],
+        "title": "ResearchMessage",
+        "type": "object"
+      },
+      "ResearchMessagePage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ResearchMessage"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_before_ordinal": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Before Ordinal"
+          }
+        },
+        "title": "ResearchMessagePage",
         "type": "object"
       },
       "SavedComparison": {
@@ -942,6 +1308,17 @@
       },
       "SearchRequest": {
         "properties": {
+          "conversation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conversation Id"
+          },
           "limit": {
             "default": 8,
             "maximum": 20.0,
@@ -957,6 +1334,7 @@
             "type": "array"
           },
           "query": {
+            "maxLength": 4000,
             "minLength": 2,
             "title": "Query",
             "type": "string"
@@ -1012,6 +1390,123 @@
               "$ref": "#/components/schemas/Citation"
             },
             "title": "Citations",
+            "type": "array"
+          },
+          "claims": {
+            "items": {
+              "$ref": "#/components/schemas/AnswerClaim"
+            },
+            "title": "Claims",
+            "type": "array"
+          },
+          "conversation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conversation Id"
+          },
+          "fallback_reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "api_key_missing",
+                  "dependency_missing",
+                  "no_evidence",
+                  "grounding_failed",
+                  "authentication_failed",
+                  "permission_denied",
+                  "model_not_found",
+                  "rate_limited",
+                  "api_timeout",
+                  "network_error",
+                  "model_api_error",
+                  "deadline_exceeded",
+                  "model_timeout",
+                  "model_unavailable",
+                  "provider_unavailable",
+                  "model_call_failed",
+                  "generation_failed",
+                  "citation_validation_failed",
+                  "grounding_audit_failed",
+                  "repair_failed",
+                  "structured_output_invalid",
+                  "verification_skipped_timeout"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fallback Reason"
+          },
+          "generation_mode": {
+            "default": "local_fallback",
+            "enum": [
+              "agentic_rag",
+              "local_fallback"
+            ],
+            "title": "Generation Mode",
+            "type": "string"
+          },
+          "grounded": {
+            "default": false,
+            "title": "Grounded",
+            "type": "boolean"
+          },
+          "grounding_status": {
+            "default": "not_checked",
+            "enum": [
+              "verified",
+              "rejected",
+              "not_checked",
+              "no_evidence"
+            ],
+            "title": "Grounding Status",
+            "type": "string"
+          },
+          "llm_attempted": {
+            "default": false,
+            "title": "Llm Attempted",
+            "type": "boolean"
+          },
+          "llm_succeeded": {
+            "default": false,
+            "title": "Llm Succeeded",
+            "type": "boolean"
+          },
+          "memory_delta": {
+            "additionalProperties": true,
+            "title": "Memory Delta",
+            "type": "object"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "model_calls": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Model Calls",
+            "type": "integer"
+          },
+          "retrieval_queries": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Retrieval Queries",
             "type": "array"
           }
         },
@@ -1570,6 +2065,24 @@
           }
         },
         "summary": "Get Ingestion Job"
+      }
+    },
+    "/api/llm/status": {
+      "get": {
+        "operationId": "llm_status_api_llm_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LLMStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Llm Status"
       }
     },
     "/api/me": {
@@ -2362,6 +2875,261 @@
         "summary": "Set Paper Tags"
       }
     },
+    "/api/research/conversations": {
+      "get": {
+        "operationId": "list_research_conversations_api_research_conversations_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ResearchConversation"
+                  },
+                  "title": "Response List Research Conversations Api Research Conversations Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Research Conversations"
+      },
+      "post": {
+        "operationId": "create_research_conversation_api_research_conversations_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResearchConversationCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResearchConversation"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Research Conversation"
+      }
+    },
+    "/api/research/conversations/{conversation_id}": {
+      "get": {
+        "operationId": "get_research_conversation_api_research_conversations__conversation_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResearchConversationDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Research Conversation"
+      }
+    },
+    "/api/research/conversations/{conversation_id}/memory": {
+      "get": {
+        "operationId": "get_research_memory_page_api_research_conversations__conversation_id__memory_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "hypothesis",
+                    "assumption",
+                    "unresolved_question",
+                    "planned_test"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before_ordinal",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Before Ordinal"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResearchMemoryPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Research Memory Page"
+      }
+    },
+    "/api/research/conversations/{conversation_id}/messages": {
+      "get": {
+        "operationId": "get_research_messages_page_api_research_conversations__conversation_id__messages_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before_ordinal",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Before Ordinal"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResearchMessagePage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Research Messages Page"
+      }
+    },
     "/api/search": {
       "post": {
         "operationId": "answer_api_search_post",
@@ -2683,6 +3451,93 @@
           }
         },
         "summary": "Create Workspace"
+      }
+    },
+    "/api/workspaces/{workspace_id}": {
+      "get": {
+        "description": "Resolve a switch target without exposing inaccessible workspaces.",
+        "operationId": "get_workspace_api_workspaces__workspace_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workspace"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Workspace"
+      },
+      "patch": {
+        "operationId": "rename_workspace_api_workspaces__workspace_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workspace"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rename Workspace"
       }
     }
   }

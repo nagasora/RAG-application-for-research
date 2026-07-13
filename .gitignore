@@ -2,6 +2,7 @@ node_modules/
 .pnpm-store/
 .next/
 *.tsbuildinfo
+*.log
 __pycache__/
 .pytest_cache/
 *.py[cod]

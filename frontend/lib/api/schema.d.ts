@@ -124,6 +124,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/llm/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Llm Status */
+        get: operations["llm_status_api_llm_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me": {
         parameters: {
             query?: never;
@@ -349,6 +366,75 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/research/conversations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Research Conversations */
+        get: operations["list_research_conversations_api_research_conversations_get"];
+        put?: never;
+        /** Create Research Conversation */
+        post: operations["create_research_conversation_api_research_conversations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/research/conversations/{conversation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Research Conversation */
+        get: operations["get_research_conversation_api_research_conversations__conversation_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/research/conversations/{conversation_id}/memory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Research Memory Page */
+        get: operations["get_research_memory_page_api_research_conversations__conversation_id__memory_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/research/conversations/{conversation_id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Research Messages Page */
+        get: operations["get_research_messages_page_api_research_conversations__conversation_id__messages_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/search": {
         parameters: {
             query?: never;
@@ -471,6 +557,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{workspace_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Workspace
+         * @description Resolve a switch target without exposing inaccessible workspaces.
+         */
+        get: operations["get_workspace_api_workspaces__workspace_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Rename Workspace */
+        patch: operations["rename_workspace_api_workspaces__workspace_id__patch"];
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -481,6 +588,20 @@ export interface components {
             paper_ids: string[];
             /** User Id */
             user_id?: string | null;
+        };
+        /** AnswerClaim */
+        AnswerClaim: {
+            /** Citation Ids */
+            citation_ids?: number[];
+            /** Claim Id */
+            claim_id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "paper" | "general" | "hypothesis";
+            /** Text */
+            text: string;
         };
         /** Body_upload_papers_api_papers_upload_post */
         Body_upload_papers_api_papers_upload_post: {
@@ -610,6 +731,19 @@ export interface components {
             status: "queued" | "running" | "succeeded" | "failed";
             /** Updated At */
             updated_at: string;
+        };
+        /** LLMStatus */
+        LLMStatus: {
+            /** Agentic Dependencies Available */
+            agentic_dependencies_available: boolean;
+            /** Configured */
+            configured: boolean;
+            /** Embedding Model */
+            embedding_model: string;
+            /** Last Failure Code */
+            last_failure_code?: ("api_key_missing" | "dependency_missing" | "no_evidence" | "grounding_failed" | "authentication_failed" | "permission_denied" | "model_not_found" | "rate_limited" | "api_timeout" | "network_error" | "model_api_error" | "deadline_exceeded" | "model_timeout" | "model_unavailable" | "provider_unavailable" | "model_call_failed" | "generation_failed" | "citation_validation_failed" | "grounding_audit_failed" | "repair_failed" | "structured_output_invalid" | "verification_skipped_timeout") | null;
+            /** Model */
+            model: string;
         };
         /** MeResponse */
         MeResponse: {
@@ -741,6 +875,66 @@ export interface components {
             /** Tag Ids */
             tag_ids?: string[];
         };
+        /** ResearchConversation */
+        ResearchConversation: {
+            /** Created At */
+            created_at: string;
+            /** Created By */
+            created_by: string;
+            /** Id */
+            id: string;
+            /**
+             * Memory Event Count
+             * @default 0
+             */
+            memory_event_count: number;
+            /**
+             * Message Count
+             * @default 0
+             */
+            message_count: number;
+            /** Summary */
+            summary: string;
+            /** Title */
+            title: string;
+            /** Updated At */
+            updated_at: string;
+        };
+        /** ResearchConversationCreate */
+        ResearchConversationCreate: {
+            /**
+             * Title
+             * @default 新しい研究対話
+             */
+            title: string;
+        };
+        /** ResearchConversationDetail */
+        ResearchConversationDetail: {
+            /** Created At */
+            created_at: string;
+            /** Created By */
+            created_by: string;
+            /** Id */
+            id: string;
+            /**
+             * Memory Event Count
+             * @default 0
+             */
+            memory_event_count: number;
+            /**
+             * Message Count
+             * @default 0
+             */
+            message_count: number;
+            /** Messages */
+            messages?: components["schemas"]["ResearchMessage"][];
+            /** Summary */
+            summary: string;
+            /** Title */
+            title: string;
+            /** Updated At */
+            updated_at: string;
+        };
         /** ResearchGap */
         ResearchGap: {
             /** Gap */
@@ -753,6 +947,60 @@ export interface components {
             paper_id: string;
             /** Paper Title */
             paper_title: string;
+        };
+        /** ResearchMemoryEvent */
+        ResearchMemoryEvent: {
+            /** Content */
+            content: string;
+            /** Conversation Id */
+            conversation_id: string;
+            /** Created At */
+            created_at: string;
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "hypothesis" | "assumption" | "unresolved_question" | "planned_test";
+            /** Ordinal */
+            ordinal: number;
+            /** Source Message Id */
+            source_message_id?: string | null;
+        };
+        /** ResearchMemoryPage */
+        ResearchMemoryPage: {
+            /** Items */
+            items?: components["schemas"]["ResearchMemoryEvent"][];
+            /** Next Before Ordinal */
+            next_before_ordinal?: number | null;
+        };
+        /** ResearchMessage */
+        ResearchMessage: {
+            /** Citations */
+            citations?: components["schemas"]["Citation"][];
+            /** Content */
+            content: string;
+            /** Conversation Id */
+            conversation_id: string;
+            /** Created At */
+            created_at: string;
+            /** Id */
+            id: string;
+            /** Ordinal */
+            ordinal: number;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "user" | "assistant";
+        };
+        /** ResearchMessagePage */
+        ResearchMessagePage: {
+            /** Items */
+            items?: components["schemas"]["ResearchMessage"][];
+            /** Next Before Ordinal */
+            next_before_ordinal?: number | null;
         };
         /** SavedComparison */
         SavedComparison: {
@@ -797,6 +1045,8 @@ export interface components {
         };
         /** SearchRequest */
         SearchRequest: {
+            /** Conversation Id */
+            conversation_id?: string | null;
             /**
              * Limit
              * @default 8
@@ -819,6 +1069,52 @@ export interface components {
             answer: string;
             /** Citations */
             citations: components["schemas"]["Citation"][];
+            /** Claims */
+            claims?: components["schemas"]["AnswerClaim"][];
+            /** Conversation Id */
+            conversation_id?: string | null;
+            /** Fallback Reason */
+            fallback_reason?: ("api_key_missing" | "dependency_missing" | "no_evidence" | "grounding_failed" | "authentication_failed" | "permission_denied" | "model_not_found" | "rate_limited" | "api_timeout" | "network_error" | "model_api_error" | "deadline_exceeded" | "model_timeout" | "model_unavailable" | "provider_unavailable" | "model_call_failed" | "generation_failed" | "citation_validation_failed" | "grounding_audit_failed" | "repair_failed" | "structured_output_invalid" | "verification_skipped_timeout") | null;
+            /**
+             * Generation Mode
+             * @default local_fallback
+             * @enum {string}
+             */
+            generation_mode: "agentic_rag" | "local_fallback";
+            /**
+             * Grounded
+             * @default false
+             */
+            grounded: boolean;
+            /**
+             * Grounding Status
+             * @default not_checked
+             * @enum {string}
+             */
+            grounding_status: "verified" | "rejected" | "not_checked" | "no_evidence";
+            /**
+             * Llm Attempted
+             * @default false
+             */
+            llm_attempted: boolean;
+            /**
+             * Llm Succeeded
+             * @default false
+             */
+            llm_succeeded: boolean;
+            /** Memory Delta */
+            memory_delta?: {
+                [key: string]: unknown;
+            };
+            /** Model */
+            model?: string | null;
+            /**
+             * Model Calls
+             * @default 0
+             */
+            model_calls: number;
+            /** Retrieval Queries */
+            retrieval_queries?: string[];
         };
         /** Tag */
         Tag: {
@@ -1148,6 +1444,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    llm_status_api_llm_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LLMStatus"];
                 };
             };
         };
@@ -1697,6 +2013,159 @@ export interface operations {
             };
         };
     };
+    list_research_conversations_api_research_conversations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResearchConversation"][];
+                };
+            };
+        };
+    };
+    create_research_conversation_api_research_conversations_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResearchConversationCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResearchConversation"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_research_conversation_api_research_conversations__conversation_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResearchConversationDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_research_memory_page_api_research_conversations__conversation_id__memory_get: {
+        parameters: {
+            query?: {
+                kind?: ("hypothesis" | "assumption" | "unresolved_question" | "planned_test") | null;
+                limit?: number;
+                before_ordinal?: number | null;
+            };
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResearchMemoryPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_research_messages_page_api_research_conversations__conversation_id__messages_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                before_ordinal?: number | null;
+            };
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResearchMessagePage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     answer_api_search_post: {
         parameters: {
             query?: never;
@@ -1964,6 +2433,72 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Workspace"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_workspace_api_workspaces__workspace_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Workspace"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rename_workspace_api_workspaces__workspace_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
