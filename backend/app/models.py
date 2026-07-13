@@ -83,6 +83,232 @@ class DocumentElement(BaseModel):
     asset_key: str | None = None
 
 
+class SourceVersion(BaseModel):
+    id: str
+    workspace_id: str
+    paper_id: str | None = None
+    kind: str
+    locator: str
+    content_hash: str
+    metadata: dict = Field(default_factory=dict)
+    created_at: str
+
+
+class SourceSpan(BaseModel):
+    id: str
+    workspace_id: str
+    source_version_id: str
+    page: int | None = None
+    line_start: int | None = None
+    line_end: int | None = None
+    char_start: int | None = None
+    char_end: int | None = None
+    bbox: list[float] | None = None
+    cell: dict | list | None = None
+    locator: dict = Field(default_factory=dict)
+    text: str = ""
+    created_at: str
+
+
+class EvidenceRef(BaseModel):
+    id: str
+    workspace_id: str
+    source_span_id: str
+    knowledge_node_id: str | None = None
+    knowledge_edge_id: str | None = None
+    excerpt: str = ""
+    created_at: str
+
+
+class KnowledgeNode(BaseModel):
+    id: str
+    workspace_id: str
+    created_by: str | None = None
+    node_type: Literal["source", "idea", "constraint", "hypothesis"]
+    status: Literal["review_pending", "active", "verified", "rejected", "superseded", "review_required", "pruned"]
+    layer: int = Field(ge=0)
+    content: str
+    phase: str
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    metadata: dict = Field(default_factory=dict)
+    evidence: list[EvidenceRef] = Field(default_factory=list)
+    created_at: str
+    updated_at: str
+
+
+class KnowledgeEdge(BaseModel):
+    id: str
+    workspace_id: str
+    source_node_id: str
+    target_node_id: str
+    relation: str
+    metadata: dict = Field(default_factory=dict)
+    evidence: list[EvidenceRef] = Field(default_factory=list)
+    created_at: str
+
+
+class ReasoningRunLink(BaseModel):
+    knowledge_node_id: str
+    ordinal: int
+
+
+class ReasoningRun(BaseModel):
+    id: str
+    workspace_id: str
+    created_by: str | None = None
+    operator: str
+    status: Literal["queued", "running", "succeeded", "failed", "cancelled"]
+    prompt: str = ""
+    metadata: dict = Field(default_factory=dict)
+    inputs: list[ReasoningRunLink] = Field(default_factory=list)
+    outputs: list[ReasoningRunLink] = Field(default_factory=list)
+    created_at: str
+    updated_at: str
+
+
+class NodeFeedback(BaseModel):
+    id: str
+    workspace_id: str
+    knowledge_node_id: str
+    user_id: str
+    verdict: Literal["helpful", "not_helpful", "accepted", "rejected"]
+    rating: float | None = Field(default=None, ge=-1, le=1)
+    comment: str = ""
+    created_at: str
+    updated_at: str
+
+
+class CanvasLayout(BaseModel):
+    id: str
+    workspace_id: str
+    canvas_id: str = "default"
+    knowledge_node_id: str
+    x: float
+    y: float
+    width: float | None = None
+    height: float | None = None
+    z_index: int = 0
+    collapsed: bool = False
+    updated_at: str
+
+
+class SourceVersionCreate(BaseModel):
+    kind: str = Field(min_length=1, max_length=32)
+    locator: str = Field(min_length=1, max_length=4_000)
+    content_hash: str = Field(min_length=64, max_length=64)
+    paper_id: str | None = None
+    content: str | None = Field(default=None, max_length=10_000_000)
+    metadata: dict = Field(default_factory=dict)
+
+
+class SourceImportCreate(BaseModel):
+    kind: Literal["latex", "python", "notebook", "csv", "chat", "markdown"]
+    locator: str = Field(min_length=1, max_length=4_000)
+    content: str = Field(min_length=1, max_length=5 * 1024 * 1024)
+    content_hash: str = Field(min_length=64, max_length=64)
+    metadata: dict = Field(default_factory=dict)
+
+
+class SourceImportResult(BaseModel):
+    source: SourceVersion
+    spans: list[SourceSpan] = Field(default_factory=list)
+
+
+class SourceSpanCreate(BaseModel):
+    source_version_id: str
+    page: int | None = Field(default=None, ge=1)
+    line_start: int | None = Field(default=None, ge=1)
+    line_end: int | None = Field(default=None, ge=1)
+    char_start: int | None = Field(default=None, ge=0)
+    char_end: int | None = Field(default=None, ge=0)
+    bbox: list[float] | None = Field(default=None, min_length=4, max_length=4)
+    cell: dict | list | None = None
+    locator: dict = Field(default_factory=dict)
+    text: str = Field(default="", max_length=100_000)
+
+
+class KnowledgeNodeCreate(BaseModel):
+    node_type: Literal["source", "idea", "constraint", "hypothesis"]
+    content: str = Field(min_length=1, max_length=100_000)
+    layer: int = Field(default=0, ge=0, le=100)
+    status: Literal["review_pending", "active", "verified", "rejected", "superseded", "review_required", "pruned"] = "review_pending"
+    phase: str = Field(default="unclassified", max_length=64)
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    metadata: dict = Field(default_factory=dict)
+    evidence_span_ids: list[str] = Field(default_factory=list, max_length=32)
+    evidence_excerpt: str = Field(default="", max_length=10_000)
+
+
+class KnowledgeNodeStatusUpdate(BaseModel):
+    status: Literal["review_pending", "active", "verified", "rejected", "superseded", "review_required", "pruned"]
+
+
+class KnowledgeNodeStatusResult(BaseModel):
+    node: KnowledgeNode
+    affected_node_ids: list[str] = Field(default_factory=list)
+
+
+class KnowledgeEdgeCreate(BaseModel):
+    source_node_id: str
+    target_node_id: str
+    relation: str = Field(min_length=1, max_length=64)
+    evidence_span_ids: list[str] = Field(min_length=1, max_length=32)
+    metadata: dict = Field(default_factory=dict)
+    evidence_excerpt: str = Field(default="", max_length=10_000)
+
+
+class ReasoningRunCreate(BaseModel):
+    operator: str = Field(min_length=1, max_length=64)
+    input_node_ids: list[str] = Field(default_factory=list, max_length=32)
+    output_node_ids: list[str] = Field(default_factory=list, max_length=32)
+    prompt: str = Field(default="", max_length=20_000)
+    metadata: dict = Field(default_factory=dict)
+
+
+class NodeFeedbackCreate(BaseModel):
+    verdict: Literal["helpful", "not_helpful", "accepted", "rejected"]
+    rating: float | None = Field(default=None, ge=-1, le=1)
+    comment: str = Field(default="", max_length=10_000)
+
+
+class CanvasLayoutUpdate(BaseModel):
+    x: float
+    y: float
+    canvas_id: str = Field(default="default", min_length=1, max_length=64)
+    width: float | None = Field(default=None, gt=0)
+    height: float | None = Field(default=None, gt=0)
+    z_index: int = Field(default=0, ge=-10_000, le=10_000)
+    collapsed: bool = False
+
+
+class GraphSnapshot(BaseModel):
+    nodes: list[KnowledgeNode] = Field(default_factory=list)
+    edges: list[KnowledgeEdge] = Field(default_factory=list)
+    layouts: list[CanvasLayout] = Field(default_factory=list)
+
+
+class GraphRetrievalSeed(BaseModel):
+    node_id: str
+    relevance: float = Field(ge=0, le=1)
+    confidence: float = Field(default=1, ge=0, le=1)
+    retrieval_reason: str = Field(default="base_retrieval", max_length=500)
+
+
+class GraphRetrieveRequest(BaseModel):
+    seeds: list[GraphRetrievalSeed] = Field(min_length=1, max_length=32)
+    top_k: int = Field(default=8, ge=1, le=20)
+    max_degree: int = Field(default=12, ge=1, le=50)
+    max_first_hop_candidates: int = Field(default=16, ge=1, le=50)
+
+
+class GraphRetrievalHit(BaseModel):
+    node: KnowledgeNode
+    score: float
+    retrieval_reason: str
+    hop_count: int
+    hop_path: list[dict] = Field(default_factory=list)
+
+
 class IngestionJob(BaseModel):
     id: str
     paper_id: str

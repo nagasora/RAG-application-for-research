@@ -16,10 +16,11 @@ import { EvidenceViewer, type EvidenceTarget } from "@/components/evidence-viewe
 import { WorkspaceSwitcher } from "@/components/workspace-switcher";
 import { useWorkspaceSession } from "@/lib/session/workspace-session";
 import { ResearchWorkspace } from "@/components/research-workspace";
+import { GraphWorkspace } from "@/components/graph-workspace";
 import { AskWorkspace } from "@/components/ask-workspace";
 import { LatestRequestCoordinator } from "@/lib/api/request-coordinator.mjs";
 
-type View = "library" | "ask" | "analysis" | "research";
+type View = "library" | "ask" | "analysis" | "research" | "graph";
 type SearchReplay = { query: string; paperIds: string[]; revision: number };
 
 function Logo() {
@@ -151,7 +152,7 @@ export default function Home() {
       <div className="mx-auto flex max-w-[1440px] items-center justify-between px-5 py-4 lg:px-10">
         <Logo />
         <nav className="hidden items-center rounded-full border border-[#d8dad4] bg-white p-1 md:flex">
-          {(["library", "ask", "analysis", "research"] as View[]).map(item => <button key={item} onClick={() => setView(item)} className={`rounded-full px-4 py-2 text-sm transition ${view === item ? "bg-[#173f32] text-white shadow" : "text-[#65706c] hover:text-[#173f32]"}`}>{item === "library" ? "ライブラリ" : item === "ask" ? "論文に質問" : item === "analysis" ? "比較・発見" : "研究ワークスペース"}</button>)}
+          {(["library", "ask", "analysis", "research", "graph"] as View[]).map(item => <button key={item} onClick={() => setView(item)} className={`rounded-full px-4 py-2 text-sm transition ${view === item ? "bg-[#173f32] text-white shadow" : "text-[#65706c] hover:text-[#173f32]"}`}>{item === "library" ? "ライブラリ" : item === "ask" ? "論文に質問" : item === "analysis" ? "比較・発見" : item === "research" ? "研究ワークスペース" : "知識グラフ"}</button>)}
         </nav>
         <div className="flex items-center gap-3"><span className="hidden rounded-full bg-[#edf0eb] px-3 py-1.5 text-xs text-[#52605b] xl:block">{papers.length} papers</span><WorkspaceSwitcher me={session.me} workspaces={session.workspaces} activeWorkspace={session.activeWorkspace} creating={session.creating} renaming={session.renaming} onSelect={session.selectWorkspace} onCreate={session.createWorkspace} onRename={session.renameWorkspace} /></div>
       </div>
@@ -170,8 +171,9 @@ export default function Home() {
       {view === "ask" && <AskWorkspace key={session.activeWorkspace.id} workspaceId={session.activeWorkspace.id} papers={papers} selected={selected} setSelected={setSelected} openEvidence={setEvidenceTarget} replay={searchReplay} canWrite={session.activeWorkspace.role !== "viewer"} />}
       {view === "analysis" && <AnalysisView key={session.activeWorkspace.id} papers={papers} selected={selected} setSelected={setSelected} openEvidence={setEvidenceTarget} canWrite={session.activeWorkspace.role !== "viewer"} />}
       {view === "research" && <ResearchWorkspace key={session.activeWorkspace.id} papers={papers} canWrite={session.activeWorkspace.role !== "viewer"} exportPaperIds={selected} onReplay={(query, paperIds) => { setSelected(paperIds.filter(id => papers.some(paper => paper.id === id))); setSearchReplay({ query, paperIds, revision:Date.now() }); setView("ask"); }} />}
+      {view === "graph" && <GraphWorkspace key={session.activeWorkspace.id} canWrite={session.activeWorkspace.role !== "viewer"} onOpenPaper={paperId => { const paper = papers.find(item => item.id === paperId); if (paper) setEvidenceTarget({ paperId, paperTitle:paper.title, page:1 }); }} />}
     </main>
-    <div className="fixed bottom-4 left-1/2 z-40 flex -translate-x-1/2 rounded-full border border-[#d8dad4] bg-white/95 p-1 shadow-xl md:hidden">{(["library", "ask", "analysis", "research"] as View[]).map(item => <button key={item} onClick={() => setView(item)} className={`rounded-full px-3 py-2 text-xs ${view === item ? "bg-[#173f32] text-white" : "text-[#65706c]"}`}>{item === "library" ? "論文" : item === "ask" ? "質問" : item === "analysis" ? "分析" : "整理"}</button>)}</div>
+    <div className="fixed bottom-4 left-1/2 z-40 flex -translate-x-1/2 rounded-full border border-[#d8dad4] bg-white/95 p-1 shadow-xl md:hidden">{(["library", "ask", "analysis", "research", "graph"] as View[]).map(item => <button key={item} onClick={() => setView(item)} className={`rounded-full px-3 py-2 text-xs ${view === item ? "bg-[#173f32] text-white" : "text-[#65706c]"}`}>{item === "library" ? "論文" : item === "ask" ? "質問" : item === "analysis" ? "分析" : item === "research" ? "整理" : "グラフ"}</button>)}</div>
     {evidenceTarget && <EvidenceViewer target={evidenceTarget} canWrite={session.activeWorkspace.role !== "viewer"} onClose={() => setEvidenceTarget(null)} />}
   </div>;
 }

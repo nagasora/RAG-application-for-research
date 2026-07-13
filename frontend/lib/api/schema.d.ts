@@ -90,6 +90,216 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/graph": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Graph Snapshot */
+        get: operations["graph_snapshot_api_graph_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/graph/edges": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Graph Edge */
+        post: operations["create_graph_edge_api_graph_edges_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/graph/nodes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Graph Nodes */
+        get: operations["list_graph_nodes_api_graph_nodes_get"];
+        put?: never;
+        /** Create Graph Node */
+        post: operations["create_graph_node_api_graph_nodes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/graph/nodes/{node_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Graph Node */
+        get: operations["get_graph_node_api_graph_nodes__node_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/graph/nodes/{node_id}/feedback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Add Graph Node Feedback */
+        post: operations["add_graph_node_feedback_api_graph_nodes__node_id__feedback_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/graph/nodes/{node_id}/layout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Graph Layout */
+        put: operations["update_graph_layout_api_graph_nodes__node_id__layout_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/graph/nodes/{node_id}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update Graph Node Status */
+        patch: operations["update_graph_node_status_api_graph_nodes__node_id__status_patch"];
+        trace?: never;
+    };
+    "/api/graph/retrieve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retrieve Graph */
+        post: operations["retrieve_graph_api_graph_retrieve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/graph/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Graph Reasoning Run */
+        post: operations["create_graph_reasoning_run_api_graph_runs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/graph/sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Graph Sources */
+        get: operations["list_graph_sources_api_graph_sources_get"];
+        put?: never;
+        /** Create Graph Source */
+        post: operations["create_graph_source_api_graph_sources_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/graph/sources/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import Graph Source
+         * @description Store a content-verified source and derive bounded, typed provenance spans.
+         */
+        post: operations["import_graph_source_api_graph_sources_import_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/graph/sources/{source_version_id}/spans": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Graph Source Spans */
+        get: operations["list_graph_source_spans_api_graph_sources__source_version_id__spans_get"];
+        put?: never;
+        /** Create Graph Source Span */
+        post: operations["create_graph_source_span_api_graph_sources__source_version_id__spans_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -610,6 +820,66 @@ export interface components {
             /** User Id */
             user_id?: string | null;
         };
+        /** CanvasLayout */
+        CanvasLayout: {
+            /**
+             * Canvas Id
+             * @default default
+             */
+            canvas_id: string;
+            /**
+             * Collapsed
+             * @default false
+             */
+            collapsed: boolean;
+            /** Height */
+            height?: number | null;
+            /** Id */
+            id: string;
+            /** Knowledge Node Id */
+            knowledge_node_id: string;
+            /** Updated At */
+            updated_at: string;
+            /** Width */
+            width?: number | null;
+            /** Workspace Id */
+            workspace_id: string;
+            /** X */
+            x: number;
+            /** Y */
+            y: number;
+            /**
+             * Z Index
+             * @default 0
+             */
+            z_index: number;
+        };
+        /** CanvasLayoutUpdate */
+        CanvasLayoutUpdate: {
+            /**
+             * Canvas Id
+             * @default default
+             */
+            canvas_id: string;
+            /**
+             * Collapsed
+             * @default false
+             */
+            collapsed: boolean;
+            /** Height */
+            height?: number | null;
+            /** Width */
+            width?: number | null;
+            /** X */
+            x: number;
+            /** Y */
+            y: number;
+            /**
+             * Z Index
+             * @default 0
+             */
+            z_index: number;
+        };
         /** Chunk */
         Chunk: {
             /** Id */
@@ -687,6 +957,26 @@ export interface components {
              */
             text: string;
         };
+        /** EvidenceRef */
+        EvidenceRef: {
+            /** Created At */
+            created_at: string;
+            /**
+             * Excerpt
+             * @default
+             */
+            excerpt: string;
+            /** Id */
+            id: string;
+            /** Knowledge Edge Id */
+            knowledge_edge_id?: string | null;
+            /** Knowledge Node Id */
+            knowledge_node_id?: string | null;
+            /** Source Span Id */
+            source_span_id: string;
+            /** Workspace Id */
+            workspace_id: string;
+        };
         /** ExternalPaperRequest */
         ExternalPaperRequest: {
             /**
@@ -704,6 +994,66 @@ export interface components {
             user_id?: string | null;
             /** Year */
             year?: number | null;
+        };
+        /** GraphRetrievalHit */
+        GraphRetrievalHit: {
+            /** Hop Count */
+            hop_count: number;
+            /** Hop Path */
+            hop_path?: {
+                [key: string]: unknown;
+            }[];
+            node: components["schemas"]["KnowledgeNode"];
+            /** Retrieval Reason */
+            retrieval_reason: string;
+            /** Score */
+            score: number;
+        };
+        /** GraphRetrievalSeed */
+        GraphRetrievalSeed: {
+            /**
+             * Confidence
+             * @default 1
+             */
+            confidence: number;
+            /** Node Id */
+            node_id: string;
+            /** Relevance */
+            relevance: number;
+            /**
+             * Retrieval Reason
+             * @default base_retrieval
+             */
+            retrieval_reason: string;
+        };
+        /** GraphRetrieveRequest */
+        GraphRetrieveRequest: {
+            /**
+             * Max Degree
+             * @default 12
+             */
+            max_degree: number;
+            /**
+             * Max First Hop Candidates
+             * @default 16
+             */
+            max_first_hop_candidates: number;
+            /** Seeds */
+            seeds: components["schemas"]["GraphRetrievalSeed"][];
+            /**
+             * Top K
+             * @default 8
+             */
+            top_k: number;
+        };
+        /** GraphSnapshot */
+        GraphSnapshot: {
+            /** Edges */
+            edges?: components["schemas"]["KnowledgeEdge"][];
+            /** Layouts */
+            layouts?: components["schemas"]["CanvasLayout"][];
+            /** Nodes */
+            nodes?: components["schemas"]["KnowledgeNode"][];
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -732,6 +1082,137 @@ export interface components {
             /** Updated At */
             updated_at: string;
         };
+        /** KnowledgeEdge */
+        KnowledgeEdge: {
+            /** Created At */
+            created_at: string;
+            /** Evidence */
+            evidence?: components["schemas"]["EvidenceRef"][];
+            /** Id */
+            id: string;
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            };
+            /** Relation */
+            relation: string;
+            /** Source Node Id */
+            source_node_id: string;
+            /** Target Node Id */
+            target_node_id: string;
+            /** Workspace Id */
+            workspace_id: string;
+        };
+        /** KnowledgeEdgeCreate */
+        KnowledgeEdgeCreate: {
+            /**
+             * Evidence Excerpt
+             * @default
+             */
+            evidence_excerpt: string;
+            /** Evidence Span Ids */
+            evidence_span_ids: string[];
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            };
+            /** Relation */
+            relation: string;
+            /** Source Node Id */
+            source_node_id: string;
+            /** Target Node Id */
+            target_node_id: string;
+        };
+        /** KnowledgeNode */
+        KnowledgeNode: {
+            /** Confidence */
+            confidence?: number | null;
+            /** Content */
+            content: string;
+            /** Created At */
+            created_at: string;
+            /** Created By */
+            created_by?: string | null;
+            /** Evidence */
+            evidence?: components["schemas"]["EvidenceRef"][];
+            /** Id */
+            id: string;
+            /** Layer */
+            layer: number;
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Node Type
+             * @enum {string}
+             */
+            node_type: "source" | "idea" | "constraint" | "hypothesis";
+            /** Phase */
+            phase: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "review_pending" | "active" | "verified" | "rejected" | "superseded" | "review_required" | "pruned";
+            /** Updated At */
+            updated_at: string;
+            /** Workspace Id */
+            workspace_id: string;
+        };
+        /** KnowledgeNodeCreate */
+        KnowledgeNodeCreate: {
+            /** Confidence */
+            confidence?: number | null;
+            /** Content */
+            content: string;
+            /**
+             * Evidence Excerpt
+             * @default
+             */
+            evidence_excerpt: string;
+            /** Evidence Span Ids */
+            evidence_span_ids?: string[];
+            /**
+             * Layer
+             * @default 0
+             */
+            layer: number;
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Node Type
+             * @enum {string}
+             */
+            node_type: "source" | "idea" | "constraint" | "hypothesis";
+            /**
+             * Phase
+             * @default unclassified
+             */
+            phase: string;
+            /**
+             * Status
+             * @default review_pending
+             * @enum {string}
+             */
+            status: "review_pending" | "active" | "verified" | "rejected" | "superseded" | "review_required" | "pruned";
+        };
+        /** KnowledgeNodeStatusResult */
+        KnowledgeNodeStatusResult: {
+            /** Affected Node Ids */
+            affected_node_ids?: string[];
+            node: components["schemas"]["KnowledgeNode"];
+        };
+        /** KnowledgeNodeStatusUpdate */
+        KnowledgeNodeStatusUpdate: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "review_pending" | "active" | "verified" | "rejected" | "superseded" | "review_required" | "pruned";
+        };
         /** LLMStatus */
         LLMStatus: {
             /** Agentic Dependencies Available */
@@ -749,6 +1230,48 @@ export interface components {
         MeResponse: {
             personal_workspace: components["schemas"]["Workspace"];
             user: components["schemas"]["User"];
+        };
+        /** NodeFeedback */
+        NodeFeedback: {
+            /**
+             * Comment
+             * @default
+             */
+            comment: string;
+            /** Created At */
+            created_at: string;
+            /** Id */
+            id: string;
+            /** Knowledge Node Id */
+            knowledge_node_id: string;
+            /** Rating */
+            rating?: number | null;
+            /** Updated At */
+            updated_at: string;
+            /** User Id */
+            user_id: string;
+            /**
+             * Verdict
+             * @enum {string}
+             */
+            verdict: "helpful" | "not_helpful" | "accepted" | "rejected";
+            /** Workspace Id */
+            workspace_id: string;
+        };
+        /** NodeFeedbackCreate */
+        NodeFeedbackCreate: {
+            /**
+             * Comment
+             * @default
+             */
+            comment: string;
+            /** Rating */
+            rating?: number | null;
+            /**
+             * Verdict
+             * @enum {string}
+             */
+            verdict: "helpful" | "not_helpful" | "accepted" | "rejected";
         };
         /** Note */
         Note: {
@@ -874,6 +1397,64 @@ export interface components {
         PaperTagsUpdate: {
             /** Tag Ids */
             tag_ids?: string[];
+        };
+        /** ReasoningRun */
+        ReasoningRun: {
+            /** Created At */
+            created_at: string;
+            /** Created By */
+            created_by?: string | null;
+            /** Id */
+            id: string;
+            /** Inputs */
+            inputs?: components["schemas"]["ReasoningRunLink"][];
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            };
+            /** Operator */
+            operator: string;
+            /** Outputs */
+            outputs?: components["schemas"]["ReasoningRunLink"][];
+            /**
+             * Prompt
+             * @default
+             */
+            prompt: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+            /** Updated At */
+            updated_at: string;
+            /** Workspace Id */
+            workspace_id: string;
+        };
+        /** ReasoningRunCreate */
+        ReasoningRunCreate: {
+            /** Input Node Ids */
+            input_node_ids?: string[];
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            };
+            /** Operator */
+            operator: string;
+            /** Output Node Ids */
+            output_node_ids?: string[];
+            /**
+             * Prompt
+             * @default
+             */
+            prompt: string;
+        };
+        /** ReasoningRunLink */
+        ReasoningRunLink: {
+            /** Knowledge Node Id */
+            knowledge_node_id: string;
+            /** Ordinal */
+            ordinal: number;
         };
         /** ResearchConversation */
         ResearchConversation: {
@@ -1115,6 +1696,134 @@ export interface components {
             model_calls: number;
             /** Retrieval Queries */
             retrieval_queries?: string[];
+        };
+        /** SourceImportCreate */
+        SourceImportCreate: {
+            /** Content */
+            content: string;
+            /** Content Hash */
+            content_hash: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "latex" | "python" | "notebook" | "csv" | "chat" | "markdown";
+            /** Locator */
+            locator: string;
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            };
+        };
+        /** SourceImportResult */
+        SourceImportResult: {
+            source: components["schemas"]["SourceVersion"];
+            /** Spans */
+            spans?: components["schemas"]["SourceSpan"][];
+        };
+        /** SourceSpan */
+        SourceSpan: {
+            /** Bbox */
+            bbox?: number[] | null;
+            /** Cell */
+            cell?: {
+                [key: string]: unknown;
+            } | unknown[] | null;
+            /** Char End */
+            char_end?: number | null;
+            /** Char Start */
+            char_start?: number | null;
+            /** Created At */
+            created_at: string;
+            /** Id */
+            id: string;
+            /** Line End */
+            line_end?: number | null;
+            /** Line Start */
+            line_start?: number | null;
+            /** Locator */
+            locator?: {
+                [key: string]: unknown;
+            };
+            /** Page */
+            page?: number | null;
+            /** Source Version Id */
+            source_version_id: string;
+            /**
+             * Text
+             * @default
+             */
+            text: string;
+            /** Workspace Id */
+            workspace_id: string;
+        };
+        /** SourceSpanCreate */
+        SourceSpanCreate: {
+            /** Bbox */
+            bbox?: number[] | null;
+            /** Cell */
+            cell?: {
+                [key: string]: unknown;
+            } | unknown[] | null;
+            /** Char End */
+            char_end?: number | null;
+            /** Char Start */
+            char_start?: number | null;
+            /** Line End */
+            line_end?: number | null;
+            /** Line Start */
+            line_start?: number | null;
+            /** Locator */
+            locator?: {
+                [key: string]: unknown;
+            };
+            /** Page */
+            page?: number | null;
+            /** Source Version Id */
+            source_version_id: string;
+            /**
+             * Text
+             * @default
+             */
+            text: string;
+        };
+        /** SourceVersion */
+        SourceVersion: {
+            /** Content Hash */
+            content_hash: string;
+            /** Created At */
+            created_at: string;
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Locator */
+            locator: string;
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            };
+            /** Paper Id */
+            paper_id?: string | null;
+            /** Workspace Id */
+            workspace_id: string;
+        };
+        /** SourceVersionCreate */
+        SourceVersionCreate: {
+            /** Content */
+            content?: string | null;
+            /** Content Hash */
+            content_hash: string;
+            /** Kind */
+            kind: string;
+            /** Locator */
+            locator: string;
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            };
+            /** Paper Id */
+            paper_id?: string | null;
         };
         /** Tag */
         Tag: {
@@ -1382,6 +2091,500 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    graph_snapshot_api_graph_get: {
+        parameters: {
+            query?: {
+                canvas_id?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphSnapshot"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_graph_edge_api_graph_edges_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeEdgeCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeEdge"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_graph_nodes_api_graph_nodes_get: {
+        parameters: {
+            query?: {
+                status?: string | null;
+                layer?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeNode"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_graph_node_api_graph_nodes_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeNodeCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeNode"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_graph_node_api_graph_nodes__node_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                node_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeNode"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_graph_node_feedback_api_graph_nodes__node_id__feedback_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                node_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NodeFeedbackCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NodeFeedback"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_graph_layout_api_graph_nodes__node_id__layout_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                node_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CanvasLayoutUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CanvasLayout"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_graph_node_status_api_graph_nodes__node_id__status_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                node_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeNodeStatusUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeNodeStatusResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    retrieve_graph_api_graph_retrieve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GraphRetrieveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphRetrievalHit"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_graph_reasoning_run_api_graph_runs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReasoningRunCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReasoningRun"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_graph_sources_api_graph_sources_get: {
+        parameters: {
+            query?: {
+                kind?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceVersion"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_graph_source_api_graph_sources_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SourceVersionCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceVersion"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    import_graph_source_api_graph_sources_import_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SourceImportCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceImportResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_graph_source_spans_api_graph_sources__source_version_id__spans_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceSpan"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_graph_source_span_api_graph_sources__source_version_id__spans_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SourceSpanCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceSpan"];
                 };
             };
             /** @description Validation Error */
