@@ -13,6 +13,7 @@
     "openapi:generate": "python scripts/export_openapi.py && openapi-typescript openapi/paperpilot.json -o lib/api/schema.d.ts"
   },
   "dependencies": {
+    "@auth0/auth0-spa-js": "2.11.0",
     "@heroicons/react": "^2.2.0",
     "katex": "0.16.47",
     "next": "16.2.10",

@@ -68,7 +68,10 @@ def _dev_principal(request: Request) -> Principal:
 
 
 def _oidc_principal(request: Request) -> Principal:
-    issuer = _required_env("OIDC_ISSUER").rstrip("/")
+    # OIDC issuer comparison is exact. In particular Auth0 issues tokens with
+    # a trailing slash (for example, ``https://tenant.us.auth0.com/``), so do
+    # not normalize it away before PyJWT validates the ``iss`` claim.
+    issuer = _required_env("OIDC_ISSUER").strip()
     audience = _required_env("OIDC_AUDIENCE")
     jwks_url = _validate_jwks_url(_required_env("OIDC_JWKS_URL"))
     algorithms = [item.strip() for item in os.getenv("OIDC_ALGORITHMS", "RS256").split(",") if item.strip()]

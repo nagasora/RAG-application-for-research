@@ -11,6 +11,7 @@ import {
   authMode, setActiveWorkspaceId, setSessionAccessToken,
 } from "@/lib/api/auth";
 import { toApiError, type ApiError } from "@/lib/api/error";
+import { getAuth0AccessToken, loginWithAuth0, logoutFromAuth0 } from "@/lib/auth0";
 
 const WORKSPACE_KEY = "paperpilot.active-workspace";
 
@@ -29,7 +30,8 @@ export type WorkspaceSession = {
   selectWorkspace: (workspaceId: string) => void;
   createWorkspace: (name: string) => Promise<void>;
   renameWorkspace: (workspaceId: string, name: string) => Promise<void>;
-  useAccessToken: (token: string) => void;
+  login: () => Promise<void>;
+  logout: () => Promise<void>;
 };
 
 export function useWorkspaceSession(): WorkspaceSession {
@@ -48,7 +50,8 @@ export function useWorkspaceSession(): WorkspaceSession {
   useEffect(() => {
     const controller = new AbortController();
     setStatus("loading"); setError(null);
-    try { setMode(authMode()); }
+    let currentMode: "dev" | "oidc";
+    try { currentMode = authMode(); setMode(currentMode); }
     catch (configurationError) {
       setError(toApiError(configurationError)); setStatus("error");
       return () => controller.abort();
@@ -57,6 +60,7 @@ export function useWorkspaceSession(): WorkspaceSession {
     (async () => {
       try {
         setActiveWorkspaceId(null);
+        if (currentMode === "oidc") setSessionAccessToken(await getAuth0AccessToken());
         const current = await getMe(controller.signal);
         setActiveWorkspaceId(current.personal_workspace.id);
         const available = await listWorkspaces(controller.signal);
@@ -106,12 +110,19 @@ export function useWorkspaceSession(): WorkspaceSession {
     } finally { setRenaming(false); }
   }, []);
 
-  const useAccessToken = useCallback((token: string) => {
-    setSessionAccessToken(token); retry();
-  }, [retry]);
+  const login = useCallback(async () => {
+    await loginWithAuth0();
+  }, []);
+
+  const logout = useCallback(async () => {
+    setSessionAccessToken(null);
+    setActiveWorkspaceId(null);
+    if (typeof window !== "undefined") window.sessionStorage.removeItem(WORKSPACE_KEY);
+    await logoutFromAuth0();
+  }, []);
 
   return {
     status, mode, me, workspaces, activeWorkspace, error, creating, renaming,
-    retry, selectWorkspace, createWorkspace, renameWorkspace, useAccessToken,
+    retry, selectWorkspace, createWorkspace, renameWorkspace, login, logout,
   };
 }
