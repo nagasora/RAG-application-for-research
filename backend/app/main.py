@@ -20,7 +20,7 @@ from uuid import uuid4
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pypdf import PdfReader
@@ -69,6 +69,32 @@ FallbackReason = Literal[
 ]
 _last_llm_failure: FallbackReason | None = None
 _last_llm_failure_lock = Lock()
+
+
+def run_background_ingestion(
+    store: PaperStore,
+    originals: OriginalStorage,
+    job_id: str,
+    paper_id: str,
+) -> None:
+    """Run a locally queued ingestion job without holding the upload request open.
+
+    This is deliberately a small deployment-mode bridge rather than a replacement
+    for Celery.  The job/paper state is committed before this function is queued,
+    so a browser can reliably poll ``/api/jobs/{job_id}`` even when PDF extraction
+    takes longer than a reverse-proxy request timeout.  ``process_ingestion_job``
+    persists the failure state itself; logging here keeps a useful server-side
+    traceback without leaking an exception back through an already-completed
+    upload response.
+    """
+    try:
+        process_ingestion_job(store, originals, job_id, paper_id)
+    except Exception:
+        logger.exception(
+            "Paper ingestion failed in background: paper_id=%s job_id=%s",
+            paper_id,
+            job_id,
+        )
 
 
 def _agentic_dependencies_available() -> bool:
@@ -440,6 +466,7 @@ def list_papers(
 
 @app.post("/api/papers/upload", response_model=list[UploadResult])
 async def upload_papers(
+    background_tasks: BackgroundTasks,
     files: list[UploadFile] = File(...),
     user_id: str | None = Form(default=None),
     store: PaperStore = Depends(get_store),
@@ -451,6 +478,7 @@ async def upload_papers(
         message = f"一度にアップロードできるファイルは {MAX_UPLOAD_FILES} 件までです"
         return [UploadResult(filename=file.filename or "Untitled", success=False, status="rejected", error=message) for file in files]
 
+    ingestion_mode = os.getenv("INGESTION_MODE", "inline").lower()
     results: list[UploadResult] = []
     for file in files:
         filename = file.filename or "Untitled"
@@ -529,7 +557,7 @@ async def upload_papers(
             failed = store.mark_failed(paper.id, message)
             results.append(UploadResult(filename=filename, success=False, status="failed", paper=summary(failed), error=message))
             continue
-        if os.getenv("INGESTION_MODE", "inline").lower() == "celery":
+        if ingestion_mode == "celery":
             from .celery_app import enqueue_ingestion
             try:
                 enqueue_ingestion(paper.id, job.id)
@@ -539,6 +567,21 @@ async def upload_papers(
                 store.abort_queued_ingestion(job.id, paper.id, message)
                 results.append(UploadResult(filename=filename, success=False, status="failed", paper=summary(store.get(paper.id)), error=message, job=store.get_ingestion_job(context.workspace.id, job.id)))
             continue
+        if ingestion_mode == "background":
+            # FastAPI runs synchronous background work after the 202 response has
+            # been sent.  Keep the durable job as the source of truth: clients
+            # must poll it instead of treating the accepted upload as success.
+            background_tasks.add_task(
+                run_background_ingestion, store, originals, job.id, paper.id,
+            )
+            results.append(UploadResult(
+                filename=filename,
+                success=True,
+                status="processing",
+                paper=summary(paper),
+                job=job,
+            ))
+            continue
         try:
             process_ingestion_job(store, originals, job.id, paper.id)
             ready = store.get(paper.id)
@@ -546,7 +589,7 @@ async def upload_papers(
         except Exception as exc:
             failed = store.get(paper.id)
             results.append(UploadResult(filename=filename, success=False, status="failed", paper=summary(failed), error=str(exc) or exc.__class__.__name__, job=store.get_ingestion_job(context.workspace.id, job.id)))
-    if os.getenv("INGESTION_MODE", "inline").lower() == "celery":
+    if ingestion_mode in {"celery", "background"}:
         return JSONResponse(status_code=202, content=[result.model_dump(mode="json") for result in results])
     return results
 

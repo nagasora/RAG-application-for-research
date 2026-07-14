@@ -53,21 +53,23 @@ export default function Home() {
   if (!papersRequestRef.current) papersRequestRef.current = new LatestRequestCoordinator();
   useEffect(() => () => { uploadAbortRef.current?.abort(); paperMutationAbortRef.current?.abort(); }, []);
 
-  const loadPapers = useCallback(async () => {
-    if (session.status !== "ready") return;
+  const loadPapers = useCallback(async (): Promise<boolean> => {
+    if (session.status !== "ready") return false;
     const request = papersRequestRef.current!.begin();
     try {
       const nextPapers = await listPapers(request.signal);
       if (request.isCurrent()) setPapers(nextPapers);
+      return request.isCurrent();
     } catch (error) {
       const normalized = toApiError(error, "論文一覧を取得できませんでした");
       if (request.isCurrent() && normalized.code !== "aborted") setNotice(apiErrorMessage(normalized));
+      return false;
     } finally { if (request.isCurrent()) setLoading(false); }
   }, [session.status, session.activeWorkspace?.id]);
   useEffect(() => {
     papersRequestRef.current!.cancel(); uploadAbortRef.current?.abort(); paperMutationAbortRef.current?.abort(); setUploading(false);
     if (session.status !== "ready") return () => papersRequestRef.current!.cancel();
-    setLoading(true); setPapers([]); setSelected([]); setEvidenceTarget(null); setSearchReplay(null); setUploadResults([]); setNotice(""); setView("library"); loadPapers();
+    setLoading(true); setPapers([]); setSelected([]); setEvidenceTarget(null); setSearchReplay(null); setUploadResults([]); setNotice(""); setView("library"); void loadPapers();
     return () => papersRequestRef.current!.cancel();
   }, [loadPapers, session.status, session.activeWorkspace?.id]);
 
@@ -99,10 +101,14 @@ export default function Home() {
           return next;
         }
       }));
-      await loadPapers();
+      const listUpdated = await loadPapers();
       const succeeded = completed.filter(result => result.success && result.status !== "processing").length;
       const failed = completed.length - succeeded;
-      setNotice(`${succeeded}件の解析が完了${failed ? `、${failed}件は完了できませんでした` : "しました"}。`);
+      if (listUpdated) {
+        setNotice(`${succeeded}件の解析が完了${failed ? `、${failed}件は完了できませんでした` : "しました"}。`);
+      } else {
+        setNotice(`${succeeded}件の解析結果を受信しましたが、論文一覧を更新できませんでした。画面を再読み込みしても表示されない場合は、上のエラー内容を確認してください。`);
+      }
     } catch (error) {
       const normalized = toApiError(error, "アップロードに失敗しました");
       if (normalized.code !== "aborted") setNotice(apiErrorMessage(normalized));
