@@ -73,3 +73,5 @@ button { cursor:pointer; }
 .research-markdown .katex-display { margin:.9rem 0; max-width:100%; overflow-x:auto; overflow-y:hidden; padding:.4rem 0; }
 .research-markdown .katex { font-size:1.05em; }
 .research-markdown .katex-display > .katex { min-width:max-content; text-align:left; }
+.graph-dot-grid { background-color:#f8faf7; background-image:radial-gradient(#b4c3ba 1px,transparent 1px); background-size:18px 18px; cursor:grab; }
+:root[data-resolved-theme="dark"] .graph-dot-grid { background-color:#111b18; background-image:radial-gradient(#496056 1px,transparent 1px); }

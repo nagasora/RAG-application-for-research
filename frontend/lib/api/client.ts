@@ -52,6 +52,8 @@ export type KnowledgeEdgeCreate = components["schemas"]["KnowledgeEdgeCreate"];
 export type KnowledgeEdgeStatusUpdate = components["schemas"]["KnowledgeEdgeStatusUpdate"];
 export type GraphRetrieveRequest = components["schemas"]["GraphRetrieveRequest"];
 export type GraphRetrievalHit = components["schemas"]["GraphRetrievalHit"];
+export type ForwardPropagationCreate = components["schemas"]["ForwardPropagationCreate"];
+export type ForwardPropagationResult = components["schemas"]["ForwardPropagationResult"];
 
 export type ResearchMessagePageOptions = { limit?: number; beforeOrdinal?: number | null };
 export type ResearchMemoryPageOptions = ResearchMessagePageOptions & { kind?: ResearchMemoryKind | null };
@@ -167,6 +169,10 @@ export async function listGraphSourceSpans(sourceVersionId: string, signal?: Abo
 
 export async function createGraphNode(body: KnowledgeNodeCreate, signal?: AbortSignal): Promise<KnowledgeNode> {
   return unwrap(await api.POST("/api/graph/nodes", { body, signal }), "知識ノードを作成できませんでした");
+}
+
+export async function forwardPropagateGraph(body: ForwardPropagationCreate, signal?: AbortSignal): Promise<ForwardPropagationResult> {
+  return unwrap(await api.POST("/api/graph/forward-propagations", { body, signal }), "根拠付き仮説を作成できませんでした");
 }
 
 export async function updateGraphNodeStatus(nodeId: string, body: KnowledgeNodeStatusUpdate, signal?: AbortSignal): Promise<KnowledgeNodeStatusResult> {

@@ -26,7 +26,7 @@ from .database import (
 )
 from .models import (
     CanvasLayout, Chunk, Citation, DocumentElement, EvidenceRef, IngestionJob,
-    KnowledgeEdge, KnowledgeNode, NodeFeedback, Note, Paper, PaperPage, Principal,
+    ForwardPropagationResult, KnowledgeEdge, KnowledgeNode, NodeFeedback, Note, Paper, PaperPage, Principal,
     ReasoningRun, ReasoningRunLink, ResearchConversation, ResearchConversationDetail,
     ResearchMemoryEvent, ResearchMemoryPage, ResearchMessage, ResearchMessagePage,
     SavedComparison, SearchHistory, SourceSpan, SourceVersion, Tag, User, Workspace,
@@ -2142,6 +2142,105 @@ class PaperStore:
             session.add_all(inputs + outputs)
             session.flush()
             return _reasoning_run_model(record, inputs, outputs)
+
+    def forward_propagate_hypothesis(
+        self, workspace_id: str, *, input_node_ids: list[str], hypothesis_content: str,
+        evidence_span_ids: list[str], evidence_excerpt: str = "", prompt: str = "",
+        operator: str = "formulate_hypothesis", metadata: dict | None = None,
+        confidence: float | None = None, phase: str = "hypothesis_generation",
+        created_by: str | None = None,
+    ) -> ForwardPropagationResult:
+        """Atomically persist a reviewable hypothesis and its full provenance.
+
+        An immutable reasoning run records the selected inputs and generated
+        output. Every input-to-hypothesis edge is LLM-originated, pending human
+        review, and separately grounded in the supplied immutable source spans.
+        """
+        input_ids = list(dict.fromkeys(input_node_ids))
+        span_ids = list(dict.fromkeys(evidence_span_ids))
+        if not input_ids:
+            raise ValueError("at least one input knowledge node is required")
+        if not hypothesis_content.strip():
+            raise ValueError("hypothesis content is required")
+        if not span_ids:
+            raise ValueError("forward propagation requires at least one evidence span")
+        if not operator.strip():
+            raise ValueError("reasoning operator is required")
+        if confidence is not None and not 0 <= confidence <= 1:
+            raise ValueError("confidence must be between 0 and 1")
+
+        now = datetime.now(timezone.utc)
+        with self.session_factory.begin() as session:
+            self._require_workspace(session, workspace_id)
+            self._lock_reasoning_lineage(session, workspace_id)
+            if created_by is not None and session.get(UserRecord, created_by) is None:
+                raise PaperNotFoundError(created_by)
+            input_records = session.scalars(select(KnowledgeNodeRecord).where(
+                KnowledgeNodeRecord.workspace_id == workspace_id,
+                KnowledgeNodeRecord.id.in_(input_ids),
+            )).all()
+            if len(input_records) != len(input_ids):
+                raise PaperNotFoundError("knowledge node")
+            found_spans = session.scalars(select(SourceSpanRecord.id).where(
+                SourceSpanRecord.workspace_id == workspace_id,
+                SourceSpanRecord.id.in_(span_ids),
+            )).all()
+            if len(found_spans) != len(span_ids):
+                raise PaperNotFoundError("source span")
+
+            hypothesis = KnowledgeNodeRecord(
+                id=str(uuid4()), workspace_id=workspace_id, created_by=created_by,
+                node_type="hypothesis", status="review_pending",
+                layer=max(record.layer for record in input_records) + 1,
+                content=hypothesis_content.strip(), phase=phase.strip() or "hypothesis_generation",
+                confidence=confidence, metadata_json=dict(metadata or {}),
+                created_at=now, updated_at=now,
+            )
+            session.add(hypothesis)
+
+            run = ReasoningRunRecord(
+                id=str(uuid4()), workspace_id=workspace_id, created_by=created_by,
+                operator=operator.strip()[:64], status="succeeded", prompt=prompt,
+                metadata_json=dict(metadata or {}), created_at=now, updated_at=now,
+            )
+            session.add(run)
+            hypothesis.metadata_json = {**dict(metadata or {}), "reasoning_run_id": run.id}
+            run_inputs = [ReasoningRunInputRecord(
+                id=str(uuid4()), reasoning_run_id=run.id, knowledge_node_id=node_id, ordinal=index,
+            ) for index, node_id in enumerate(input_ids, start=1)]
+            run_outputs = [ReasoningRunOutputRecord(
+                id=str(uuid4()), reasoning_run_id=run.id, knowledge_node_id=hypothesis.id, ordinal=1,
+            )]
+            session.add_all(run_inputs + run_outputs)
+
+            edges: list[KnowledgeEdgeRecord] = []
+            for node_id in input_ids:
+                edge = KnowledgeEdgeRecord(
+                    id=str(uuid4()), workspace_id=workspace_id, created_by=created_by,
+                    source_node_id=node_id, target_node_id=hypothesis.id,
+                    relation="formulates", status="review_pending", origin="llm",
+                    metadata_json={**dict(metadata or {}), "reasoning_run_id": run.id},
+                    created_at=now, updated_at=now,
+                )
+                session.add(edge)
+                edges.append(edge)
+            session.flush()
+            node_evidence = self._add_evidence_refs(
+                session, workspace_id, span_ids, knowledge_node_id=hypothesis.id,
+                excerpt=evidence_excerpt,
+            )
+            edge_evidence = {
+                edge.id: self._add_evidence_refs(
+                    session, workspace_id, span_ids, knowledge_edge_id=edge.id,
+                    excerpt=evidence_excerpt,
+                )
+                for edge in edges
+            }
+            return ForwardPropagationResult(
+                hypothesis=_knowledge_node_model(hypothesis, node_evidence),
+                edges=[_knowledge_edge_model(edge, edge_evidence[edge.id]) for edge in edges],
+                reasoning_run=_reasoning_run_model(run, run_inputs, run_outputs),
+            )
 
     @staticmethod
     def _lock_reasoning_lineage(session: Session, workspace_id: str) -> None:

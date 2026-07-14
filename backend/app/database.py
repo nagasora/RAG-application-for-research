@@ -340,7 +340,7 @@ class SourceSpanRecord(Base):
 class KnowledgeNodeRecord(Base):
     __tablename__ = "knowledge_nodes"
     __table_args__ = (
-        CheckConstraint("node_type IN ('source', 'idea', 'constraint', 'hypothesis')", name="ck_knowledge_nodes_type"),
+        CheckConstraint("node_type IN ('source', 'idea', 'constraint', 'hypothesis', 'experiment')", name="ck_knowledge_nodes_type"),
         CheckConstraint("status IN ('review_pending', 'active', 'verified', 'rejected', 'superseded', 'review_required', 'pruned')", name="ck_knowledge_nodes_status"),
         CheckConstraint("layer >= 0", name="ck_knowledge_nodes_layer"),
         CheckConstraint("confidence IS NULL OR (confidence >= 0 AND confidence <= 1)", name="ck_knowledge_nodes_confidence"),

@@ -43,6 +43,29 @@ migrations create authenticated users, workspaces, memberships, `papers`, and
 `chunks`. Papers are deduplicated by `(workspace_id, content_hash)` and record their
 creator. `python -m app.init_db` remains available for disposable development databases.
 
+### Durable object storage (Cloudflare R2 / S3)
+
+The default `PAPER_STORAGE_BACKEND=local` is suitable only for development and is
+ephemeral on free web-service plans. To persist uploaded originals, extracted figures,
+and imported source snapshots, create a private Cloudflare R2 bucket and set:
+
+```text
+PAPER_STORAGE_BACKEND=r2
+R2_ACCOUNT_ID=<Cloudflare account ID>
+R2_ACCESS_KEY_ID=<R2 API token access key>
+R2_SECRET_ACCESS_KEY=<R2 API token secret>
+R2_BUCKET=paperpilot-assets
+R2_PREFIX=paperpilot
+```
+
+`R2_ENDPOINT_URL` may be supplied instead of `R2_ACCOUNT_ID`; it defaults to
+`https://<account-id>.r2.cloudflarestorage.com`. The API uses the S3 API and keeps
+only a temporary read-through cache under `PAPER_STORAGE_CACHE_DIR` (default: the
+system temporary directory). The bucket should remain private: originals and assets
+are served only through the workspace-authorized API routes. Generic `S3_*` variables
+are available for another compatible provider. The storage key includes the object
+class (`originals/...` or `assets/...`), so both kinds may safely share one bucket.
+
 Research workspace assets are introduced by revision `20260712_0003`. Search history
 stores citations by default; set `SEARCH_HISTORY_STORE_ANSWER=true` to retain full answers.
 Paper exports are available as BibTeX, RIS, and formula-injection-safe CSV.

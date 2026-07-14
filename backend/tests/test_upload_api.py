@@ -23,6 +23,18 @@ def personal_workspace(store: PaperStore, subject: str):
     return store.ensure_user(Principal(issuer="paperpilot-dev", subject=subject))[1]
 
 
+def test_cors_origins_accept_comma_separated_values_and_trailing_slashes(monkeypatch):
+    monkeypatch.setenv(
+        "FRONTEND_ORIGIN",
+        " https://paperpilot.example.com/ , https://preview.example.com ",
+    )
+
+    assert main._cors_origins_from_environment() == [
+        "https://paperpilot.example.com",
+        "https://preview.example.com",
+    ]
+
+
 def test_upload_returns_one_result_per_file_and_persists_states(tmp_path, monkeypatch):
     store = make_store(tmp_path)
     originals = LocalOriginalStorage(tmp_path / "originals")

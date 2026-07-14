@@ -232,6 +232,79 @@ def test_reasoning_runs_reject_direct_and_transitive_provenance_cycles(tmp_path)
         main.app.dependency_overrides.clear()
 
 
+def test_forward_propagation_creates_grounded_hypothesis_lineage_atomically(tmp_path, monkeypatch):
+    store = _setup(tmp_path)
+    try:
+        with TestClient(main.app) as client:
+            span_id = _import_source(client, "experimental observations")["spans"][0]["id"]
+            inputs = []
+            for node_type, content in (("source", "Observed baseline"), ("constraint", "Budget is bounded")):
+                response = client.post("/api/graph/nodes", headers=_headers("alice"), json={
+                    "node_type": node_type, "content": content,
+                    "evidence_span_ids": [span_id] if node_type == "source" else [],
+                    "status": "active",
+                })
+                assert response.status_code == 201
+                inputs.append(response.json())
+
+            propagated = client.post("/api/graph/forward-propagations", headers=_headers("alice"), json={
+                "input_node_ids": [node["id"] for node in inputs],
+                "hypothesis_content": "A constrained intervention will improve the outcome.",
+                "evidence_span_ids": [span_id],
+                "prompt": "Formulate a falsifiable hypothesis.",
+                "metadata": {"model": "gpt-5.4-nano"},
+            })
+            assert propagated.status_code == 201
+            result = propagated.json()
+            assert result["hypothesis"]["node_type"] == "hypothesis"
+            assert result["hypothesis"]["status"] == "review_pending"
+            assert result["hypothesis"]["layer"] == 1
+            assert result["hypothesis"]["evidence"][0]["source_span_id"] == span_id
+            assert result["reasoning_run"]["status"] == "succeeded"
+            assert [item["knowledge_node_id"] for item in result["reasoning_run"]["inputs"]] == [node["id"] for node in inputs]
+            assert result["reasoning_run"]["outputs"][0]["knowledge_node_id"] == result["hypothesis"]["id"]
+            assert len(result["edges"]) == 2
+            for edge, input_node in zip(result["edges"], inputs):
+                assert edge["source_node_id"] == input_node["id"]
+                assert edge["target_node_id"] == result["hypothesis"]["id"]
+                assert edge["relation"] == "formulates"
+                assert edge["origin"] == "llm" and edge["status"] == "review_pending"
+                assert edge["evidence"][0]["source_span_id"] == span_id
+                assert edge["metadata"]["reasoning_run_id"] == result["reasoning_run"]["id"]
+
+            monkeypatch.setattr(
+                main, "_generate_forward_hypothesis",
+                lambda contents, evidence, prompt: (
+                    "A generated, falsifiable hypothesis.",
+                    {"generation_mode": "llm", "model": "gpt-5.4-nano", "fallback_reason": None},
+                ),
+            )
+            generated = client.post("/api/graph/forward-propagations", headers=_headers("alice"), json={
+                "input_node_ids": [inputs[0]["id"]], "evidence_span_ids": [span_id],
+                "prompt": "Generate from the selected evidence.",
+            })
+            assert generated.status_code == 201
+            assert generated.json()["hypothesis"]["content"] == "A generated, falsifiable hypothesis."
+            assert generated.json()["hypothesis"]["metadata"]["generation_mode"] == "llm"
+            assert generated.json()["hypothesis"]["metadata"]["model"] == "gpt-5.4-nano"
+
+            before = len(store.list_knowledge_nodes(inputs[0]["workspace_id"]))
+            rejected = client.post("/api/graph/forward-propagations", headers=_headers("alice"), json={
+                "input_node_ids": [inputs[0]["id"]], "hypothesis_content": "Should not persist",
+                "evidence_span_ids": ["not-a-workspace-span"],
+            })
+            assert rejected.status_code == 404
+            assert len(store.list_knowledge_nodes(inputs[0]["workspace_id"])) == before
+
+            experiment = client.post("/api/graph/nodes", headers=_headers("alice"), json={
+                "node_type": "experiment", "content": "A/B intervention result",
+            })
+            assert experiment.status_code == 201
+            assert experiment.json()["node_type"] == "experiment"
+    finally:
+        main.app.dependency_overrides.clear()
+
+
 def test_paper_ingestion_seeds_immutable_page_anchors(tmp_path):
     _setup(tmp_path)
     try:

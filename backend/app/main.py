@@ -35,7 +35,7 @@ from .models import (
     ResearchConversation, ResearchConversationCreate, ResearchConversationDetail,
     ResearchMemoryPage, ResearchMessagePage,
     WorkspaceMember, WorkspaceMemberCreate, WorkspaceMemberUpdate,
-    CanvasLayout, CanvasLayoutUpdate, GraphRetrieveRequest, GraphRetrievalHit,
+    CanvasLayout, CanvasLayoutUpdate, ForwardPropagationCreate, ForwardPropagationResult, GraphRetrieveRequest, GraphRetrievalHit,
     GraphSnapshot, KnowledgeEdge, KnowledgeEdgeCreate, KnowledgeEdgeStatusUpdate, KnowledgeNode,
     KnowledgeNodeCreate, KnowledgeNodeStatusResult, KnowledgeNodeStatusUpdate, NodeFeedback,
     NodeFeedbackCreate, ReasoningRun, ReasoningRunCreate, SourceSpan,
@@ -48,7 +48,7 @@ from .rag import (
     hybrid_search, research_gaps, search,
 )
 from .ingestion import process_ingestion_job
-from .storage import ImmutableObjectExists, LocalOriginalStorage, OriginalStorage
+from .storage import ImmutableObjectExists, LocalOriginalStorage, OriginalStorage, storage_from_environment
 from .store import (
     DuplicatePaperError, PaperNotFoundError, PaperStore, ResourceConflictError,
     WorkspaceAccessError, WorkspaceMemberConflictError, WorkspaceMemberNotFoundError,
@@ -176,6 +176,63 @@ def _positive_float_env(name: str, default: float) -> float:
     return value
 
 
+def _cors_origins_from_environment() -> list[str]:
+    """Return exact browser origins accepted by the API.
+
+    Deployment dashboards often copy a site URL with a trailing slash, while
+    browsers send ``Origin`` without one.  Treat comma-separated values as a
+    small explicit allow-list and normalize only that harmless difference.
+    """
+    configured = os.getenv("FRONTEND_ORIGIN", "http://localhost:3000")
+    origins = [origin.strip().rstrip("/") for origin in configured.split(",") if origin.strip()]
+    return origins or ["http://localhost:3000"]
+
+
+def _local_forward_hypothesis(input_contents: list[str], evidence_texts: list[str]) -> str:
+    """Produce a transparent offline candidate when an LLM is unavailable."""
+    premises = " / ".join(content.strip() for content in input_contents if content.strip())
+    evidence = " ".join(text.strip() for text in evidence_texts if text.strip())
+    return (
+        f"仮説（要レビュー）: {premises} を前提に、観測された根拠"
+        f"（{evidence[:500] or '選択された原典'}）と整合する検証可能な効果が得られる。"
+    )
+
+
+def _generate_forward_hypothesis(input_contents: list[str], evidence_texts: list[str], prompt: str) -> tuple[str, dict]:
+    """Generate a falsifiable hypothesis with a deterministic local fallback."""
+    if not os.getenv("OPENAI_API_KEY"):
+        return _local_forward_hypothesis(input_contents, evidence_texts), {
+            "generation_mode": "local_fallback", "model": None, "fallback_reason": "api_key_missing",
+        }
+    try:
+        from openai import OpenAI
+
+        premises = "\n".join(f"- {content[:4_000]}" for content in input_contents if content.strip())
+        evidence = "\n".join(f"- {text[:4_000]}" for text in evidence_texts if text.strip())
+        response = OpenAI(
+            api_key=os.environ["OPENAI_API_KEY"], timeout=20.0, max_retries=0,
+        ).responses.create(
+            model=ANSWER_MODEL, store=False,
+            instructions=(
+                "あなたは根拠に基づく研究仮説を作るアシスタントです。与えられた前提と原典だけを使い、"
+                "一文から三文の検証可能で反証可能な仮説を日本語で返してください。根拠にない数値や事実は追加しないでください。"
+            ),
+            input=f"前提ノード:\n{premises}\n\n原典根拠:\n{evidence}\n\n追加指示:\n{prompt}",
+        )
+        content = response.output_text.strip()
+        if not content:
+            raise RuntimeError("empty hypothesis response")
+        _set_last_llm_failure(None)
+        return content, {"generation_mode": "llm", "model": ANSWER_MODEL, "fallback_reason": None}
+    except Exception as exc:
+        reason = _classify_llm_failure(exc)
+        _set_last_llm_failure(reason)
+        logger.warning("forward_propagation_fallback code=%s exception=%s", reason, exc.__class__.__name__)
+        return _local_forward_hypothesis(input_contents, evidence_texts), {
+            "generation_mode": "local_fallback", "model": None, "fallback_reason": reason,
+        }
+
+
 MAX_UPLOAD_FILES = _positive_int_env("MAX_UPLOAD_FILES", 10)
 RAG_REQUEST_DEADLINE_SECONDS = _positive_float_env("RAG_REQUEST_DEADLINE_SECONDS", 25.0)
 PAPER_SUMMARY_DEADLINE_SECONDS = _positive_float_env("PAPER_SUMMARY_DEADLINE_SECONDS", 16.0)
@@ -216,12 +273,17 @@ def _storage_for_roots(original_root: str, asset_root: str) -> LocalOriginalStor
 
 
 def get_original_storage() -> OriginalStorage:
-    legacy = os.getenv("PAPER_STORAGE_DIR")
-    original = Path(os.getenv("PAPER_ORIGINAL_STORAGE_DIR", legacy or "./data/originals"))
-    assets = Path(os.getenv("PAPER_ASSET_STORAGE_DIR", "./data/assets" if not legacy else legacy))
-    original_root = original if original.is_absolute() else ROOT / original
-    asset_root = assets if assets.is_absolute() else ROOT / assets
-    return _storage_for_roots(str(original_root.resolve()), str(asset_root.resolve()))
+    # Local storage keeps the existing root-specific cache.  Remote object
+    # storage deliberately owns its own client and disposable read-through
+    # cache, configured by PAPER_STORAGE_BACKEND=r2 (or s3).
+    if os.getenv("PAPER_STORAGE_BACKEND", "local").strip().lower() == "local":
+        legacy = os.getenv("PAPER_STORAGE_DIR")
+        original = Path(os.getenv("PAPER_ORIGINAL_STORAGE_DIR", legacy or "./data/originals"))
+        assets = Path(os.getenv("PAPER_ASSET_STORAGE_DIR", "./data/assets" if not legacy else legacy))
+        original_root = original if original.is_absolute() else ROOT / original
+        asset_root = assets if assets.is_absolute() else ROOT / assets
+        return _storage_for_roots(str(original_root.resolve()), str(asset_root.resolve()))
+    return storage_from_environment(base_dir=ROOT)
 
 
 @dataclass(frozen=True)
@@ -268,7 +330,7 @@ def require_workspace_write(context: WorkspaceContext) -> None:
 app = FastAPI(title="PaperPilot API", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[os.getenv("FRONTEND_ORIGIN", "http://localhost:3000")],
+    allow_origins=_cors_origins_from_environment(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -1522,6 +1584,46 @@ def create_graph_reasoning_run(
             context.workspace.id, operator=body.operator, input_node_ids=body.input_node_ids,
             output_node_ids=body.output_node_ids, prompt=body.prompt,
             created_by=context.user.id, metadata=body.metadata,
+        )
+    except PaperNotFoundError as exc:
+        raise _graph_not_found(exc) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/graph/forward-propagations", response_model=ForwardPropagationResult, status_code=201)
+def forward_propagate_graph_hypothesis(
+    body: ForwardPropagationCreate, store: PaperStore = Depends(get_store),
+    context: WorkspaceContext = Depends(get_workspace_context),
+):
+    """Create a pending hypothesis with atomic evidence and reasoning lineage."""
+    require_workspace_write(context)
+    try:
+        hypothesis_content = body.hypothesis_content
+        metadata = dict(body.metadata)
+        if not hypothesis_content:
+            inputs = [
+                store.get_knowledge_node(context.workspace.id, node_id)
+                for node_id in dict.fromkeys(body.input_node_ids)
+            ]
+            spans = [
+                store.get_source_span(context.workspace.id, span_id)
+                for span_id in dict.fromkeys(body.evidence_span_ids)
+            ]
+            hypothesis_content, generation_metadata = _generate_forward_hypothesis(
+                [node.content for node in inputs], [span.text for span in spans], body.prompt,
+            )
+            metadata.update(generation_metadata)
+        else:
+            metadata.setdefault("generation_mode", "provided")
+        return store.forward_propagate_hypothesis(
+            context.workspace.id, input_node_ids=body.input_node_ids,
+            hypothesis_content=hypothesis_content,
+            evidence_span_ids=body.evidence_span_ids,
+            evidence_excerpt=body.evidence_excerpt, prompt=body.prompt,
+            operator=body.operator, metadata=metadata,
+            confidence=body.confidence, phase=body.phase,
+            created_by=context.user.id,
         )
     except PaperNotFoundError as exc:
         raise _graph_not_found(exc) from exc

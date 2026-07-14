@@ -124,7 +124,7 @@ class KnowledgeNode(BaseModel):
     id: str
     workspace_id: str
     created_by: str | None = None
-    node_type: Literal["source", "idea", "constraint", "hypothesis"]
+    node_type: Literal["source", "idea", "constraint", "hypothesis", "experiment"]
     status: Literal["review_pending", "active", "verified", "rejected", "superseded", "review_required", "pruned"]
     layer: int = Field(ge=0)
     content: str
@@ -219,7 +219,7 @@ class SourceImportResult(BaseModel):
 
 
 class KnowledgeNodeCreate(BaseModel):
-    node_type: Literal["source", "idea", "constraint", "hypothesis"]
+    node_type: Literal["source", "idea", "constraint", "hypothesis", "experiment"]
     content: str = Field(min_length=1, max_length=100_000)
     layer: int = Field(default=0, ge=0, le=100)
     status: Literal["review_pending", "active", "verified", "rejected", "superseded", "review_required", "pruned"] = "review_pending"
@@ -259,6 +259,30 @@ class ReasoningRunCreate(BaseModel):
     output_node_ids: list[str] = Field(default_factory=list, max_length=32)
     prompt: str = Field(default="", max_length=20_000)
     metadata: dict = Field(default_factory=dict)
+
+
+class ForwardPropagationCreate(BaseModel):
+    """Create one reviewable hypothesis from selected graph nodes.
+
+    The caller supplies the generated text (normally from an LLM) and immutable
+    source spans that ground every newly-created premise edge.
+    """
+
+    input_node_ids: list[str] = Field(min_length=1, max_length=32)
+    hypothesis_content: str | None = Field(default=None, max_length=100_000)
+    evidence_span_ids: list[str] = Field(min_length=1, max_length=32)
+    evidence_excerpt: str = Field(default="", max_length=10_000)
+    prompt: str = Field(default="", max_length=20_000)
+    operator: str = Field(default="formulate_hypothesis", min_length=1, max_length=64)
+    metadata: dict = Field(default_factory=dict)
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    phase: str = Field(default="hypothesis_generation", max_length=64)
+
+
+class ForwardPropagationResult(BaseModel):
+    hypothesis: KnowledgeNode
+    edges: list[KnowledgeEdge] = Field(default_factory=list)
+    reasoning_run: ReasoningRun
 
 
 class NodeFeedbackCreate(BaseModel):
