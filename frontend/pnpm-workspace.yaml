@@ -1,2 +1,5 @@
 allowBuilds:
+  # Auth0 SPA SDK depends on this package. Its postinstall only prints its
+  # upstream project notice, but pnpm requires explicit approval in CI builds.
+  browser-tabs-lock: true
   sharp: true
