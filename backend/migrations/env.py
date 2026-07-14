@@ -20,6 +20,11 @@ configured_url = config.get_main_option("sqlalchemy.url").strip()
 database_url = configured_url or os.getenv("DATABASE_URL")
 if not database_url:
     raise RuntimeError("DATABASE_URL is required for Alembic")
+# Managed providers such as Render expose a generic ``postgresql://`` URL.
+# This project installs psycopg 3 (not psycopg2), so choose its SQLAlchemy
+# dialect explicitly for migrations as well as for the running API.
+if database_url.startswith("postgresql://"):
+    database_url = f"postgresql+psycopg://{database_url.removeprefix('postgresql://')}"
 config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
 target_metadata = Base.metadata
 
