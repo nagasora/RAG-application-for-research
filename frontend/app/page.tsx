@@ -148,7 +148,7 @@ export default function Home() {
 
   if (session.status === "loading") return <SessionLoading />;
   if (session.status === "error" || !session.me || !session.activeWorkspace) {
-    return <SessionErrorState mode={session.mode} error={session.error} onRetry={session.retry} onToken={session.useAccessToken} />;
+    return <SessionErrorState mode={session.mode} error={session.error} onRetry={session.retry} onLogin={session.login} />;
   }
 
   return <div className="grain min-h-screen">
@@ -161,7 +161,7 @@ export default function Home() {
         <button type="button" onClick={() => setView("research")} aria-current={view === "research" ? "page" : undefined} className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-semibold transition ${view === "research" ? "bg-[#315747] text-white shadow-lg shadow-black/20" : "text-[#b8cbc1] hover:bg-white/10 hover:text-white"}`}><LightBulbIcon className="h-5 w-5"/>整理・履歴</button>
         <button type="button" onClick={() => setView("graph")} aria-current={view === "graph" ? "page" : undefined} className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-semibold transition ${view === "graph" ? "bg-[#315747] text-white shadow-lg shadow-black/20" : "text-[#b8cbc1] hover:bg-white/10 hover:text-white"}`}><CircleStackIcon className="h-5 w-5"/>知識グラフ</button>
       </nav>
-      <div className="mt-auto space-y-3 border-t border-white/10 pt-4"><div className="rounded-xl border border-white/10 bg-white/[.05] p-3 text-xs text-[#b8cbc1]"><p className="font-semibold text-white">{session.activeWorkspace.name}</p><p className="mt-1">解析済み {papers.filter(paper => paper.status === "ready").length} / {papers.length} 件</p><p className="mt-1">{selected.length ? `選択中 ${selected.length} 件` : "全論文を検索"}</p></div><WorkspaceMemberManager workspace={session.activeWorkspace} currentUserId={session.me.user.id} dark/><WorkspaceSwitcher me={session.me} workspaces={session.workspaces} activeWorkspace={session.activeWorkspace} creating={session.creating} renaming={session.renaming} onSelect={session.selectWorkspace} onCreate={session.createWorkspace} onRename={session.renameWorkspace} /></div>
+      <div className="mt-auto space-y-3 border-t border-white/10 pt-4"><div className="rounded-xl border border-white/10 bg-white/[.05] p-3 text-xs text-[#b8cbc1]"><p className="font-semibold text-white">{session.activeWorkspace.name}</p><p className="mt-1">解析済み {papers.filter(paper => paper.status === "ready").length} / {papers.length} 件</p><p className="mt-1">{selected.length ? `選択中 ${selected.length} 件` : "全論文を検索"}</p></div><WorkspaceMemberManager workspace={session.activeWorkspace} currentUserId={session.me.user.id} dark/><WorkspaceSwitcher me={session.me} workspaces={session.workspaces} activeWorkspace={session.activeWorkspace} creating={session.creating} renaming={session.renaming} onSelect={session.selectWorkspace} onCreate={session.createWorkspace} onRename={session.renameWorkspace} />{session.mode === "oidc" && <button type="button" onClick={() => void session.logout()} className="w-full rounded-xl border border-white/15 px-3 py-2 text-xs font-semibold text-[#d5e1db] transition hover:bg-white/10 hover:text-white">ログアウト</button>}</div>
     </aside>
     <div className="min-h-screen lg:pl-[17rem]">
     <header className="border-b border-[#d9dbd4] bg-[#fffefa]/85 backdrop-blur-xl lg:hidden">
@@ -243,8 +243,8 @@ function SessionLoading() {
   return <main className="grain grid min-h-screen place-items-center bg-[#f6f4ee] p-6"><div role="status" className="text-center"><div className="mx-auto mb-4 h-9 w-9 animate-spin rounded-full border-2 border-[#b9c8c0] border-t-[#164f3b]"/><p className="serif text-xl font-semibold">ワークスペースを準備しています</p><p className="mt-2 text-sm text-[#68736f]">認証情報とアクセス権を確認しています。</p></div></main>;
 }
 
-function SessionErrorState({ mode, error, onRetry, onToken }: { mode: "dev" | "oidc" | null; error: ApiError | null; onRetry: () => void; onToken: (token: string) => void }) {
-  const [token, setToken] = useState("");
+function SessionErrorState({ mode, error, onRetry, onLogin }: { mode: "dev" | "oidc" | null; error: ApiError | null; onRetry: () => void; onLogin: () => Promise<void> }) {
+  const [loggingIn, setLoggingIn] = useState(false);
   const status = error?.status;
   const heading = status === 401 ? "認証が必要です" : status === 403 ? "アクセス権がありません" : status === 503 ? "サービスを利用できません" : "ワークスペースを開始できません";
   const body = status === 401
@@ -254,10 +254,14 @@ function SessionErrorState({ mode, error, onRetry, onToken }: { mode: "dev" | "o
       : status === 503
         ? "認証設定またはデータサービスを確認してください。"
         : "APIへの接続とフロントエンド設定を確認してください。";
-  const submit = (event: FormEvent) => { event.preventDefault(); if (token.trim()) onToken(token.trim()); };
+  const login = async () => {
+    setLoggingIn(true);
+    try { await onLogin(); }
+    finally { setLoggingIn(false); }
+  };
 
   return <main className="grain grid min-h-screen place-items-center bg-[#f6f4ee] p-6"><section role="alert" className="paper-card w-full max-w-lg rounded-3xl p-8 text-center md:p-10"><div className="mx-auto mb-5 grid h-12 w-12 place-items-center rounded-full bg-red-50 text-lg font-bold text-red-700">{status || "!"}</div><h1 className="serif text-3xl font-semibold">{heading}</h1><p className="mt-3 text-sm leading-7 text-[#68736f]">{body}</p>{error?.message && <p className="mt-4 rounded-xl bg-white/70 p-3 text-xs leading-5 text-[#52605b]">{error.message}</p>}
-    {mode === "oidc" && status === 401 && <form onSubmit={submit} className="mt-6 text-left"><label htmlFor="oidc-token" className="text-xs font-semibold text-[#52605b]">OIDC access token（このタブのsessionStorageに保持）</label><input id="oidc-token" type="password" autoComplete="off" value={token} onChange={event => setToken(event.target.value)} className="mt-2 w-full rounded-xl border border-[#d5d8d2] bg-white px-4 py-3 text-sm outline-none focus:border-[#6c887a]"/><button disabled={!token.trim()} className="mt-3 w-full rounded-full bg-[#164f3b] px-5 py-3 text-sm font-semibold text-white disabled:opacity-40">トークンを設定して接続</button></form>}
+    {mode === "oidc" && status === 401 && <button type="button" disabled={loggingIn} onClick={() => void login()} className="mt-6 w-full rounded-full bg-[#164f3b] px-5 py-3 text-sm font-semibold text-white disabled:opacity-40">{loggingIn ? "ログイン画面を開いています…" : "Auth0 でログイン"}</button>}
     {!(mode === "oidc" && status === 401) && <button onClick={onRetry} className="mt-6 rounded-full bg-[#164f3b] px-6 py-3 text-sm font-semibold text-white">再試行</button>}
   </section></main>;
 }
