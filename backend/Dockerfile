@@ -7,5 +7,9 @@ RUN groupadd --gid 10001 paperpilot && useradd --uid 10001 --gid paperpilot --no
 COPY --chown=paperpilot:paperpilot app ./app
 COPY --chown=paperpilot:paperpilot migrations ./migrations
 COPY --chown=paperpilot:paperpilot alembic.ini .
+# Local development bind-mounts these directories.  Create them in the image
+# as well so a single Render API service can run inline ingestion before the
+# application is moved to object storage and dedicated workers.
+RUN mkdir -p /app/data/originals /app/data/assets && chown -R paperpilot:paperpilot /app/data
 ENV PYTHONUNBUFFERED=1
 USER 10001:10001

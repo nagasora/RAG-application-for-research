@@ -362,6 +362,35 @@ class WorkspaceCreate(BaseModel):
         return cleaned
 
 
+class WorkspaceMember(BaseModel):
+    """A workspace member with the identity fields safe to show to collaborators."""
+
+    user: User
+    role: Literal["owner", "editor", "viewer"]
+    created_at: str
+
+
+class WorkspaceMemberCreate(BaseModel):
+    """Identify an already-provisioned collaborator in the same identity provider."""
+
+    email: str | None = Field(default=None, min_length=3, max_length=320)
+    subject: str | None = Field(default=None, min_length=1, max_length=512)
+    role: Literal["owner", "editor", "viewer"] = "editor"
+
+    @field_validator("email", "subject")
+    @classmethod
+    def strip_identity(cls, value: str | None) -> str | None:
+        return value.strip() if value else None
+
+    def model_post_init(self, __context: object) -> None:
+        if bool(self.email) == bool(self.subject):
+            raise ValueError("exactly one of email or subject is required")
+
+
+class WorkspaceMemberUpdate(BaseModel):
+    role: Literal["owner", "editor", "viewer"]
+
+
 class MeResponse(BaseModel):
     user: User
     personal_workspace: Workspace
@@ -397,6 +426,17 @@ class Citation(BaseModel):
     section: str
     excerpt: str
     score: float
+
+
+class PaperMarkdownSummary(BaseModel):
+    """A concise, citation-linked paper summary rendered as Japanese Markdown."""
+    paper_id: str
+    title: str
+    summary: str
+    citations: list[Citation] = Field(default_factory=list)
+    generation_mode: Literal["llm", "local_fallback"] = "local_fallback"
+    model: str | None = None
+    fallback_reason: str | None = None
 
 
 class AnswerClaim(BaseModel):

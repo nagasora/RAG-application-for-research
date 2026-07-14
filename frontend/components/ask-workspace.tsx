@@ -12,10 +12,11 @@ import remarkMath from "remark-math";
 
 import type { EvidenceTarget } from "@/components/evidence-viewer";
 import {
-  createResearchConversation, getResearchConversation, listResearchConversations,
-  getLLMStatus, type Citation, type LLMStatus, type Paper, type ResearchConversation, type ResearchConversationDetail,
+  createGraphNode, createResearchConversation, getLLMStatus, getResearchConversation, getResearchMemoryPage, importGraphSource, listResearchConversations,
+  type Citation, type LLMStatus, type Paper, type ResearchConversation, type ResearchConversationDetail, type ResearchMemoryEvent, type ResearchMessage,
 } from "@/lib/api/client";
 import { apiErrorMessage, toApiError } from "@/lib/api/error";
+import { normalizeResearchMarkdown } from "@/lib/markdown";
 import { SEARCH_STAGES, streamSearch, type SearchStage, type SearchStreamMeta } from "@/lib/api/search-stream";
 import { remarkCitationLinks } from "@/lib/remark-citations.mjs";
 
@@ -23,6 +24,24 @@ type Replay = { query: string; paperIds: string[]; revision: number } | null;
 type Phase = "idle" | "planning" | "answering" | "syncing";
 const SOURCE_STORAGE_PREFIX = "paperpilot.project-sources.";
 const DRAWER_FOCUSABLE = "button:not([disabled]), a[href], input:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex='-1'])";
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function graphNodeShape(memory: ResearchMemoryEvent) {
+  switch (memory.kind) {
+    case "hypothesis": return { node_type:"hypothesis" as const, phase:"conversation_hypothesis" };
+    case "assumption": return { node_type:"idea" as const, phase:"assumption" };
+    case "unresolved_question": return { node_type:"idea" as const, phase:"unresolved_question" };
+    case "planned_test": return { node_type:"idea" as const, phase:"planned_test" };
+  }
+}
+
+const MEMORY_KIND_LABEL: Record<ResearchMemoryEvent["kind"], string> = {
+  hypothesis:"仮説", assumption:"前提", unresolved_question:"未解決点", planned_test:"検証案",
+};
 const STAGE_LABELS: Record<SearchStage, string> = {
   accepted: "質問を受け付けました",
   embedding: "質問と論文をベクトル化しています",
@@ -92,7 +111,7 @@ function AnswerWithCitations({ text, citations, openEvidence }: { text: string; 
           return <a href={href} target="_blank" rel="noreferrer noopener" className="font-semibold text-[#176143] underline decoration-[#8cb9a4] underline-offset-4">{children}</a>;
         },
       }}
-    >{text}</ReactMarkdown>
+    >{normalizeResearchMarkdown(text)}</ReactMarkdown>
   </div>;
 }
 
@@ -124,6 +143,13 @@ function CitationEvidencePanel({ evidence, grounded, openEvidence }: {
   return <aside className="hidden min-h-0 overflow-y-auto border-l border-[#deddd5] bg-[#f3f3ef] p-4 xl:block" aria-label="最新回答の論文根拠"><div className="mb-4 flex items-center justify-between"><h2 className="text-xs font-bold uppercase tracking-[.14em] text-[#52605b]">Evidence</h2><span className="rounded-full bg-white px-2 py-1 text-[10px] text-[#7a837f]">{evidence.length}件</span></div><div className="space-y-3">{evidence.map(citation => <button type="button" key={`${citation.chunk_id}-${citation.index}`} onClick={() => openEvidence({ paperId:citation.paper_id, paperTitle:citation.paper_title, page:citation.page, chunkId:citation.chunk_id })} aria-label={`引用${citation.index}: ${citation.paper_title} ${citation.page}ページを開く`} className="block w-full rounded-2xl border border-[#d8dad4] bg-white p-4 text-left hover:border-[#6f9d86] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#164f3b]"><div className="mb-2 flex items-center gap-2"><span className="grid h-6 w-6 place-items-center rounded-full bg-[#164f3b] text-[10px] font-bold text-white">{citation.index}</span><span className="text-xs font-semibold text-[#a06a28]">p. {citation.page} · {citation.section}</span></div><p className="line-clamp-2 text-xs font-semibold leading-5">{citation.paper_title}</p><p className="mt-2 line-clamp-4 text-xs leading-5 text-[#68736f]">{citation.excerpt}</p><span className="mt-3 inline-flex items-center gap-1 text-[10px] font-bold text-[#35634f]">根拠ページを確認<ChevronRightIcon className="h-3 w-3"/></span></button>)}{!evidence.length && <div className="rounded-2xl border border-dashed border-[#ccd1cc] p-5 text-center"><DocumentTextIcon className="mx-auto h-5 w-5 text-[#89918e]"/><p className="mt-2 text-xs leading-5 text-[#7a837f]">回答に引用が付くと、根拠のページと原文がここに表示されます。</p></div>}</div>{grounded && <div className="mt-4 flex items-center gap-2 rounded-xl bg-[#e1eee7] p-3 text-xs text-[#23513e]"><CheckCircleIcon className="h-4 w-4"/>引用番号を検証済み</div>}</aside>;
 }
 
+function AnswerEvidenceList({ citations, openEvidence }: { citations: Citation[]; openEvidence: (target: EvidenceTarget) => void }) {
+  return <section className="ml-11 mt-4 rounded-2xl border border-[#d8ded9] bg-[#f7faf7] p-3" aria-label="この回答でRAGが使用した論文箇所">
+    <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-2 text-xs font-bold text-[#35634f]"><DocumentTextIcon className="h-4 w-4"/>この回答でRAGが使用した論文箇所</div><span className="shrink-0 rounded-full bg-white px-2 py-1 text-[10px] font-semibold text-[#68736f]">{citations.length}件</span></div>
+    {citations.length ? <div className="mt-3 grid gap-2 lg:grid-cols-2">{citations.map(citation => <button type="button" key={`${citation.chunk_id}-${citation.index}`} onClick={() => openEvidence({ paperId:citation.paper_id, paperTitle:citation.paper_title, page:citation.page, chunkId:citation.chunk_id })} aria-label={`引用${citation.index}: ${citation.paper_title} ${citation.page}ページの原文を確認`} className="rounded-xl border border-[#d8ded9] bg-white p-3 text-left transition hover:border-[#6f9d86] hover:bg-[#fafffb]"><div className="flex items-start gap-2"><span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-[#164f3b] text-[9px] font-bold text-white">{citation.index}</span><div className="min-w-0 flex-1"><p className="truncate text-xs font-semibold text-[#26342e]">{citation.paper_title}</p><p className="mt-0.5 text-[10px] font-semibold text-[#a06a28]">抽出箇所: {citation.section} · p. {citation.page}</p></div><ChevronRightIcon className="mt-1 h-3.5 w-3.5 shrink-0 text-[#35634f]"/></div><p className="mt-2 text-[10px] font-bold text-[#68736f]">原文抜粋</p><p className="mt-1 line-clamp-3 text-[11px] leading-5 text-[#52605b]">{citation.excerpt}</p><span className="mt-2 inline-flex items-center gap-1 text-[10px] font-bold text-[#35634f]">原文ページを確認<ChevronRightIcon className="h-3 w-3"/></span></button>)}</div> : <div className="mt-3 rounded-xl border border-dashed border-[#cbd3cc] bg-white/70 p-3 text-xs leading-5 text-[#68736f]">この回答には、RAGが使用した論文箇所はありません。一般知識またはローカル回答として扱い、原典の根拠にはしないでください。</div>}
+  </section>;
+}
+
 export function AskWorkspace({ workspaceId, papers, selected, setSelected, openEvidence, replay, canWrite }: {
   workspaceId: string;
   papers: Paper[]; selected: string[]; setSelected: (ids: string[]) => void;
@@ -137,7 +163,6 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
   const activeIdRef = useRef<string | null>(null);
   const [detail, setDetail] = useState<ResearchConversationDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [creating, setCreating] = useState(false);
   const [liveQuestion, setLiveQuestion] = useState("");
   const [liveAnswer, setLiveAnswer] = useState("");
   const [liveCitations, setLiveCitations] = useState<Citation[]>([]);
@@ -149,14 +174,22 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
   const [error, setError] = useState("");
   const [syncNotice, setSyncNotice] = useState("");
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [graphMessage, setGraphMessage] = useState<ResearchMessage | null>(null);
+  const [graphCandidates, setGraphCandidates] = useState<ResearchMemoryEvent[]>([]);
+  const [selectedGraphCandidateIds, setSelectedGraphCandidateIds] = useState<string[]>([]);
+  const [graphCandidatesLoading, setGraphCandidatesLoading] = useState(false);
+  const [graphSaving, setGraphSaving] = useState(false);
+  const [graphError, setGraphError] = useState("");
+  const [graphNotice, setGraphNotice] = useState("");
   const sourceSelectionRestoredRef = useRef(false);
   const streamAbortRef = useRef<AbortController | null>(null);
-  const createAbortRef = useRef<AbortController | null>(null);
   const interruptionAbortRef = useRef<AbortController | null>(null);
   const detailAbortRef = useRef<AbortController | null>(null);
   const messageEndRef = useRef<HTMLDivElement>(null);
   const historyButtonRef = useRef<HTMLButtonElement>(null);
   const drawerRef = useRef<HTMLDivElement>(null);
+  const graphExportingRef = useRef(false);
+  const graphSavedMemoryRef = useRef(new Set<string>());
   const busy = phase !== "idle" || interruptionSyncing || detailLoading;
 
   const selectConversation = (conversationId: string) => {
@@ -185,7 +218,7 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
       const normalized = toApiError(requestError, "研究対話を読み込めませんでした");
       if (normalized.code !== "aborted") setError(normalized.message);
     });
-    return () => { controller.abort(); createAbortRef.current?.abort(); detailAbortRef.current?.abort(); streamAbortRef.current?.abort(); interruptionAbortRef.current?.abort(); };
+    return () => { controller.abort(); detailAbortRef.current?.abort(); streamAbortRef.current?.abort(); interruptionAbortRef.current?.abort(); };
   }, []);
 
   useEffect(() => {
@@ -254,23 +287,16 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
   useEffect(() => { if (replay) setQuery(replay.query); }, [replay?.revision]);
   useEffect(() => { messageEndRef.current?.scrollIntoView({ block:"end", behavior:"smooth" }); }, [detail?.messages?.length, liveAnswer, liveQuestion]);
 
-  const startNew = async () => {
-    if (!canWrite || busy || creating) return;
-    createAbortRef.current?.abort();
-    const controller = new AbortController(); createAbortRef.current = controller;
-    setCreating(true); setError(""); setSyncNotice("");
-    try {
-      const created = await createResearchConversation("新しい研究対話", controller.signal);
-      activeIdRef.current = created.id;
-      setDetail({ ...created, messages:[] }); setActiveId(created.id); setQuery(""); setLastMeta(null);
-      await refreshList(created.id, controller.signal);
-      setHistoryOpen(false);
-    } catch (requestError) {
-      const normalized = toApiError(requestError, "研究対話を作成できませんでした");
-      if (normalized.code !== "aborted") setError(apiErrorMessage(normalized));
-    } finally {
-      if (createAbortRef.current === controller) { createAbortRef.current = null; setCreating(false); }
-    }
+  const startNew = () => {
+    if (!canWrite || busy) return;
+    // A blank draft must not become a persisted conversation.  The first
+    // submitted question below creates it, allowing the server to derive a
+    // useful title from the actual research topic.
+    detailAbortRef.current?.abort();
+    activeIdRef.current = null;
+    setActiveId(null); setDetail(null); setQuery(""); setLastMeta(null);
+    setLiveQuestion(""); setLiveAnswer(""); setLiveCitations([]);
+    setError(""); setSyncNotice(""); setHistoryOpen(false);
   };
 
   const ask = async (event: FormEvent) => {
@@ -358,6 +384,64 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
       }
     })();
   };
+
+  const openGraphCandidates = async (message: ResearchMessage) => {
+    if (!canWrite || !activeIdRef.current || graphCandidatesLoading || graphSaving) return;
+    setGraphMessage(message); setGraphCandidates([]); setSelectedGraphCandidateIds([]); setGraphError(""); setGraphNotice(""); setGraphCandidatesLoading(true);
+    const controller = new AbortController();
+    try {
+      const page = await getResearchMemoryPage(activeIdRef.current, { limit:200 }, controller.signal);
+      const candidates = (page.items ?? []).filter(item => item.source_message_id === message.id);
+      setGraphCandidates(candidates);
+      setSelectedGraphCandidateIds(candidates.filter(item => !graphSavedMemoryRef.current.has(item.id)).map(item => item.id));
+    } catch (requestError) {
+      setGraphError(apiErrorMessage(requestError, "研究メモリ候補を取得できませんでした"));
+    } finally { setGraphCandidatesLoading(false); }
+  };
+
+  const closeGraphCandidates = () => {
+    if (graphSaving) return;
+    setGraphMessage(null); setGraphCandidates([]); setSelectedGraphCandidateIds([]); setGraphError(""); setGraphNotice("");
+  };
+
+  const saveGraphCandidates = async () => {
+    const conversationId = activeIdRef.current;
+    if (!canWrite || !graphMessage || !conversationId || graphSaving || graphExportingRef.current) return;
+    const candidates = graphCandidates.filter(item => selectedGraphCandidateIds.includes(item.id) && !graphSavedMemoryRef.current.has(item.id));
+    if (!candidates.length) return;
+    graphExportingRef.current = true; setGraphSaving(true); setGraphError(""); setGraphNotice("");
+    try {
+      // Preserve the assistant turn as an immutable chat Source. It is provenance for
+      // an idea, never a substitute for the cited paper evidence in that turn.
+      const sourceContent = JSON.stringify([{ role:"assistant", content:graphMessage.content, timestamp:graphMessage.created_at }]);
+      const imported = await importGraphSource({
+        kind:"chat", locator:`chat://conversation/${conversationId}/message/${graphMessage.id}`,
+        content:sourceContent, content_hash:await sha256Hex(sourceContent),
+        metadata:{ conversation_id:conversationId, message_id:graphMessage.id, source:"research_conversation" },
+      });
+      const evidenceSpan = imported.spans?.[0];
+      if (!evidenceSpan) throw new Error("会話の根拠Spanを作成できませんでした");
+      for (const candidate of candidates) {
+        const shape = graphNodeShape(candidate);
+        await createGraphNode({
+          node_type:shape.node_type, content:candidate.content, layer:1, status:"review_pending", phase:shape.phase,
+          confidence:null, evidence_span_ids:[evidenceSpan.id], evidence_excerpt:candidate.content,
+          metadata:{
+            origin:"research_conversation", conversation_id:conversationId, message_id:graphMessage.id,
+            memory_event_id:candidate.id, memory_kind:candidate.kind, citation_count:graphMessage.citations?.length ?? 0,
+          },
+        });
+        graphSavedMemoryRef.current.add(candidate.id);
+      }
+      setSelectedGraphCandidateIds([]);
+      setGraphNotice(`${candidates.length}件をレビュー待ちとして知識グラフへ保存しました。論文事実としては扱われません。`);
+    } catch (requestError) {
+      setGraphError(apiErrorMessage(requestError, "知識グラフへ保存できませんでした"));
+    } finally { graphExportingRef.current = false; setGraphSaving(false); }
+  };
+
+  const toggleGraphCandidate = (id: string) => setSelectedGraphCandidateIds(current => current.includes(id) ? current.filter(item => item !== id) : [...current, id]);
+
   const messages = detail?.messages ?? [];
   const evidence = liveCitations.length
     ? liveCitations
@@ -387,16 +471,16 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
 
   return <section className="rise -mx-5 -my-8 min-h-[calc(100vh-5.5rem)] lg:-mx-10 lg:-my-12">
     <div className="grid min-h-[calc(100vh-5.5rem)] bg-[#f7f6f1] lg:grid-cols-[280px_minmax(0,1fr)]">
-      <aside className={`${historyOpen ? "fixed inset-0 z-[90] isolate flex" : "hidden"} lg:static lg:flex lg:flex-col`} aria-label="研究ナビゲーション">
+      <aside className={`${historyOpen ? "fixed inset-0 z-[90] isolate flex" : "hidden"} min-h-0 lg:static lg:flex lg:flex-col`} aria-label="研究ナビゲーション">
         {historyOpen && <button type="button" aria-label="会話履歴を閉じる" className="absolute inset-0 bg-[#07110d]/80 backdrop-blur-[3px] lg:hidden" onClick={() => setHistoryOpen(false)}/>}
-        <div ref={drawerRef} role={historyOpen ? "dialog" : undefined} aria-modal={historyOpen ? true : undefined} aria-label={historyOpen ? "研究対話履歴とプロジェクト知識ベース" : undefined} className="relative z-[1] flex h-[100dvh] w-[88vw] max-w-[340px] flex-col overflow-hidden border-r border-white/10 bg-[#10231b] text-white shadow-[28px_0_70px_rgba(0,0,0,.42)] lg:h-auto lg:min-h-[calc(100vh-5.5rem)] lg:w-auto lg:max-w-none lg:shadow-none">
+        <div ref={drawerRef} role={historyOpen ? "dialog" : undefined} aria-modal={historyOpen ? true : undefined} aria-label={historyOpen ? "研究対話履歴とプロジェクト知識ベース" : undefined} className="relative z-[1] flex h-[100dvh] min-h-0 w-[88vw] max-w-[340px] flex-col overflow-hidden border-r border-white/10 bg-[#10231b] text-white shadow-[28px_0_70px_rgba(0,0,0,.42)] lg:h-[calc(100vh-5.5rem)] lg:w-auto lg:max-w-none lg:shadow-none">
           <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-4 py-4"><div><p className="text-[10px] font-bold uppercase tracking-[.2em] text-[#91ad9f]">Research cockpit</p><p className="mt-1 text-sm font-semibold text-white">研究ナビゲーション</p></div><button type="button" onClick={() => setHistoryOpen(false)} aria-label="研究ナビゲーションを閉じる" className="grid h-9 w-9 place-items-center rounded-full border border-white/15 text-[#d8e6df] hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white lg:hidden"><XMarkIcon className="h-5 w-5"/></button></div>
           <div className="flex min-h-0 flex-1 flex-col p-4">
-            <button type="button" onClick={startNew} disabled={!canWrite || busy || creating} className="flex w-full shrink-0 items-center justify-center gap-2 rounded-xl border border-[#78a58f]/60 bg-[#e8f3ed] px-4 py-3 text-sm font-semibold text-[#123d2d] shadow-lg shadow-black/15 disabled:opacity-40"><PlusIcon className="h-4 w-4"/>{creating ? "作成中…" : "新しい研究対話"}</button>
+            <button type="button" onClick={startNew} disabled={!canWrite || busy} className="flex w-full shrink-0 items-center justify-center gap-2 rounded-xl border border-[#78a58f]/60 bg-[#e8f3ed] px-4 py-3 text-sm font-semibold text-[#123d2d] shadow-lg shadow-black/15 disabled:opacity-40"><PlusIcon className="h-4 w-4"/>新しい研究対話</button>
             <div className="mt-5 flex shrink-0 items-center justify-between px-2"><p className="text-[10px] font-bold uppercase tracking-[.18em] text-[#91ad9f]">Conversation history</p><span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] text-[#b9cec3]">{conversations.length}件</span></div>
-            <div className="mt-2 min-h-28 flex-1 space-y-1 overflow-y-auto overscroll-contain pr-1 [scrollbar-color:#5f7f70_transparent]">
+            <div className="mt-2 min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain pr-1 [scrollbar-color:#5f7f70_transparent]" aria-label="会話履歴の一覧" tabIndex={0}>
               {conversations.map(item => <button type="button" key={item.id} disabled={busy} onClick={() => selectConversation(item.id)} aria-current={activeId === item.id ? "page" : undefined} className={`w-full rounded-xl border px-3 py-3 text-left transition disabled:cursor-not-allowed ${activeId === item.id ? "border-[#739d89]/60 bg-[#254438] text-white shadow-lg shadow-black/15" : "border-transparent text-[#c3d2ca] hover:border-white/10 hover:bg-white/[.07]"}`}><span className="block truncate text-sm font-semibold">{item.title}</span><span className={`mt-1 flex items-center gap-1 text-[10px] ${activeId === item.id ? "text-[#a9cbbb]" : "text-[#789387]"}`}><ClockIcon className="h-3 w-3"/>{relativeDate(item.updated_at)}</span></button>)}
-              {!conversations.length && !creating && <p className="px-3 py-6 text-center text-xs leading-5 text-[#91ad9f]">研究対話はまだありません。<br/>問いを送ると自動で作成されます。</p>}
+              {!conversations.length && <p className="px-3 py-6 text-center text-xs leading-5 text-[#91ad9f]">研究対話はまだありません。<br/>問いを送ると自動で作成されます。</p>}
             </div>
             <div className="mt-3 grid shrink-0 gap-2 border-t border-white/10 pt-3">
               <div className="rounded-xl border border-white/10 bg-white/[.06] p-3"><div className="flex items-center justify-between gap-2"><div className="flex items-center gap-2 text-xs font-semibold text-[#cce5d9]"><CpuChipIcon className="h-4 w-4 text-[#86b39d]"/>研究メモリ</div><span className={`h-2 w-2 rounded-full ${memoryText ? "bg-emerald-400 shadow-[0_0_10px_#34d399]" : "bg-[#5f746a]"}`}/></div><p className="mt-2 line-clamp-3 text-[11px] leading-5 text-[#9eb5aa]">{memoryText || "仮説・合意・未解決点を対話から蓄積します。"}</p>{memoryText && <p className="mt-1 text-[10px] text-[#718b7f]">{memoryText.length.toLocaleString()}文字を次の対話へ引き継ぎ</p>}</div>
@@ -419,7 +503,7 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
               <div className="mx-auto max-w-3xl space-y-7">
                 {!messages.length && !liveQuestion && !detailLoading && <div className="grid min-h-[42vh] place-items-center text-center"><div><div className="mx-auto grid h-12 w-12 place-items-center rounded-2xl bg-[#e1eee7] text-[#164f3b]"><SparklesIcon className="h-6 w-6"/></div><h1 className="serif mt-5 text-3xl font-semibold">何を一緒に考えますか？</h1><p className="mx-auto mt-3 max-w-xl text-sm leading-7 text-[#68736f]">論文を横断して詳しくまとめ、LLMの知識で補足します。根拠にした原文は引用番号から直接確認できます。</p></div></div>}
                 {detailLoading && <div role="status" className="py-20 text-center text-sm text-[#68736f]">会話履歴を読み込んでいます…</div>}
-                {messages.map(message => <article key={message.id} aria-label={message.role === "user" ? "あなた" : "PaperPilot"} className={message.role === "user" ? "ml-auto max-w-[88%] rounded-3xl rounded-br-md bg-[#e6e8e3] px-5 py-3 text-sm leading-7 text-[#26312c]" : "max-w-full"}>{message.role === "assistant" ? <AssistantResponse text={message.content} citations={message.citations ?? []} openEvidence={openEvidence}/> : <p className="whitespace-pre-wrap">{message.content}</p>}</article>)}
+                {messages.map(message => <article key={message.id} aria-label={message.role === "user" ? "あなた" : "PaperPilot"} className={message.role === "user" ? "ml-auto max-w-[88%] rounded-3xl rounded-br-md bg-[#e6e8e3] px-5 py-3 text-sm leading-7 text-[#26312c]" : "max-w-full"}>{message.role === "assistant" ? <><AssistantResponse text={message.content} citations={message.citations ?? []} openEvidence={openEvidence}/><AnswerEvidenceList citations={message.citations ?? []} openEvidence={openEvidence}/><div className="ml-11 mt-3"><button type="button" disabled={!canWrite || busy || graphSaving} onClick={() => void openGraphCandidates(message)} className="rounded-full border border-[#9ab7a7] px-3 py-1.5 text-[11px] font-semibold text-[#24523e] hover:bg-[#edf5f0] disabled:cursor-not-allowed disabled:opacity-45">研究アイデアをグラフへ</button></div></> : <p className="whitespace-pre-wrap">{message.content}</p>}</article>)}
                 {liveQuestion && <article aria-label="あなた" className="ml-auto max-w-[88%] rounded-3xl rounded-br-md bg-[#e6e8e3] px-5 py-3 text-sm leading-7 text-[#26312c]"><p className="whitespace-pre-wrap">{liveQuestion}</p></article>}
                 {(liveAnswer || busy) && <article aria-label="PaperPilotの回答"><AssistantResponse text={liveAnswer} citations={liveCitations} openEvidence={openEvidence} loading={!liveAnswer}/></article>}
                 <div ref={messageEndRef}/>
@@ -439,6 +523,14 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
           <CitationEvidencePanel evidence={evidence} grounded={Boolean(lastMeta?.grounded)} openEvidence={openEvidence}/>
         </div>
       </div>
+      {graphMessage && <div role="dialog" aria-modal="true" aria-labelledby="graph-candidates-title" className="fixed inset-0 z-[100] flex items-end justify-center bg-[#07110d]/65 p-3 backdrop-blur-sm sm:items-center sm:p-6">
+        <div className="max-h-[min(44rem,calc(100dvh-1.5rem))] w-full max-w-xl overflow-y-auto rounded-3xl border border-[#cbd8d0] bg-[#fffefa] p-5 shadow-2xl sm:p-6">
+          <div className="flex items-start justify-between gap-4"><div><p className="text-[10px] font-bold uppercase tracking-[.16em] text-[#35634f]">Research memory → graph</p><h2 id="graph-candidates-title" className="serif mt-1 text-2xl font-semibold">レビュー候補を選ぶ</h2><p className="mt-2 text-xs leading-5 text-[#68736f]">会話から抽出された候補を、会話由来の根拠付きで保存します。論文の事実や検証済み知識にはなりません。</p></div><button type="button" onClick={closeGraphCandidates} disabled={graphSaving} aria-label="候補選択を閉じる" className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-[#d5d8d2] text-[#52605b] disabled:opacity-40"><XMarkIcon className="h-4 w-4"/></button></div>
+          {graphCandidatesLoading ? <p role="status" className="py-10 text-center text-sm text-[#68736f]">研究メモリ候補を読み込んでいます…</p> : <div className="mt-5 space-y-3">{graphCandidates.map(candidate => { const saved = graphSavedMemoryRef.current.has(candidate.id); const checked = selectedGraphCandidateIds.includes(candidate.id); return <label key={candidate.id} className={`block rounded-2xl border p-4 ${saved ? "border-[#b8d6c4] bg-[#edf6f0]" : checked ? "border-[#5d9878] bg-[#f1f8f4]" : "border-[#deddd5] bg-white"}`}><div className="flex items-start gap-3"><input type="checkbox" checked={checked} disabled={saved || graphSaving} onChange={() => toggleGraphCandidate(candidate.id)} className="mt-1 h-4 w-4 accent-[#164f3b]"/><div className="min-w-0 flex-1"><div className="flex items-center justify-between gap-2"><span className="rounded-full bg-[#e7f0eb] px-2 py-0.5 text-[10px] font-bold text-[#35634f]">{MEMORY_KIND_LABEL[candidate.kind]}</span>{saved && <span className="text-[10px] font-semibold text-[#35634f]">この画面で保存済み</span>}</div><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-[#26342e]">{candidate.content}</p></div></div></label>; })}{!graphCandidates.length && <p className="rounded-2xl border border-dashed border-[#cbd3cc] p-5 text-center text-sm leading-6 text-[#68736f]">この回答には保存済みの研究メモリ候補がありません。仮説、前提、未解決点、次の検証を明示して質問すると候補が作られます。</p>}</div>}
+          {graphError && <p role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs leading-5 text-red-800">{graphError}</p>}{graphNotice && <p role="status" className="mt-4 rounded-xl border border-[#b8d6c4] bg-[#edf6f0] p-3 text-xs leading-5 text-[#24523e]">{graphNotice}</p>}
+          <div className="mt-6 flex justify-end gap-2"><button type="button" onClick={closeGraphCandidates} disabled={graphSaving} className="rounded-full px-4 py-2 text-xs font-semibold text-[#52605b] disabled:opacity-40">閉じる</button><button type="button" onClick={() => void saveGraphCandidates()} disabled={graphCandidatesLoading || graphSaving || !selectedGraphCandidateIds.length} className="rounded-full bg-[#164f3b] px-4 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">{graphSaving ? "保存中…" : `レビュー待ちで${selectedGraphCandidateIds.length}件を保存`}</button></div>
+        </div>
+      </div>}
     </div>
   </section>;
 }

@@ -522,7 +522,9 @@ class AgenticRAG:
             "あなたはPaperPilotの研究支援エージェントです。JSONだけを返します。論文根拠、一般知識、仮説を厳格に区別します。"
             "paper claimだけがcitation_idsを持ち、許可されたsource ID以外は使いません。数値・比較・因果は引用抜粋から直接確認します。"
             "数式は必ずLaTeXで、文中は $...$、独立した数式は $$...$$ で囲みます。"
-            "Unicodeの数式記号や崩れた疑似数式を使わず、標準LaTeXコマンドを使います。",
+            "Unicodeの数式記号や崩れた疑似数式を使わず、標準LaTeXコマンドを使います。"
+            "JSON文字列内のLaTeXバックスラッシュは必ずJSON用に二重エスケープし、\\(...\\)・\\[...\\]は使いません。"
+            "見出し、箇条書き、表などは通常のMarkdown構文で返します。",
             f"<question>{html.escape(query)}</question>\n<untrusted_memory>{html.escape(memory[-memory_limit:])}</untrusted_memory>"
             f"\n<untrusted_evidence>{self._evidence_xml(selected)}</untrusted_evidence>"
             "\nanswer_sectionsを配列で返してください。各要素はtitleとclaimsを持ち、claimはclaim_id、text、"

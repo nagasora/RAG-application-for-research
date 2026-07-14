@@ -4,7 +4,7 @@ import { ArrowPathIcon, PlusIcon } from "@heroicons/react/24/outline";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
 import { GraphCanvas, type GraphEdge, type GraphNode, type GraphNodeStatus, type GraphNodeType } from "@/components/graph-canvas";
-import { createGraphEdge, createGraphNode, getGraphSnapshot, importGraphSource, listGraphSourceSpans, listGraphSources, updateGraphEdgeStatus, type KnowledgeEdge as ApiKnowledgeEdge, type KnowledgeEdgeStatusUpdate, type KnowledgeNode as ApiKnowledgeNode, type SourceSpan, type SourceVersion } from "@/lib/api/client";
+import { createGraphEdge, createGraphNode, getGraphSnapshot, importGraphSource, listGraphSourceSpans, listGraphSources, retrieveGraph, updateGraphEdgeStatus, updateGraphNodeStatus, type GraphRetrievalHit, type KnowledgeEdge as ApiKnowledgeEdge, type KnowledgeEdgeStatusUpdate, type KnowledgeNode as ApiKnowledgeNode, type KnowledgeNodeStatusUpdate, type SourceSpan, type SourceVersion } from "@/lib/api/client";
 import { apiErrorMessage } from "@/lib/api/error";
 
 type EvidenceRef = { source_span_id: string };
@@ -23,6 +23,14 @@ type SourceKind = typeof SOURCE_KINDS[number];
 const MAX_SOURCE_BYTES = 5 * 1024 * 1024;
 const EDGE_RELATIONS = ["informs", "supports", "extends", "formulates", "contradicts", "implements", "depends_on", "related"] as const;
 const EDGE_STATUSES: KnowledgeEdgeStatusUpdate["status"][] = ["review_pending", "active", "verified", "rejected", "superseded", "review_required", "pruned"];
+const NODE_STATUSES: KnowledgeNodeStatusUpdate["status"][] = ["review_pending", "active", "verified", "rejected", "superseded", "review_required", "pruned"];
+
+function hopEdgeIds(hits: GraphRetrievalHit[]) {
+  return hits.flatMap(hit => (hit.hop_path ?? []).flatMap(step => {
+    const edgeId = typeof step === "object" && step !== null && "edge_id" in step ? step.edge_id : undefined;
+    return typeof edgeId === "string" ? [edgeId] : [];
+  }));
+}
 
 async function sha256Hex(value: string): Promise<string> {
   const bytes = new TextEncoder().encode(value);
@@ -79,6 +87,12 @@ export function GraphWorkspace({ canWrite, onOpenPaper }: GraphWorkspaceProps) {
   const [edgeStatusReason, setEdgeStatusReason] = useState("");
   const [edgeStatusUpdating, setEdgeStatusUpdating] = useState(false);
   const [edgeStatusNotice, setEdgeStatusNotice] = useState("");
+  const [nodeStatus, setNodeStatus] = useState<KnowledgeNodeStatusUpdate["status"]>("review_pending");
+  const [nodeStatusUpdating, setNodeStatusUpdating] = useState(false);
+  const [nodeStatusNotice, setNodeStatusNotice] = useState("");
+  const [expansion, setExpansion] = useState<GraphRetrievalHit[]>([]);
+  const [expanding, setExpanding] = useState(false);
+  const [expansionNotice, setExpansionNotice] = useState("");
 
   const load = async () => {
     setLoading(true); setError("");
@@ -132,6 +146,22 @@ export function GraphWorkspace({ canWrite, onOpenPaper }: GraphWorkspaceProps) {
   const selectedEdge = snapshot.edges.find(edge => edge.id === selectedEdgeId) ?? null;
   const sourceById = useMemo(() => new Map(sources.map(source => [source.id, source])), [sources]);
   const selectedEvidenceSource = sourceById.get(edgeSourceVersionId);
+  const expansionNodeIds = useMemo(() => expansion.map(hit => hit.node.id), [expansion]);
+  const expansionEdgeIds = useMemo(() => hopEdgeIds(expansion), [expansion]);
+
+  const expandNode = async (node: KnowledgeNode) => {
+    setExpanding(true); setExpansion([]); setExpansionNotice(""); setError("");
+    try {
+      const hits = await retrieveGraph({
+        seeds:[{ node_id:node.id, relevance:1, confidence:node.confidence ?? 1, retrieval_reason:"selected_node" }],
+        top_k:16, max_degree:12, max_first_hop_candidates:16,
+      });
+      setExpansion(hits);
+      setExpansionNotice(hits.length > 1 ? `${hits.length - 1}件の下流ノードを、最大2 hopまで根拠付きで表示しています。` : "有効・検証済みの下流関係はありません。レビュー待ちの関係は展開対象外です。");
+    } catch (requestError) {
+      setError(apiErrorMessage(requestError, "ノードの関係を展開できませんでした"));
+    } finally { setExpanding(false); }
+  };
 
   const createNode = async (event: FormEvent) => {
     event.preventDefault(); if (!canWrite || !content.trim() || creating) return;
@@ -170,7 +200,19 @@ export function GraphWorkspace({ canWrite, onOpenPaper }: GraphWorkspaceProps) {
     } finally { setSourceImporting(false); }
   };
 
-  const toggleSelectedNode = (node: GraphNode) => setSelectedNodeIds(current => current.includes(node.id) ? current.filter(id => id !== node.id) : [...current, node.id]);
+  const toggleSelectedNode = (node: GraphNode) => {
+    const graphNode = snapshot.nodes.find(item => item.id === node.id);
+    if (!graphNode) return;
+    const isRemoving = selectedNodeIds.includes(node.id);
+    if (isRemoving) {
+      if (selectedNodeIds.at(-1) === node.id) { setExpansion([]); setExpansionNotice(""); }
+      setSelectedNodeIds(current => current.filter(id => id !== node.id));
+      return;
+    }
+    setNodeStatus(graphNode.status); setNodeStatusNotice("");
+    void expandNode(graphNode);
+    setSelectedNodeIds(current => [...current, node.id]);
+  };
 
   const selectEdge = (edge: GraphEdge) => {
     const nextEdge = snapshot.edges.find(item => item.id === edge.id);
@@ -220,15 +262,32 @@ export function GraphWorkspace({ canWrite, onOpenPaper }: GraphWorkspaceProps) {
     } finally { setEdgeStatusUpdating(false); }
   };
 
+  const updateNodeStatus = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!canWrite || !selected || nodeStatusUpdating) return;
+    setNodeStatusUpdating(true); setError(""); setNodeStatusNotice("");
+    try {
+      const result = await updateGraphNodeStatus(selected.id, { status:nodeStatus });
+      await load();
+      setNodeStatus(result.node.status);
+      setNodeStatusNotice(result.affected_node_ids?.length ? `ノードの状態を更新しました。関連する${result.affected_node_ids.length}件も要レビューとして更新されています。` : "ノードの状態を更新しました。");
+    } catch (requestError) {
+      setError(apiErrorMessage(requestError, "知識ノードの状態を更新できませんでした"));
+    } finally { setNodeStatusUpdating(false); }
+  };
+
   return <section className="rise"><div className="mb-7 flex flex-wrap items-end justify-between gap-4"><div><p className="mb-2 text-xs font-bold uppercase tracking-[.2em] text-[#a06a28]">Grounded knowledge graph</p><h1 className="serif text-4xl font-semibold md:text-5xl">根拠とアイデアを、混ぜずに繋ぐ。</h1><p className="mt-3 max-w-3xl text-sm leading-6 text-[#68736f]">Sourceは不変の位置アンカーを保ち、仮説やアイデアはレビュー待ちとして別レイヤーに置かれます。</p></div><button type="button" onClick={() => void load()} disabled={loading} className="inline-flex items-center gap-2 rounded-full border border-[#164f3b] px-4 py-2 text-xs font-semibold text-[#164f3b] disabled:opacity-40"><ArrowPathIcon className="h-4 w-4"/>更新</button></div>
     {error && <div role="alert" className="mb-5 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">{error}</div>}
     <div className="grid gap-5 xl:grid-cols-[230px_minmax(0,1fr)_285px]">
       <aside className="paper-card rounded-3xl p-5"><h2 className="serif text-xl font-semibold">Source & Context</h2><p className="mt-2 text-xs leading-5 text-[#68736f]">{sources.length}個の不変Source Version</p><div className="mt-4 max-h-64 space-y-2 overflow-y-auto">{sources.length ? sources.map(source => <button key={source.id} type="button" onClick={() => source.paper_id && onOpenPaper(source.paper_id)} disabled={!source.paper_id} className="w-full rounded-xl border border-[#deddd5] bg-white/70 p-3 text-left text-xs disabled:cursor-default"><span className="font-bold text-[#35634f]">{source.kind}</span><p className="mt-1 break-all text-[#52605b]">{source.locator}</p><p className="mt-1 font-mono text-[9px] text-[#89918e]">{source.content_hash.slice(0, 12)}…</p></button>) : <p className="text-xs leading-5 text-[#7a837f]">まだSource Versionはありません。下のフォームから原典テキストを登録できます。</p>}</div>
         <form onSubmit={importSource} className="mt-5 border-t border-[#deddd5] pt-5"><h3 className="text-sm font-semibold text-[#26342e]">Sourceテキストを登録</h3><p className="mt-1 text-[10px] leading-4 text-[#68736f]">本文からSpanを抽出し、ブラウザで算出したSHA-256と照合して不変のSourceとして保存します（UTF-8で5MBまで）。</p>{!canWrite && <p className="mt-3 rounded-lg bg-amber-50 p-2 text-[10px] leading-4 text-amber-800">viewer権限ではSourceを登録できません。</p>}<label className="mt-4 block text-[10px] font-bold text-[#52605b]" htmlFor="graph-source-kind">形式</label><select id="graph-source-kind" value={sourceKind} disabled={!canWrite || sourceImporting} onChange={event => setSourceKind(event.target.value as SourceKind)} className="mt-1 w-full rounded-xl border border-[#d5d8d2] bg-white px-3 py-2 text-xs disabled:opacity-50">{SOURCE_KINDS.map(kind => <option key={kind} value={kind}>{kind}</option>)}</select><label className="mt-3 block text-[10px] font-bold text-[#52605b]" htmlFor="graph-source-locator">出所・Locator</label><input id="graph-source-locator" value={sourceLocator} disabled={!canWrite || sourceImporting} onChange={event => setSourceLocator(event.target.value)} maxLength={4000} placeholder="例: repo://model.py@abc123" className="mt-1 w-full rounded-xl border border-[#d5d8d2] bg-white px-3 py-2 text-xs disabled:opacity-50"/><label className="mt-3 block text-[10px] font-bold text-[#52605b]" htmlFor="graph-source-content">本文</label><textarea id="graph-source-content" value={sourceContent} disabled={!canWrite || sourceImporting} onChange={event => setSourceContent(event.target.value)} maxLength={MAX_SOURCE_BYTES} rows={6} placeholder="LaTeX、コード、Notebookのセル、CSV、対話ログ、Markdownを貼り付け" className="mt-1 w-full resize-y rounded-xl border border-[#d5d8d2] bg-white px-3 py-2 text-xs leading-5 disabled:opacity-50"/><button disabled={!canWrite || !sourceLocator.trim() || !sourceContent.trim() || sourceImporting} className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-[#164f3b] px-3 py-2 text-xs font-semibold text-white disabled:opacity-40"><PlusIcon className="h-3.5 w-3.5"/>{sourceImporting ? "登録・解析中…" : "Sourceを登録"}</button>{sourceNotice && <p role="status" className="mt-3 text-[10px] leading-4 text-[#35634f]">{sourceNotice}</p>}</form></aside>
-      <div className="min-w-0">{loading ? <div role="status" className="grid min-h-[500px] place-items-center rounded-3xl border border-[#d8ded9] text-sm text-[#68736f]">知識グラフを読み込んでいます…</div> : <GraphCanvas nodes={canvasNodes} edges={canvasEdges} selectedNodeIds={selectedNodeIds} onNodeSelect={toggleSelectedNode} onEdgeSelect={selectEdge}/>}<p className="mt-2 text-center text-[10px] text-[#68736f]">{selectedNodeIds.length}件を選択中 · ノードを複数選択すると、右のフォームへsource / targetが入ります。エッジを選ぶと右側で状態を確認・更新できます。</p></div>
+      <div className="min-w-0">{loading ? <div role="status" className="grid min-h-[500px] place-items-center rounded-3xl border border-[#d8ded9] text-sm text-[#68736f]">知識グラフを読み込んでいます…</div> : <GraphCanvas nodes={canvasNodes} edges={canvasEdges} selectedNodeIds={selectedNodeIds} highlightedNodeIds={expansionNodeIds} highlightedEdgeIds={expansionEdgeIds} onNodeSelect={toggleSelectedNode} onEdgeSelect={selectEdge}/>}<p className="mt-2 text-center text-[10px] text-[#68736f]">{selectedNodeIds.length}件を選択中 · ノードを選ぶと、有効・検証済みの関係を最大2 hopまで強調表示します。複数選択すると右のフォームへsource / targetが入ります。</p></div>
           <aside className="paper-card rounded-3xl p-5">
             <h2 className="serif text-xl font-semibold">Node Inspector</h2>
-            {selected ? <div className="mt-4 space-y-4"><div><p className="text-[10px] font-bold uppercase tracking-wider text-[#7a837f]">{selected.node_type} · {selected.status}</p><p className="mt-2 text-sm leading-6 text-[#26342e]">{selected.content}</p></div><dl className="space-y-2 text-xs"><div><dt className="text-[#7a837f]">Phase</dt><dd>{selected.phase}</dd></div><div><dt className="text-[#7a837f]">Confidence</dt><dd>{selected.confidence ?? "未評価"}</dd></div><div><dt className="text-[#7a837f]">Evidence anchors</dt><dd>{(selected.evidence ?? []).length ? (selected.evidence ?? []).map(item => <p key={item.source_span_id} className="mt-1 break-all font-mono text-[10px] text-[#52605b]">span:{item.source_span_id}</p>) : <span className="text-[#a06a28]">生成物・メモ（原典根拠は未接続）</span>}</dd></div></dl></div> : <p className="mt-4 text-sm text-[#68736f]">ノードを選ぶと、型・状態・根拠アンカーを確認できます。</p>}
+            {selected ? <div className="mt-4 space-y-4"><div><p className="text-[10px] font-bold uppercase tracking-wider text-[#7a837f]">{selected.node_type} · {selected.status}</p><p className="mt-2 text-sm leading-6 text-[#26342e]">{selected.content}</p></div><dl className="space-y-2 text-xs"><div><dt className="text-[#7a837f]">Phase</dt><dd>{selected.phase}</dd></div><div><dt className="text-[#7a837f]">Confidence</dt><dd>{selected.confidence ?? "未評価"}</dd></div><div><dt className="text-[#7a837f]">Evidence anchors</dt><dd>{(selected.evidence ?? []).length ? (selected.evidence ?? []).map(item => <p key={item.source_span_id} className="mt-1 break-all font-mono text-[10px] text-[#52605b]">span:{item.source_span_id}</p>) : <span className="text-[#a06a28]">生成物・メモ（原典根拠は未接続）</span>}</dd></div></dl>
+              <section className="border-t border-[#deddd5] pt-4" aria-labelledby="node-status-title"><h3 id="node-status-title" className="text-sm font-semibold text-[#26342e]">ノードの状態</h3>{!canWrite && <p className="mt-2 rounded-lg bg-amber-50 p-2 text-[10px] leading-4 text-amber-800">viewer権限ではノードの状態を変更できません。</p>}<form onSubmit={updateNodeStatus} className="mt-3 space-y-3"><label htmlFor="node-status" className="block text-[10px] font-bold text-[#52605b]">新しい状態</label><select id="node-status" value={nodeStatus} disabled={!canWrite || nodeStatusUpdating} onChange={event => setNodeStatus(event.target.value as KnowledgeNodeStatusUpdate["status"])} className="w-full rounded-xl border border-[#d5d8d2] bg-white px-3 py-2 text-xs disabled:opacity-50">{NODE_STATUSES.map(status => <option key={status} value={status}>{status}</option>)}</select><button disabled={!canWrite || nodeStatusUpdating || nodeStatus === selected.status} className="rounded-full bg-[#164f3b] px-3 py-2 text-xs font-semibold text-white disabled:opacity-40">{nodeStatusUpdating ? "更新中…" : "ノード状態を更新"}</button>{nodeStatusNotice && <p role="status" className="text-[10px] leading-4 text-[#35634f]">{nodeStatusNotice}</p>}</form></section>
+              <section className="border-t border-[#deddd5] pt-4" aria-labelledby="node-expansion-title"><div className="flex items-center justify-between gap-2"><h3 id="node-expansion-title" className="text-sm font-semibold text-[#26342e]">根拠の順伝播</h3><button type="button" onClick={() => void expandNode(selected)} disabled={expanding} className="rounded-full border border-[#164f3b] px-3 py-1.5 text-[10px] font-semibold text-[#164f3b] disabled:opacity-40">{expanding ? "展開中…" : "再展開"}</button></div><p className="mt-1 text-[10px] leading-4 text-[#68736f]">有効・検証済みの関係だけを、最大2 hopまで表示します。候補はグラフを変更しません。</p>{expansionNotice && <p role="status" className="mt-2 text-[10px] leading-4 text-[#35634f]">{expansionNotice}</p>}{expansion.length > 1 && <ol className="mt-3 space-y-2">{expansion.filter(hit => hit.node.id !== selected.id).map(hit => <li key={hit.node.id} className="rounded-lg border border-[#ead9b8] bg-[#fffaf1] p-2 text-[10px] leading-4"><p className="font-semibold text-[#26342e]">{label(hit.node.content)}</p><p className="mt-1 text-[#68736f]">{hit.hop_count} hop · {hit.retrieval_reason.replace(/^selected_node; ?/, "")} · score {hit.score.toFixed(2)}</p></li>)}</ol>}</section>
+            </div> : <p className="mt-4 text-sm text-[#68736f]">ノードを選ぶと、型・状態・根拠アンカーを確認できます。</p>}
             <section className="mt-6 border-t border-[#deddd5] pt-5" aria-labelledby="edge-inspector-title">
               <h3 id="edge-inspector-title" className="text-sm font-semibold text-[#26342e]">Edge Inspector</h3>
               {selectedEdge ? <div className="mt-3 space-y-3"><dl className="grid grid-cols-2 gap-2 text-xs"><div><dt className="text-[#7a837f]">Status</dt><dd className="font-semibold text-[#26342e]">{selectedEdge.status}</dd></div><div><dt className="text-[#7a837f]">Origin</dt><dd className="font-semibold text-[#26342e]">{selectedEdge.origin}</dd></div><div className="col-span-2"><dt className="text-[#7a837f]">Relation</dt><dd className="font-semibold text-[#26342e]">{selectedEdge.relation}</dd></div></dl>

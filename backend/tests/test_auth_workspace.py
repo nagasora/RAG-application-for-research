@@ -210,6 +210,109 @@ def test_request_user_id_is_ignored_and_membership_prevents_idor(tmp_path):
         main.app.dependency_overrides.clear()
 
 
+def test_workspace_owner_can_manage_members_without_leaking_orphans(tmp_path):
+    setup_app(tmp_path)
+    try:
+        with TestClient(main.app) as client:
+            workspace = client.post(
+                "/api/workspaces", headers={"X-Dev-User": "alice"}, json={"name": "Shared Lab"},
+            ).json()
+            # A collaborator is discoverable only after their identity is provisioned.
+            client.get("/api/me", headers={"X-Dev-User": "bob"})
+            missing = client.post(
+                f"/api/workspaces/{workspace['id']}/members",
+                headers={"X-Dev-User": "alice"},
+                json={"subject": "not-signed-in", "role": "editor"},
+            )
+            created = client.post(
+                f"/api/workspaces/{workspace['id']}/members",
+                headers={"X-Dev-User": "alice"},
+                json={"subject": "bob", "role": "editor"},
+            )
+            duplicate = client.post(
+                f"/api/workspaces/{workspace['id']}/members",
+                headers={"X-Dev-User": "alice"},
+                json={"subject": "bob", "role": "viewer"},
+            )
+            members_for_bob = client.get(
+                f"/api/workspaces/{workspace['id']}/members", headers={"X-Dev-User": "bob"},
+            )
+            editor_add = client.post(
+                f"/api/workspaces/{workspace['id']}/members",
+                headers={"X-Dev-User": "bob"},
+                json={"subject": "alice", "role": "viewer"},
+            )
+            promoted = client.patch(
+                f"/api/workspaces/{workspace['id']}/members/{created.json()['user']['id']}",
+                headers={"X-Dev-User": "alice"}, json={"role": "owner"},
+            )
+            demoted = client.patch(
+                f"/api/workspaces/{workspace['id']}/members/{created.json()['user']['id']}",
+                headers={"X-Dev-User": "alice"}, json={"role": "viewer"},
+            )
+            removed = client.delete(
+                f"/api/workspaces/{workspace['id']}/members/{created.json()['user']['id']}",
+                headers={"X-Dev-User": "alice"},
+            )
+            after_remove = client.get(
+                f"/api/workspaces/{workspace['id']}/members", headers={"X-Dev-User": "alice"},
+            )
+
+        assert missing.status_code == 404
+        assert created.status_code == 201
+        assert created.json()["user"]["subject"] == "bob"
+        assert created.json()["role"] == "editor"
+        assert duplicate.status_code == 409
+        assert members_for_bob.status_code == 200
+        assert {member["user"]["subject"] for member in members_for_bob.json()} == {"alice", "bob"}
+        assert editor_add.status_code == 403
+        assert promoted.status_code == 200
+        assert promoted.json()["role"] == "owner"
+        assert demoted.status_code == 200
+        assert demoted.json()["role"] == "viewer"
+        assert removed.status_code == 204
+        assert [member["user"]["subject"] for member in after_remove.json()] == ["alice"]
+    finally:
+        main.app.dependency_overrides.clear()
+
+
+def test_member_administration_requires_an_owner_and_preserves_an_owner(tmp_path):
+    setup_app(tmp_path)
+    try:
+        with TestClient(main.app) as client:
+            workspace = client.post(
+                "/api/workspaces", headers={"X-Dev-User": "alice"}, json={"name": "Shared Lab"},
+            ).json()
+            client.get("/api/me", headers={"X-Dev-User": "bob"})
+            bob = client.post(
+                f"/api/workspaces/{workspace['id']}/members",
+                headers={"X-Dev-User": "alice"}, json={"subject": "bob", "role": "viewer"},
+            ).json()
+            viewer_change = client.patch(
+                f"/api/workspaces/{workspace['id']}/members/{bob['user']['id']}",
+                headers={"X-Dev-User": "bob"}, json={"role": "editor"},
+            )
+            # Obtain Alice's stable ID from the member list rather than treating a workspace field as a user ID.
+            members = client.get(
+                f"/api/workspaces/{workspace['id']}/members", headers={"X-Dev-User": "alice"},
+            ).json()
+            alice_id = next(item["user"]["id"] for item in members if item["user"]["subject"] == "alice")
+            protected_demote = client.patch(
+                f"/api/workspaces/{workspace['id']}/members/{alice_id}",
+                headers={"X-Dev-User": "alice"}, json={"role": "viewer"},
+            )
+            invalid_target = client.post(
+                f"/api/workspaces/{workspace['id']}/members",
+                headers={"X-Dev-User": "alice"}, json={"subject": "bob", "email": "bob@example.test"},
+            )
+
+        assert viewer_change.status_code == 403
+        assert protected_demote.status_code == 403
+        assert invalid_target.status_code == 422
+    finally:
+        main.app.dependency_overrides.clear()
+
+
 def test_static_dev_bearer_requires_explicit_user_and_token(tmp_path, monkeypatch):
     setup_app(tmp_path)
     monkeypatch.setenv("DEV_AUTH_USER", "token-user")

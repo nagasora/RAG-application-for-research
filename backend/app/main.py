@@ -28,12 +28,13 @@ from pypdf import PdfReader
 from .auth import get_current_principal
 from .agentic_rag import AgenticRAG
 from .models import (
-    AnalysisRequest, Chunk, ComparisonRow, ExternalPaperRequest, LLMStatus, MeResponse, Paper, PaperDetail,
+    AnalysisRequest, Chunk, ComparisonRow, ExternalPaperRequest, LLMStatus, MeResponse, Paper, PaperDetail, PaperMarkdownSummary,
     DocumentElement, IngestionJob, Note, NoteCreate, NoteUpdate, PaperPage, PaperSummary, PaperTagsUpdate, Principal,
     ResearchGap, SavedComparison, SavedComparisonCreate, SearchHistory, SearchRequest,
     SearchResponse, Tag, TagCreate, UploadResult, User, Workspace, WorkspaceCreate,
     ResearchConversation, ResearchConversationCreate, ResearchConversationDetail,
     ResearchMemoryPage, ResearchMessagePage,
+    WorkspaceMember, WorkspaceMemberCreate, WorkspaceMemberUpdate,
     CanvasLayout, CanvasLayoutUpdate, GraphRetrieveRequest, GraphRetrievalHit,
     GraphSnapshot, KnowledgeEdge, KnowledgeEdgeCreate, KnowledgeEdgeStatusUpdate, KnowledgeNode,
     KnowledgeNodeCreate, KnowledgeNodeStatusResult, KnowledgeNodeStatusUpdate, NodeFeedback,
@@ -48,7 +49,11 @@ from .rag import (
 )
 from .ingestion import process_ingestion_job
 from .storage import ImmutableObjectExists, LocalOriginalStorage, OriginalStorage
-from .store import DuplicatePaperError, PaperNotFoundError, PaperStore, ResourceConflictError, WorkspaceAccessError, WorkspacePermissionError
+from .store import (
+    DuplicatePaperError, PaperNotFoundError, PaperStore, ResourceConflictError,
+    WorkspaceAccessError, WorkspaceMemberConflictError, WorkspaceMemberNotFoundError,
+    WorkspacePermissionError,
+)
 
 load_dotenv()
 
@@ -104,14 +109,15 @@ def _classify_llm_failure(exc: Exception) -> FallbackReason:
     return "model_api_error"
 
 
-def _build_agentic_chat_model(timeout_seconds: float = 12.0):
+def _build_agentic_chat_model(timeout_seconds: float = 18.0):
     from langchain_openai import ChatOpenAI
 
     return ChatOpenAI(
         model=ANSWER_MODEL,
         api_key=os.environ["OPENAI_API_KEY"],
-        # Respect the Agentic RAG stage budget. The previous 12-second cap cut
-        # gpt-5.4-nano off before its 16-second generation window completed.
+        # Respect the Agentic RAG stage budget. Keep the initial client usable
+        # for the 16-second generation stage; _ask still supplies a smaller
+        # timeout for planning and verification calls.
         timeout=max(0.5, min(timeout_seconds, 20.0)),
         # The request-level deadline owns retries. SDK retries can otherwise
         # consume the whole response budget before a local fallback is returned.
@@ -146,6 +152,7 @@ def _positive_float_env(name: str, default: float) -> float:
 
 MAX_UPLOAD_FILES = _positive_int_env("MAX_UPLOAD_FILES", 10)
 RAG_REQUEST_DEADLINE_SECONDS = _positive_float_env("RAG_REQUEST_DEADLINE_SECONDS", 25.0)
+PAPER_SUMMARY_DEADLINE_SECONDS = _positive_float_env("PAPER_SUMMARY_DEADLINE_SECONDS", 16.0)
 MAX_UPLOAD_BYTES = _positive_int_env("MAX_UPLOAD_BYTES", 25 * 1024 * 1024)
 MAX_PDF_PAGES = _positive_int_env("MAX_PDF_PAGES", 300)
 READ_CHUNK_BYTES = 1024 * 1024
@@ -157,11 +164,24 @@ def _store_for_url(database_url: str) -> PaperStore:
     return PaperStore(database_url)
 
 
+def _sqlalchemy_database_url(database_url: str) -> str:
+    """Accept the standard PostgreSQL URL exposed by managed providers.
+
+    Render Postgres exposes ``postgresql://`` URLs, while this application uses
+    SQLAlchemy with psycopg 3 and therefore needs the explicit
+    ``postgresql+psycopg://`` dialect.  Keep already-explicit URLs unchanged so
+    local and other managed deployments retain their configured driver.
+    """
+    if database_url.startswith("postgresql://"):
+        return f"postgresql+psycopg://{database_url.removeprefix('postgresql://')}"
+    return database_url
+
+
 def get_store() -> PaperStore:
     database_url = os.getenv("DATABASE_URL")
     if not database_url:
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
-    return _store_for_url(database_url)
+    return _store_for_url(_sqlalchemy_database_url(database_url))
 
 
 @lru_cache(maxsize=4)
@@ -323,6 +343,87 @@ def rename_workspace(
         raise HTTPException(status_code=404, detail="workspace not found") from exc
     except WorkspacePermissionError as exc:
         raise HTTPException(status_code=403, detail="workspace owner role is required") from exc
+
+
+def _require_member_workspace_access(store: PaperStore, user_id: str, workspace_id: str) -> Workspace:
+    """Resolve path-scoped workspaces without leaking inaccessible workspace IDs."""
+    try:
+        return store.resolve_workspace(user_id, workspace_id)
+    except WorkspaceAccessError as exc:
+        raise HTTPException(status_code=404, detail="workspace not found") from exc
+
+
+@app.get("/api/workspaces/{workspace_id}/members", response_model=list[WorkspaceMember])
+def list_workspace_members(
+    workspace_id: str,
+    current: CurrentUser = Depends(get_current_user),
+    store: PaperStore = Depends(get_store),
+) -> list[WorkspaceMember]:
+    _require_member_workspace_access(store, current.user.id, workspace_id)
+    return store.list_workspace_members(workspace_id)
+
+
+@app.post("/api/workspaces/{workspace_id}/members", response_model=WorkspaceMember, status_code=201)
+def add_workspace_member(
+    workspace_id: str,
+    body: WorkspaceMemberCreate,
+    current: CurrentUser = Depends(get_current_user),
+    store: PaperStore = Depends(get_store),
+) -> WorkspaceMember:
+    try:
+        return store.add_workspace_member_for_owner(
+            current.user.id, workspace_id, issuer=current.user.issuer,
+            email=body.email, subject=body.subject, role=body.role,
+        )
+    except WorkspaceAccessError as exc:
+        raise HTTPException(status_code=404, detail="workspace not found") from exc
+    except WorkspacePermissionError as exc:
+        raise HTTPException(status_code=403, detail="workspace owner role is required") from exc
+    except WorkspaceMemberNotFoundError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="member was not found; they must sign in once before being added",
+        ) from exc
+    except WorkspaceMemberConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.patch("/api/workspaces/{workspace_id}/members/{member_user_id}", response_model=WorkspaceMember)
+def update_workspace_member(
+    workspace_id: str,
+    member_user_id: str,
+    body: WorkspaceMemberUpdate,
+    current: CurrentUser = Depends(get_current_user),
+    store: PaperStore = Depends(get_store),
+) -> WorkspaceMember:
+    try:
+        return store.update_workspace_member_for_owner(
+            current.user.id, workspace_id, member_user_id, role=body.role,
+        )
+    except WorkspaceAccessError as exc:
+        raise HTTPException(status_code=404, detail="workspace not found") from exc
+    except WorkspaceMemberNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="workspace member not found") from exc
+    except WorkspacePermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@app.delete("/api/workspaces/{workspace_id}/members/{member_user_id}", status_code=204)
+def remove_workspace_member(
+    workspace_id: str,
+    member_user_id: str,
+    current: CurrentUser = Depends(get_current_user),
+    store: PaperStore = Depends(get_store),
+) -> Response:
+    try:
+        store.remove_workspace_member_for_owner(current.user.id, workspace_id, member_user_id)
+    except WorkspaceAccessError as exc:
+        raise HTTPException(status_code=404, detail="workspace not found") from exc
+    except WorkspaceMemberNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="workspace member not found") from exc
+    except WorkspacePermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    return Response(status_code=204)
 
 
 @app.get("/api/papers", response_model=list[PaperSummary])
@@ -651,6 +752,96 @@ def filtered_papers(body: SearchRequest, store: PaperStore, workspace_id: str) -
     return papers
 
 
+def _paper_summary_citations(paper: Paper, limit: int = 6) -> list:
+    """Pick bounded, page-addressable evidence without invoking a search model."""
+    ordered = sorted(paper.chunks, key=lambda chunk: (chunk.page, chunk.id))
+    if len(ordered) > limit:
+        # Keep the opening material plus evenly spaced later pages so a long
+        # paper's summary is not exclusively about its introduction.
+        positions = sorted({round(index * (len(ordered) - 1) / (limit - 1)) for index in range(limit)})
+        ordered = [ordered[position] for position in positions]
+    return citations_from([(paper, chunk, 1.0 - index * 0.01) for index, chunk in enumerate(ordered)], query=None)
+
+
+def _local_paper_markdown_summary(paper: Paper, citations: list) -> str:
+    if not citations:
+        return "## 要約\n\n本文から要約に必要な抜粋を取得できませんでした。"
+    bullets = "\n".join(f"- {citation.excerpt[:420]} [{citation.index}]" for citation in citations)
+    return (
+        f"## {paper.title} の要約\n\n"
+        "### 原文から確認できる要点\n\n"
+        f"{bullets}\n\n"
+        "### 利用上の注意\n\n"
+        "これはLLMを使わない抽出要約です。数式・数値・前提は各引用ページの原文で確認してください。"
+    )
+
+
+def _generate_paper_summary_with_llm(paper: Paper, citations: list, timeout_seconds: float) -> str:
+    """Generate one bounded Markdown summary; the caller owns fallback policy."""
+    from openai import OpenAI
+
+    evidence = "\n\n".join(
+        f"[{citation.index}] {citation.paper_title}, p.{citation.page}, {citation.section}\n{citation.excerpt}"
+        for citation in citations
+    )
+    response = OpenAI(
+        api_key=os.environ["OPENAI_API_KEY"],
+        timeout=max(0.5, min(timeout_seconds, 20.0)),
+        max_retries=0,
+    ).responses.create(
+        model=ANSWER_MODEL,
+        store=False,
+        instructions=(
+            "あなたは研究論文を要約するアシスタントです。日本語Markdownで簡潔に書いてください。"
+            "見出しは『要点』『手法・根拠』『限界・確認事項』を基本にし、根拠にある事実には直後に [1] の形式で引用を付けます。"
+            "根拠にない事実・数値は追加しません。数式が根拠に含まれるときだけ、原表記を壊さずLaTeXの $...$ または $$...$$ で示します。"
+        ),
+        input=f"論文タイトル: {paper.title}\n\n根拠:\n{evidence}",
+    )
+    return response.output_text.strip()
+
+
+@app.post("/api/papers/{paper_id}/summary", response_model=PaperMarkdownSummary)
+def summarize_paper(
+    paper_id: str,
+    store: PaperStore = Depends(get_store),
+    context: WorkspaceContext = Depends(get_workspace_context),
+):
+    """Summarize one ready paper with bounded, page-linked evidence."""
+    require_workspace_write(context)
+    try:
+        paper = store.get_owned(context.workspace.id, paper_id)
+    except PaperNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="論文が見つかりません") from exc
+    if paper.status != "ready" or not paper.chunks:
+        raise HTTPException(status_code=422, detail="解析完了した本文のある論文だけを要約できます")
+    citations = _paper_summary_citations(paper)
+    if not os.getenv("OPENAI_API_KEY"):
+        return PaperMarkdownSummary(
+            paper_id=paper.id, title=paper.title,
+            summary=_local_paper_markdown_summary(paper, citations), citations=citations,
+            generation_mode="local_fallback", model=None, fallback_reason="api_key_missing",
+        )
+    try:
+        rendered = _generate_paper_summary_with_llm(paper, citations, PAPER_SUMMARY_DEADLINE_SECONDS)
+        if not rendered:
+            raise RuntimeError("empty summary response")
+        _set_last_llm_failure(None)
+        return PaperMarkdownSummary(
+            paper_id=paper.id, title=paper.title, summary=rendered, citations=citations,
+            generation_mode="llm", model=ANSWER_MODEL,
+        )
+    except Exception as exc:
+        reason = _classify_llm_failure(exc)
+        _set_last_llm_failure(reason)
+        logger.warning("paper_summary_fallback code=%s exception=%s", reason, exc.__class__.__name__)
+        return PaperMarkdownSummary(
+            paper_id=paper.id, title=paper.title,
+            summary=_local_paper_markdown_summary(paper, citations), citations=citations,
+            generation_mode="local_fallback", model=None, fallback_reason=reason,
+        )
+
+
 @app.post("/api/search", response_model=SearchResponse)
 def answer(
     body: SearchRequest,
@@ -761,6 +952,13 @@ def _persist_search_history_best_effort(
         # History is auxiliary. Never turn a committed conversation answer into
         # a failed API/SSE response, and never log query, answer, or DB details.
         logger.warning("code=search_history_write_failed")
+
+
+def _initial_conversation_title(query: str) -> str:
+    """Produce a stable, readable title without an extra model request."""
+    compact = " ".join(query.split())
+    maximum = 64
+    return compact if len(compact) <= maximum else compact[: maximum - 1].rstrip() + "…"
 
 
 def _answer(
@@ -901,7 +1099,11 @@ def create_research_conversation(
     context: WorkspaceContext = Depends(get_workspace_context),
 ):
     require_workspace_write(context)
-    return store.create_conversation(context.workspace.id, context.user.id, body.title)
+    # The Ask UI sends its first question as title.  Normalizing it here keeps
+    # titles deterministic even for non-UI API clients, without an LLM call.
+    return store.create_conversation(
+        context.workspace.id, context.user.id, _initial_conversation_title(body.title),
+    )
 
 
 @app.get("/api/research/conversations/{conversation_id}", response_model=ResearchConversationDetail)
@@ -1087,7 +1289,10 @@ def create_graph_source(
         calculated_hash = hashlib.sha256(body.content.encode("utf-8")).hexdigest()
         if calculated_hash != content_hash:
             raise HTTPException(status_code=422, detail="content_hash does not match source content")
-        storage_key = f"originals/sources/{content_hash}/source.txt"
+        # Source Version content is immutable, but unlike a paper original it is
+        # created by the API after ingestion.  Keep it in the API-writable asset
+        # root so a production deployment can mount paper originals read-only.
+        storage_key = f"assets/sources/{content_hash}/source.txt"
         try:
             originals.put(storage_key, body.content.encode("utf-8"))
         except ImmutableObjectExists:
@@ -1128,7 +1333,9 @@ def import_graph_source(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if len(parsed.spans) > 10_000:
         raise HTTPException(status_code=413, detail="parsed source has too many spans")
-    storage_key = f"originals/sources/{content_hash}/source.txt"
+    # See create_graph_source: imported Source Versions must not depend on the
+    # read-mostly original-paper mount being writable.
+    storage_key = f"assets/sources/{content_hash}/source.txt"
     try:
         originals.put(storage_key, encoded)
     except ImmutableObjectExists:
