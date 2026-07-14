@@ -4,6 +4,426 @@
  */
 
 export interface paths {
+    "/api/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Health */
+        get: operations["health_api_health_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Me */
+        get: operations["me_api_me_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/llm/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Llm Status */
+        get: operations["llm_status_api_llm_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Workspaces */
+        get: operations["list_workspaces_api_workspaces_get"];
+        put?: never;
+        /** Create Workspace */
+        post: operations["create_workspace_api_workspaces_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Workspace
+         * @description Resolve a switch target without exposing inaccessible workspaces.
+         */
+        get: operations["get_workspace_api_workspaces__workspace_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Rename Workspace */
+        patch: operations["rename_workspace_api_workspaces__workspace_id__patch"];
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Workspace Members */
+        get: operations["list_workspace_members_api_workspaces__workspace_id__members_get"];
+        put?: never;
+        /** Add Workspace Member */
+        post: operations["add_workspace_member_api_workspaces__workspace_id__members_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/members/{member_user_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove Workspace Member */
+        delete: operations["remove_workspace_member_api_workspaces__workspace_id__members__member_user_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Workspace Member */
+        patch: operations["update_workspace_member_api_workspaces__workspace_id__members__member_user_id__patch"];
+        trace?: never;
+    };
+    "/api/papers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Papers */
+        get: operations["list_papers_api_papers_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/papers/upload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Upload Papers */
+        post: operations["upload_papers_api_papers_upload_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/papers/external": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Add External Paper */
+        post: operations["add_external_paper_api_papers_external_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/papers/{paper_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Paper Detail */
+        get: operations["get_paper_detail_api_papers__paper_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete Paper */
+        delete: operations["delete_paper_api_papers__paper_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/papers/{paper_id}/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Paper File */
+        get: operations["get_paper_file_api_papers__paper_id__file_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/papers/{paper_id}/pages/{page}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Paper Page */
+        get: operations["get_paper_page_api_papers__paper_id__pages__page__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/papers/{paper_id}/chunks/{chunk_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Paper Chunk */
+        get: operations["get_paper_chunk_api_papers__paper_id__chunks__chunk_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/jobs/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Ingestion Job */
+        get: operations["get_ingestion_job_api_jobs__job_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/papers/{paper_id}/assets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Paper Assets */
+        get: operations["get_paper_assets_api_papers__paper_id__assets_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/papers/{paper_id}/assets/{element_id}/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Figure Asset */
+        get: operations["get_figure_asset_api_papers__paper_id__assets__element_id__file_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/papers/{paper_id}/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Summarize Paper
+         * @description Summarize one ready paper with bounded, page-linked evidence.
+         */
+        post: operations["summarize_paper_api_papers__paper_id__summary_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Answer */
+        post: operations["answer_api_search_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/research/conversations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Research Conversations */
+        get: operations["list_research_conversations_api_research_conversations_get"];
+        put?: never;
+        /** Create Research Conversation */
+        post: operations["create_research_conversation_api_research_conversations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/research/conversations/{conversation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Research Conversation */
+        get: operations["get_research_conversation_api_research_conversations__conversation_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/research/conversations/{conversation_id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Research Messages Page */
+        get: operations["get_research_messages_page_api_research_conversations__conversation_id__messages_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/research/conversations/{conversation_id}/memory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Research Memory Page */
+        get: operations["get_research_memory_page_api_research_conversations__conversation_id__memory_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/search/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Answer Stream */
+        post: operations["answer_stream_api_search_stream_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/analysis/compare": {
         parameters: {
             query?: never;
@@ -38,58 +458,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/comparisons": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Saved Comparisons */
-        get: operations["list_saved_comparisons_api_comparisons_get"];
-        put?: never;
-        /** Save Comparison */
-        post: operations["save_comparison_api_comparisons_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/comparisons/{comparison_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /** Delete Comparison */
-        delete: operations["delete_comparison_api_comparisons__comparison_id__delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/exports/papers": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Export Papers */
-        get: operations["export_papers_api_exports_papers_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/graph": {
         parameters: {
             query?: never;
@@ -101,160 +469,6 @@ export interface paths {
         get: operations["graph_snapshot_api_graph_get"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/graph/edges": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Create Graph Edge */
-        post: operations["create_graph_edge_api_graph_edges_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/graph/edges/{edge_id}/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        /** Update Graph Edge Status */
-        patch: operations["update_graph_edge_status_api_graph_edges__edge_id__status_patch"];
-        trace?: never;
-    };
-    "/api/graph/nodes": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Graph Nodes */
-        get: operations["list_graph_nodes_api_graph_nodes_get"];
-        put?: never;
-        /** Create Graph Node */
-        post: operations["create_graph_node_api_graph_nodes_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/graph/nodes/{node_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Graph Node */
-        get: operations["get_graph_node_api_graph_nodes__node_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/graph/nodes/{node_id}/feedback": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Add Graph Node Feedback */
-        post: operations["add_graph_node_feedback_api_graph_nodes__node_id__feedback_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/graph/nodes/{node_id}/layout": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /** Update Graph Layout */
-        put: operations["update_graph_layout_api_graph_nodes__node_id__layout_put"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/graph/nodes/{node_id}/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        /** Update Graph Node Status */
-        patch: operations["update_graph_node_status_api_graph_nodes__node_id__status_patch"];
-        trace?: never;
-    };
-    "/api/graph/retrieve": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Retrieve Graph */
-        post: operations["retrieve_graph_api_graph_retrieve_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/graph/runs": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Create Graph Reasoning Run */
-        post: operations["create_graph_reasoning_run_api_graph_runs_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -316,15 +530,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/health": {
+    "/api/graph/nodes": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Health */
-        get: operations["health_api_health_get"];
+        /** List Graph Nodes */
+        get: operations["list_graph_nodes_api_graph_nodes_get"];
+        put?: never;
+        /** Create Graph Node */
+        post: operations["create_graph_node_api_graph_nodes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/graph/nodes/{node_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Graph Node */
+        get: operations["get_graph_node_api_graph_nodes__node_id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -333,16 +565,101 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/jobs/{job_id}": {
+    "/api/graph/nodes/{node_id}/status": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Get Ingestion Job */
-        get: operations["get_ingestion_job_api_jobs__job_id__get"];
+        get?: never;
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update Graph Node Status */
+        patch: operations["update_graph_node_status_api_graph_nodes__node_id__status_patch"];
+        trace?: never;
+    };
+    "/api/graph/edges": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Graph Edge */
+        post: operations["create_graph_edge_api_graph_edges_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/graph/edges/{edge_id}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update Graph Edge Status */
+        patch: operations["update_graph_edge_status_api_graph_edges__edge_id__status_patch"];
+        trace?: never;
+    };
+    "/api/graph/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Graph Reasoning Run */
+        post: operations["create_graph_reasoning_run_api_graph_runs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/graph/nodes/{node_id}/feedback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Add Graph Node Feedback */
+        post: operations["add_graph_node_feedback_api_graph_nodes__node_id__feedback_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/graph/nodes/{node_id}/layout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Graph Layout */
+        put: operations["update_graph_layout_api_graph_nodes__node_id__layout_put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -350,33 +667,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/llm/status": {
+    "/api/graph/retrieve": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Llm Status */
-        get: operations["llm_status_api_llm_status_get"];
+        get?: never;
         put?: never;
-        post?: never;
+        /** Retrieve Graph */
+        post: operations["retrieve_graph_api_graph_retrieve_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/me": {
+    "/api/tags": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Me */
-        get: operations["me_api_me_get"];
+        /** List Tags */
+        get: operations["list_tags_api_tags_get"];
         put?: never;
+        /** Create Tag */
+        post: operations["create_tag_api_tags_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tags/{tag_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Tag */
+        put: operations["update_tag_api_tags__tag_id__put"];
+        post?: never;
+        /** Delete Tag */
+        delete: operations["delete_tag_api_tags__tag_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/papers/{paper_id}/tags": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Paper Tags */
+        get: operations["paper_tags_api_papers__paper_id__tags_get"];
+        /** Set Paper Tags */
+        put: operations["set_paper_tags_api_papers__paper_id__tags_put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -420,264 +774,6 @@ export interface paths {
         patch: operations["update_note_api_notes__note_id__patch"];
         trace?: never;
     };
-    "/api/papers": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Papers */
-        get: operations["list_papers_api_papers_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/papers/external": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Add External Paper */
-        post: operations["add_external_paper_api_papers_external_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/papers/upload": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Upload Papers */
-        post: operations["upload_papers_api_papers_upload_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/papers/{paper_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Paper Detail */
-        get: operations["get_paper_detail_api_papers__paper_id__get"];
-        put?: never;
-        post?: never;
-        /** Delete Paper */
-        delete: operations["delete_paper_api_papers__paper_id__delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/papers/{paper_id}/assets": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Paper Assets */
-        get: operations["get_paper_assets_api_papers__paper_id__assets_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/papers/{paper_id}/assets/{element_id}/file": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Figure Asset */
-        get: operations["get_figure_asset_api_papers__paper_id__assets__element_id__file_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/papers/{paper_id}/chunks/{chunk_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Paper Chunk */
-        get: operations["get_paper_chunk_api_papers__paper_id__chunks__chunk_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/papers/{paper_id}/file": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Paper File */
-        get: operations["get_paper_file_api_papers__paper_id__file_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/papers/{paper_id}/pages/{page}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Paper Page */
-        get: operations["get_paper_page_api_papers__paper_id__pages__page__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/papers/{paper_id}/tags": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Paper Tags */
-        get: operations["paper_tags_api_papers__paper_id__tags_get"];
-        /** Set Paper Tags */
-        put: operations["set_paper_tags_api_papers__paper_id__tags_put"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/research/conversations": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Research Conversations */
-        get: operations["list_research_conversations_api_research_conversations_get"];
-        put?: never;
-        /** Create Research Conversation */
-        post: operations["create_research_conversation_api_research_conversations_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/research/conversations/{conversation_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Research Conversation */
-        get: operations["get_research_conversation_api_research_conversations__conversation_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/research/conversations/{conversation_id}/memory": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Research Memory Page */
-        get: operations["get_research_memory_page_api_research_conversations__conversation_id__memory_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/research/conversations/{conversation_id}/messages": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Research Messages Page */
-        get: operations["get_research_messages_page_api_research_conversations__conversation_id__messages_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/search": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Answer */
-        post: operations["answer_api_search_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/search/history": {
         parameters: {
             query?: never;
@@ -712,7 +808,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/search/stream": {
+    "/api/comparisons": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Saved Comparisons */
+        get: operations["list_saved_comparisons_api_comparisons_get"];
+        put?: never;
+        /** Save Comparison */
+        post: operations["save_comparison_api_comparisons_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/comparisons/{comparison_id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -721,87 +835,29 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Answer Stream */
-        post: operations["answer_stream_api_search_stream_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/tags": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Tags */
-        get: operations["list_tags_api_tags_get"];
-        put?: never;
-        /** Create Tag */
-        post: operations["create_tag_api_tags_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/tags/{tag_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /** Update Tag */
-        put: operations["update_tag_api_tags__tag_id__put"];
         post?: never;
-        /** Delete Tag */
-        delete: operations["delete_tag_api_tags__tag_id__delete"];
+        /** Delete Comparison */
+        delete: operations["delete_comparison_api_comparisons__comparison_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/workspaces": {
+    "/api/exports/papers": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** List Workspaces */
-        get: operations["list_workspaces_api_workspaces_get"];
-        put?: never;
-        /** Create Workspace */
-        post: operations["create_workspace_api_workspaces_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/workspaces/{workspace_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Workspace
-         * @description Resolve a switch target without exposing inaccessible workspaces.
-         */
-        get: operations["get_workspace_api_workspaces__workspace_id__get"];
+        /** Export Papers */
+        get: operations["export_papers_api_exports_papers_get"];
         put?: never;
         post?: never;
         delete?: never;
         options?: never;
         head?: never;
-        /** Rename Workspace */
-        patch: operations["rename_workspace_api_workspaces__workspace_id__patch"];
+        patch?: never;
         trace?: never;
     };
 }
@@ -810,24 +866,24 @@ export interface components {
     schemas: {
         /** AnalysisRequest */
         AnalysisRequest: {
-            /** Paper Ids */
-            paper_ids: string[];
             /** User Id */
             user_id?: string | null;
+            /** Paper Ids */
+            paper_ids: string[];
         };
         /** AnswerClaim */
         AnswerClaim: {
-            /** Citation Ids */
-            citation_ids?: number[];
             /** Claim Id */
             claim_id: string;
+            /** Text */
+            text: string;
             /**
              * Kind
              * @enum {string}
              */
             kind: "paper" | "general" | "hypothesis";
-            /** Text */
-            text: string;
+            /** Citation Ids */
+            citation_ids?: number[];
         };
         /** Body_upload_papers_api_papers_upload_post */
         Body_upload_papers_api_papers_upload_post: {
@@ -838,72 +894,72 @@ export interface components {
         };
         /** CanvasLayout */
         CanvasLayout: {
+            /** Id */
+            id: string;
+            /** Workspace Id */
+            workspace_id: string;
             /**
              * Canvas Id
              * @default default
              */
             canvas_id: string;
-            /**
-             * Collapsed
-             * @default false
-             */
-            collapsed: boolean;
-            /** Height */
-            height?: number | null;
-            /** Id */
-            id: string;
             /** Knowledge Node Id */
             knowledge_node_id: string;
-            /** Updated At */
-            updated_at: string;
-            /** Width */
-            width?: number | null;
-            /** Workspace Id */
-            workspace_id: string;
             /** X */
             x: number;
             /** Y */
             y: number;
+            /** Width */
+            width?: number | null;
+            /** Height */
+            height?: number | null;
             /**
              * Z Index
              * @default 0
              */
             z_index: number;
+            /**
+             * Collapsed
+             * @default false
+             */
+            collapsed: boolean;
+            /** Updated At */
+            updated_at: string;
         };
         /** CanvasLayoutUpdate */
         CanvasLayoutUpdate: {
-            /**
-             * Canvas Id
-             * @default default
-             */
-            canvas_id: string;
-            /**
-             * Collapsed
-             * @default false
-             */
-            collapsed: boolean;
-            /** Height */
-            height?: number | null;
-            /** Width */
-            width?: number | null;
             /** X */
             x: number;
             /** Y */
             y: number;
             /**
+             * Canvas Id
+             * @default default
+             */
+            canvas_id: string;
+            /** Width */
+            width?: number | null;
+            /** Height */
+            height?: number | null;
+            /**
              * Z Index
              * @default 0
              */
             z_index: number;
+            /**
+             * Collapsed
+             * @default false
+             */
+            collapsed: boolean;
         };
         /** Chunk */
         Chunk: {
             /** Id */
             id?: string;
-            /** Page */
-            page: number;
             /** Paper Id */
             paper_id: string;
+            /** Page */
+            page: number;
             /**
              * Section
              * @default 本文
@@ -914,128 +970,128 @@ export interface components {
         };
         /** Citation */
         Citation: {
-            /** Chunk Id */
-            chunk_id: string;
-            /** Excerpt */
-            excerpt: string;
             /** Index */
             index: number;
-            /** Page */
-            page: number;
             /** Paper Id */
             paper_id: string;
             /** Paper Title */
             paper_title: string;
-            /** Score */
-            score: number;
+            /** Chunk Id */
+            chunk_id: string;
+            /** Page */
+            page: number;
             /** Section */
             section: string;
+            /** Excerpt */
+            excerpt: string;
+            /** Score */
+            score: number;
         };
         /** ComparisonRow */
         ComparisonRow: {
-            /** Limitations */
-            limitations: string;
-            /** Method */
-            method: string;
             /** Paper Id */
             paper_id: string;
-            /** Purpose */
-            purpose: string;
-            /** Results */
-            results: string;
             /** Title */
             title: string;
+            /** Purpose */
+            purpose: string;
+            /** Method */
+            method: string;
+            /** Results */
+            results: string;
+            /** Limitations */
+            limitations: string;
         };
         /** DocumentElement */
         DocumentElement: {
-            /** Asset Key */
-            asset_key?: string | null;
-            /** Bbox */
-            bbox?: number[] | null;
             /** Id */
             id: string;
+            /** Paper Id */
+            paper_id: string;
+            /** Page */
+            page: number;
             /**
              * Kind
              * @enum {string}
              */
             kind: "text" | "table" | "figure" | "caption";
-            /** Page */
-            page: number;
-            /** Paper Id */
-            paper_id: string;
-            /** Structured Data */
-            structured_data?: {
-                [key: string]: unknown;
-            } | unknown[] | null;
+            /** Bbox */
+            bbox?: number[] | null;
             /**
              * Text
              * @default
              */
             text: string;
+            /** Structured Data */
+            structured_data?: {
+                [key: string]: unknown;
+            } | unknown[] | null;
+            /** Asset Key */
+            asset_key?: string | null;
         };
         /** EvidenceRef */
         EvidenceRef: {
-            /** Created At */
-            created_at: string;
+            /** Id */
+            id: string;
+            /** Workspace Id */
+            workspace_id: string;
+            /** Source Span Id */
+            source_span_id: string;
+            /** Knowledge Node Id */
+            knowledge_node_id?: string | null;
+            /** Knowledge Edge Id */
+            knowledge_edge_id?: string | null;
             /**
              * Excerpt
              * @default
              */
             excerpt: string;
-            /** Id */
-            id: string;
-            /** Knowledge Edge Id */
-            knowledge_edge_id?: string | null;
-            /** Knowledge Node Id */
-            knowledge_node_id?: string | null;
-            /** Source Span Id */
-            source_span_id: string;
-            /** Workspace Id */
-            workspace_id: string;
+            /** Created At */
+            created_at: string;
         };
         /** ExternalPaperRequest */
         ExternalPaperRequest: {
+            /** User Id */
+            user_id?: string | null;
+            /** Identifier */
+            identifier: string;
+            /** Title */
+            title?: string | null;
+            /** Authors */
+            authors?: string[];
+            /** Year */
+            year?: number | null;
             /**
              * Abstract
              * @default
              */
             abstract: string;
-            /** Authors */
-            authors?: string[];
-            /** Identifier */
-            identifier: string;
-            /** Title */
-            title?: string | null;
-            /** User Id */
-            user_id?: string | null;
-            /** Year */
-            year?: number | null;
         };
         /** GraphRetrievalHit */
         GraphRetrievalHit: {
+            node: components["schemas"]["KnowledgeNode"];
+            /** Score */
+            score: number;
+            /** Retrieval Reason */
+            retrieval_reason: string;
             /** Hop Count */
             hop_count: number;
             /** Hop Path */
             hop_path?: {
                 [key: string]: unknown;
             }[];
-            node: components["schemas"]["KnowledgeNode"];
-            /** Retrieval Reason */
-            retrieval_reason: string;
-            /** Score */
-            score: number;
         };
         /** GraphRetrievalSeed */
         GraphRetrievalSeed: {
+            /** Node Id */
+            node_id: string;
+            /** Relevance */
+            relevance: number;
             /**
              * Confidence
              * @default 1
              */
             confidence: number;
-            /** Node Id */
-            node_id: string;
-            /** Relevance */
-            relevance: number;
             /**
              * Retrieval Reason
              * @default base_retrieval
@@ -1044,6 +1100,13 @@ export interface components {
         };
         /** GraphRetrieveRequest */
         GraphRetrieveRequest: {
+            /** Seeds */
+            seeds: components["schemas"]["GraphRetrievalSeed"][];
+            /**
+             * Top K
+             * @default 8
+             */
+            top_k: number;
             /**
              * Max Degree
              * @default 12
@@ -1054,22 +1117,15 @@ export interface components {
              * @default 16
              */
             max_first_hop_candidates: number;
-            /** Seeds */
-            seeds: components["schemas"]["GraphRetrievalSeed"][];
-            /**
-             * Top K
-             * @default 8
-             */
-            top_k: number;
         };
         /** GraphSnapshot */
         GraphSnapshot: {
+            /** Nodes */
+            nodes?: components["schemas"]["KnowledgeNode"][];
             /** Edges */
             edges?: components["schemas"]["KnowledgeEdge"][];
             /** Layouts */
             layouts?: components["schemas"]["CanvasLayout"][];
-            /** Nodes */
-            nodes?: components["schemas"]["KnowledgeNode"][];
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -1078,71 +1134,75 @@ export interface components {
         };
         /** IngestionJob */
         IngestionJob: {
-            /** Attempts */
-            attempts: number;
-            /** Created At */
-            created_at: string;
-            /** Error Message */
-            error_message?: string | null;
             /** Id */
             id: string;
             /** Paper Id */
             paper_id: string;
-            /** Progress */
-            progress: number;
             /**
              * Status
              * @enum {string}
              */
             status: "queued" | "running" | "succeeded" | "failed";
+            /** Progress */
+            progress: number;
+            /** Attempts */
+            attempts: number;
+            /** Error Message */
+            error_message?: string | null;
+            /** Created At */
+            created_at: string;
             /** Updated At */
             updated_at: string;
         };
         /** KnowledgeEdge */
         KnowledgeEdge: {
-            /** Created At */
-            created_at: string;
-            /** Created By */
-            created_by?: string | null;
-            /** Evidence */
-            evidence?: components["schemas"]["EvidenceRef"][];
             /** Id */
             id: string;
-            /** Metadata */
-            metadata?: {
-                [key: string]: unknown;
-            };
-            /**
-             * Origin
-             * @enum {string}
-             */
-            origin: "manual" | "llm" | "import";
+            /** Workspace Id */
+            workspace_id: string;
+            /** Source Node Id */
+            source_node_id: string;
+            /** Target Node Id */
+            target_node_id: string;
+            /** Created By */
+            created_by?: string | null;
             /**
              * Relation
              * @enum {string}
              */
             relation: "informs" | "supports" | "extends" | "formulates" | "contradicts" | "implements" | "depends_on" | "related";
-            /** Source Node Id */
-            source_node_id: string;
             /**
              * Status
              * @enum {string}
              */
             status: "review_pending" | "active" | "verified" | "rejected" | "superseded" | "review_required" | "pruned";
-            /** Target Node Id */
-            target_node_id: string;
+            /**
+             * Origin
+             * @enum {string}
+             */
+            origin: "manual" | "llm" | "import";
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            };
+            /** Evidence */
+            evidence?: components["schemas"]["EvidenceRef"][];
+            /** Created At */
+            created_at: string;
             /** Updated At */
             updated_at: string;
-            /** Workspace Id */
-            workspace_id: string;
         };
         /** KnowledgeEdgeCreate */
         KnowledgeEdgeCreate: {
+            /** Source Node Id */
+            source_node_id: string;
+            /** Target Node Id */
+            target_node_id: string;
             /**
-             * Evidence Excerpt
-             * @default
+             * Relation
+             * @enum {string}
              */
-            evidence_excerpt: string;
+            relation: "informs" | "supports" | "extends" | "formulates" | "contradicts" | "implements" | "depends_on" | "related";
             /** Evidence Span Ids */
             evidence_span_ids: string[];
             /** Metadata */
@@ -1150,106 +1210,102 @@ export interface components {
                 [key: string]: unknown;
             };
             /**
-             * Relation
-             * @enum {string}
+             * Evidence Excerpt
+             * @default
              */
-            relation: "informs" | "supports" | "extends" | "formulates" | "contradicts" | "implements" | "depends_on" | "related";
-            /** Source Node Id */
-            source_node_id: string;
-            /** Target Node Id */
-            target_node_id: string;
+            evidence_excerpt: string;
         };
         /** KnowledgeEdgeStatusUpdate */
         KnowledgeEdgeStatusUpdate: {
-            /** Reason */
-            reason: string;
             /**
              * Status
              * @enum {string}
              */
             status: "review_pending" | "active" | "verified" | "rejected" | "superseded" | "review_required" | "pruned";
+            /** Reason */
+            reason: string;
         };
         /** KnowledgeNode */
         KnowledgeNode: {
-            /** Confidence */
-            confidence?: number | null;
-            /** Content */
-            content: string;
-            /** Created At */
-            created_at: string;
-            /** Created By */
-            created_by?: string | null;
-            /** Evidence */
-            evidence?: components["schemas"]["EvidenceRef"][];
             /** Id */
             id: string;
-            /** Layer */
-            layer: number;
-            /** Metadata */
-            metadata?: {
-                [key: string]: unknown;
-            };
+            /** Workspace Id */
+            workspace_id: string;
+            /** Created By */
+            created_by?: string | null;
             /**
              * Node Type
              * @enum {string}
              */
             node_type: "source" | "idea" | "constraint" | "hypothesis";
-            /** Phase */
-            phase: string;
             /**
              * Status
              * @enum {string}
              */
             status: "review_pending" | "active" | "verified" | "rejected" | "superseded" | "review_required" | "pruned";
+            /** Layer */
+            layer: number;
+            /** Content */
+            content: string;
+            /** Phase */
+            phase: string;
+            /** Confidence */
+            confidence?: number | null;
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            };
+            /** Evidence */
+            evidence?: components["schemas"]["EvidenceRef"][];
+            /** Created At */
+            created_at: string;
             /** Updated At */
             updated_at: string;
-            /** Workspace Id */
-            workspace_id: string;
         };
         /** KnowledgeNodeCreate */
         KnowledgeNodeCreate: {
-            /** Confidence */
-            confidence?: number | null;
+            /**
+             * Node Type
+             * @enum {string}
+             */
+            node_type: "source" | "idea" | "constraint" | "hypothesis";
             /** Content */
             content: string;
-            /**
-             * Evidence Excerpt
-             * @default
-             */
-            evidence_excerpt: string;
-            /** Evidence Span Ids */
-            evidence_span_ids?: string[];
             /**
              * Layer
              * @default 0
              */
             layer: number;
-            /** Metadata */
-            metadata?: {
-                [key: string]: unknown;
-            };
-            /**
-             * Node Type
-             * @enum {string}
-             */
-            node_type: "source" | "idea" | "constraint" | "hypothesis";
-            /**
-             * Phase
-             * @default unclassified
-             */
-            phase: string;
             /**
              * Status
              * @default review_pending
              * @enum {string}
              */
             status: "review_pending" | "active" | "verified" | "rejected" | "superseded" | "review_required" | "pruned";
+            /**
+             * Phase
+             * @default unclassified
+             */
+            phase: string;
+            /** Confidence */
+            confidence?: number | null;
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            };
+            /** Evidence Span Ids */
+            evidence_span_ids?: string[];
+            /**
+             * Evidence Excerpt
+             * @default
+             */
+            evidence_excerpt: string;
         };
         /** KnowledgeNodeStatusResult */
         KnowledgeNodeStatusResult: {
+            node: components["schemas"]["KnowledgeNode"];
             /** Affected Node Ids */
             affected_node_ids?: string[];
-            node: components["schemas"]["KnowledgeNode"];
         };
         /** KnowledgeNodeStatusUpdate */
         KnowledgeNodeStatusUpdate: {
@@ -1261,39 +1317,30 @@ export interface components {
         };
         /** LLMStatus */
         LLMStatus: {
-            /** Agentic Dependencies Available */
-            agentic_dependencies_available: boolean;
             /** Configured */
             configured: boolean;
-            /** Embedding Model */
-            embedding_model: string;
-            /** Last Failure Code */
-            last_failure_code?: ("api_key_missing" | "dependency_missing" | "no_evidence" | "grounding_failed" | "authentication_failed" | "permission_denied" | "model_not_found" | "rate_limited" | "api_timeout" | "network_error" | "model_api_error" | "deadline_exceeded" | "model_timeout" | "model_unavailable" | "provider_unavailable" | "model_call_failed" | "generation_failed" | "citation_validation_failed" | "grounding_audit_failed" | "repair_failed" | "structured_output_invalid" | "verification_skipped_timeout") | null;
             /** Model */
             model: string;
+            /** Embedding Model */
+            embedding_model: string;
+            /** Agentic Dependencies Available */
+            agentic_dependencies_available: boolean;
+            /** Last Failure Code */
+            last_failure_code?: ("api_key_missing" | "dependency_missing" | "no_evidence" | "grounding_failed" | "authentication_failed" | "permission_denied" | "model_not_found" | "rate_limited" | "api_timeout" | "network_error" | "model_api_error" | "deadline_exceeded" | "model_timeout" | "model_unavailable" | "provider_unavailable" | "model_call_failed" | "generation_failed" | "citation_validation_failed" | "grounding_audit_failed" | "repair_failed" | "structured_output_invalid" | "verification_skipped_timeout") | null;
         };
         /** MeResponse */
         MeResponse: {
-            personal_workspace: components["schemas"]["Workspace"];
             user: components["schemas"]["User"];
+            personal_workspace: components["schemas"]["Workspace"];
         };
         /** NodeFeedback */
         NodeFeedback: {
-            /**
-             * Comment
-             * @default
-             */
-            comment: string;
-            /** Created At */
-            created_at: string;
             /** Id */
             id: string;
+            /** Workspace Id */
+            workspace_id: string;
             /** Knowledge Node Id */
             knowledge_node_id: string;
-            /** Rating */
-            rating?: number | null;
-            /** Updated At */
-            updated_at: string;
             /** User Id */
             user_id: string;
             /**
@@ -1301,105 +1348,131 @@ export interface components {
              * @enum {string}
              */
             verdict: "helpful" | "not_helpful" | "accepted" | "rejected";
-            /** Workspace Id */
-            workspace_id: string;
-        };
-        /** NodeFeedbackCreate */
-        NodeFeedbackCreate: {
+            /** Rating */
+            rating?: number | null;
             /**
              * Comment
              * @default
              */
             comment: string;
-            /** Rating */
-            rating?: number | null;
+            /** Created At */
+            created_at: string;
+            /** Updated At */
+            updated_at: string;
+        };
+        /** NodeFeedbackCreate */
+        NodeFeedbackCreate: {
             /**
              * Verdict
              * @enum {string}
              */
             verdict: "helpful" | "not_helpful" | "accepted" | "rejected";
+            /** Rating */
+            rating?: number | null;
+            /**
+             * Comment
+             * @default
+             */
+            comment: string;
         };
         /** Note */
         Note: {
-            /** Author Id */
-            author_id: string;
-            /** Content */
-            content: string;
-            /** Created At */
-            created_at: string;
             /** Id */
             id: string;
             /** Paper Id */
             paper_id: string | null;
+            /** Author Id */
+            author_id: string;
             /** Title */
             title: string;
+            /** Content */
+            content: string;
+            /** Created At */
+            created_at: string;
             /** Updated At */
             updated_at: string;
         };
         /** NoteCreate */
         NoteCreate: {
-            /** Content */
-            content: string;
             /** Paper Id */
             paper_id?: string | null;
             /** Title */
             title: string;
+            /** Content */
+            content: string;
         };
         /** NoteUpdate */
         NoteUpdate: {
-            /** Content */
-            content?: string | null;
             /** Title */
             title?: string | null;
+            /** Content */
+            content?: string | null;
         };
         /** PaperDetail */
         PaperDetail: {
-            /** Abstract */
-            abstract: string;
+            /** Id */
+            id: string;
+            /** Title */
+            title: string;
             /** Authors */
             authors: string[];
-            /** Byte Size */
-            byte_size?: number | null;
+            /** Year */
+            year: number | null;
+            /** Abstract */
+            abstract: string;
+            /** Source */
+            source: string;
+            /** External Id */
+            external_id: string | null;
+            /** Status */
+            status: string;
+            /** Page Count */
+            page_count: number;
             /** Chunk Count */
             chunk_count: number;
             /** Created At */
             created_at: string;
             /** Error Message */
             error_message?: string | null;
-            /** External Id */
-            external_id: string | null;
-            /** Id */
-            id: string;
-            /** Mime Type */
-            mime_type?: string | null;
-            /** Page Count */
-            page_count: number;
-            /** Source */
-            source: string;
-            /** Status */
-            status: string;
             /** Storage Key */
             storage_key?: string | null;
+            /** Mime Type */
+            mime_type?: string | null;
+            /** Byte Size */
+            byte_size?: number | null;
+        };
+        /**
+         * PaperMarkdownSummary
+         * @description A concise, citation-linked paper summary rendered as Japanese Markdown.
+         */
+        PaperMarkdownSummary: {
+            /** Paper Id */
+            paper_id: string;
             /** Title */
             title: string;
-            /** Year */
-            year: number | null;
+            /** Summary */
+            summary: string;
+            /** Citations */
+            citations?: components["schemas"]["Citation"][];
+            /**
+             * Generation Mode
+             * @default local_fallback
+             * @enum {string}
+             */
+            generation_mode: "llm" | "local_fallback";
+            /** Model */
+            model?: string | null;
+            /** Fallback Reason */
+            fallback_reason?: string | null;
         };
         /** PaperPage */
         PaperPage: {
-            /** Chunks */
-            chunks: components["schemas"]["Chunk"][];
-            /** Elements */
-            elements?: components["schemas"]["DocumentElement"][];
-            /** Page */
-            page: number;
             /** Paper Id */
             paper_id: string;
-            /**
-             * Quality
-             * @default 0
-             */
-            quality: number;
+            /** Page */
+            page: number;
+            /** Chunks */
+            chunks: components["schemas"]["Chunk"][];
             /**
              * Text
              * @default
@@ -1411,33 +1484,40 @@ export interface components {
              * @enum {string}
              */
             text_source: "native" | "ocr" | "none";
+            /**
+             * Quality
+             * @default 0
+             */
+            quality: number;
+            /** Elements */
+            elements?: components["schemas"]["DocumentElement"][];
         };
         /** PaperSummary */
         PaperSummary: {
-            /** Abstract */
-            abstract: string;
+            /** Id */
+            id: string;
+            /** Title */
+            title: string;
             /** Authors */
             authors: string[];
+            /** Year */
+            year: number | null;
+            /** Abstract */
+            abstract: string;
+            /** Source */
+            source: string;
+            /** External Id */
+            external_id: string | null;
+            /** Status */
+            status: string;
+            /** Page Count */
+            page_count: number;
             /** Chunk Count */
             chunk_count: number;
             /** Created At */
             created_at: string;
             /** Error Message */
             error_message?: string | null;
-            /** External Id */
-            external_id: string | null;
-            /** Id */
-            id: string;
-            /** Page Count */
-            page_count: number;
-            /** Source */
-            source: string;
-            /** Status */
-            status: string;
-            /** Title */
-            title: string;
-            /** Year */
-            year: number | null;
         };
         /** PaperTagsUpdate */
         PaperTagsUpdate: {
@@ -1446,47 +1526,43 @@ export interface components {
         };
         /** ReasoningRun */
         ReasoningRun: {
-            /** Created At */
-            created_at: string;
-            /** Created By */
-            created_by?: string | null;
             /** Id */
             id: string;
-            /** Inputs */
-            inputs?: components["schemas"]["ReasoningRunLink"][];
-            /** Metadata */
-            metadata?: {
-                [key: string]: unknown;
-            };
+            /** Workspace Id */
+            workspace_id: string;
+            /** Created By */
+            created_by?: string | null;
             /** Operator */
             operator: string;
-            /** Outputs */
-            outputs?: components["schemas"]["ReasoningRunLink"][];
-            /**
-             * Prompt
-             * @default
-             */
-            prompt: string;
             /**
              * Status
              * @enum {string}
              */
             status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
-            /** Updated At */
-            updated_at: string;
-            /** Workspace Id */
-            workspace_id: string;
-        };
-        /** ReasoningRunCreate */
-        ReasoningRunCreate: {
-            /** Input Node Ids */
-            input_node_ids?: string[];
+            /**
+             * Prompt
+             * @default
+             */
+            prompt: string;
             /** Metadata */
             metadata?: {
                 [key: string]: unknown;
             };
+            /** Inputs */
+            inputs?: components["schemas"]["ReasoningRunLink"][];
+            /** Outputs */
+            outputs?: components["schemas"]["ReasoningRunLink"][];
+            /** Created At */
+            created_at: string;
+            /** Updated At */
+            updated_at: string;
+        };
+        /** ReasoningRunCreate */
+        ReasoningRunCreate: {
             /** Operator */
             operator: string;
+            /** Input Node Ids */
+            input_node_ids?: string[];
             /** Output Node Ids */
             output_node_ids?: string[];
             /**
@@ -1494,6 +1570,10 @@ export interface components {
              * @default
              */
             prompt: string;
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            };
         };
         /** ReasoningRunLink */
         ReasoningRunLink: {
@@ -1504,26 +1584,26 @@ export interface components {
         };
         /** ResearchConversation */
         ResearchConversation: {
-            /** Created At */
-            created_at: string;
-            /** Created By */
-            created_by: string;
             /** Id */
             id: string;
-            /**
-             * Memory Event Count
-             * @default 0
-             */
-            memory_event_count: number;
+            /** Title */
+            title: string;
+            /** Summary */
+            summary: string;
             /**
              * Message Count
              * @default 0
              */
             message_count: number;
-            /** Summary */
-            summary: string;
-            /** Title */
-            title: string;
+            /**
+             * Memory Event Count
+             * @default 0
+             */
+            memory_event_count: number;
+            /** Created By */
+            created_by: string;
+            /** Created At */
+            created_at: string;
             /** Updated At */
             updated_at: string;
         };
@@ -1537,63 +1617,63 @@ export interface components {
         };
         /** ResearchConversationDetail */
         ResearchConversationDetail: {
-            /** Created At */
-            created_at: string;
-            /** Created By */
-            created_by: string;
             /** Id */
             id: string;
-            /**
-             * Memory Event Count
-             * @default 0
-             */
-            memory_event_count: number;
+            /** Title */
+            title: string;
+            /** Summary */
+            summary: string;
             /**
              * Message Count
              * @default 0
              */
             message_count: number;
-            /** Messages */
-            messages?: components["schemas"]["ResearchMessage"][];
-            /** Summary */
-            summary: string;
-            /** Title */
-            title: string;
+            /**
+             * Memory Event Count
+             * @default 0
+             */
+            memory_event_count: number;
+            /** Created By */
+            created_by: string;
+            /** Created At */
+            created_at: string;
             /** Updated At */
             updated_at: string;
+            /** Messages */
+            messages?: components["schemas"]["ResearchMessage"][];
         };
         /** ResearchGap */
         ResearchGap: {
-            /** Gap */
-            gap: string;
-            /** Opportunity */
-            opportunity: string;
-            /** Page */
-            page: string;
             /** Paper Id */
             paper_id: string;
             /** Paper Title */
             paper_title: string;
+            /** Page */
+            page: string;
+            /** Gap */
+            gap: string;
+            /** Opportunity */
+            opportunity: string;
         };
         /** ResearchMemoryEvent */
         ResearchMemoryEvent: {
-            /** Content */
-            content: string;
-            /** Conversation Id */
-            conversation_id: string;
-            /** Created At */
-            created_at: string;
             /** Id */
             id: string;
+            /** Conversation Id */
+            conversation_id: string;
+            /** Source Message Id */
+            source_message_id?: string | null;
+            /** Ordinal */
+            ordinal: number;
             /**
              * Kind
              * @enum {string}
              */
             kind: "hypothesis" | "assumption" | "unresolved_question" | "planned_test";
-            /** Ordinal */
-            ordinal: number;
-            /** Source Message Id */
-            source_message_id?: string | null;
+            /** Content */
+            content: string;
+            /** Created At */
+            created_at: string;
         };
         /** ResearchMemoryPage */
         ResearchMemoryPage: {
@@ -1604,16 +1684,10 @@ export interface components {
         };
         /** ResearchMessage */
         ResearchMessage: {
-            /** Citations */
-            citations?: components["schemas"]["Citation"][];
-            /** Content */
-            content: string;
-            /** Conversation Id */
-            conversation_id: string;
-            /** Created At */
-            created_at: string;
             /** Id */
             id: string;
+            /** Conversation Id */
+            conversation_id: string;
             /** Ordinal */
             ordinal: number;
             /**
@@ -1621,6 +1695,12 @@ export interface components {
              * @enum {string}
              */
             role: "user" | "assistant";
+            /** Content */
+            content: string;
+            /** Citations */
+            citations?: components["schemas"]["Citation"][];
+            /** Created At */
+            created_at: string;
         };
         /** ResearchMessagePage */
         ResearchMessagePage: {
@@ -1631,10 +1711,10 @@ export interface components {
         };
         /** SavedComparison */
         SavedComparison: {
-            /** Created At */
-            created_at: string;
             /** Id */
             id: string;
+            /** User Id */
+            user_id: string;
             /** Name */
             name: string;
             /** Paper Ids */
@@ -1643,8 +1723,8 @@ export interface components {
             result: {
                 [key: string]: unknown;
             }[];
-            /** User Id */
-            user_id: string;
+            /** Created At */
+            created_at: string;
         };
         /** SavedComparisonCreate */
         SavedComparisonCreate: {
@@ -1655,40 +1735,40 @@ export interface components {
         };
         /** SearchHistory */
         SearchHistory: {
-            /** Created At */
-            created_at: string;
             /** Id */
             id: string;
-            /** Paper Ids */
-            paper_ids: string[];
+            /** User Id */
+            user_id: string;
             /** Query */
             query: string;
+            /** Paper Ids */
+            paper_ids: string[];
             /** Result Summary */
             result_summary: {
                 [key: string]: unknown;
             };
-            /** User Id */
-            user_id: string;
+            /** Created At */
+            created_at: string;
         };
         /** SearchRequest */
         SearchRequest: {
-            /** Conversation Id */
-            conversation_id?: string | null;
+            /** User Id */
+            user_id?: string | null;
+            /** Query */
+            query: string;
+            /** Paper Ids */
+            paper_ids?: string[];
+            /** Year From */
+            year_from?: number | null;
+            /** Year To */
+            year_to?: number | null;
             /**
              * Limit
              * @default 8
              */
             limit: number;
-            /** Paper Ids */
-            paper_ids?: string[];
-            /** Query */
-            query: string;
-            /** User Id */
-            user_id?: string | null;
-            /** Year From */
-            year_from?: number | null;
-            /** Year To */
-            year_to?: number | null;
+            /** Conversation Id */
+            conversation_id?: string | null;
         };
         /** SearchResponse */
         SearchResponse: {
@@ -1696,29 +1776,23 @@ export interface components {
             answer: string;
             /** Citations */
             citations: components["schemas"]["Citation"][];
-            /** Claims */
-            claims?: components["schemas"]["AnswerClaim"][];
             /** Conversation Id */
             conversation_id?: string | null;
-            /** Fallback Reason */
-            fallback_reason?: ("api_key_missing" | "dependency_missing" | "no_evidence" | "grounding_failed" | "authentication_failed" | "permission_denied" | "model_not_found" | "rate_limited" | "api_timeout" | "network_error" | "model_api_error" | "deadline_exceeded" | "model_timeout" | "model_unavailable" | "provider_unavailable" | "model_call_failed" | "generation_failed" | "citation_validation_failed" | "grounding_audit_failed" | "repair_failed" | "structured_output_invalid" | "verification_skipped_timeout") | null;
             /**
              * Generation Mode
              * @default local_fallback
              * @enum {string}
              */
             generation_mode: "agentic_rag" | "local_fallback";
+            /** Model */
+            model?: string | null;
+            /** Retrieval Queries */
+            retrieval_queries?: string[];
             /**
              * Grounded
              * @default false
              */
             grounded: boolean;
-            /**
-             * Grounding Status
-             * @default not_checked
-             * @enum {string}
-             */
-            grounding_status: "verified" | "rejected" | "not_checked" | "no_evidence";
             /**
              * Llm Attempted
              * @default false
@@ -1729,26 +1803,28 @@ export interface components {
              * @default false
              */
             llm_succeeded: boolean;
+            /**
+             * Grounding Status
+             * @default not_checked
+             * @enum {string}
+             */
+            grounding_status: "verified" | "rejected" | "not_checked" | "no_evidence";
+            /** Claims */
+            claims?: components["schemas"]["AnswerClaim"][];
             /** Memory Delta */
             memory_delta?: {
                 [key: string]: unknown;
             };
-            /** Model */
-            model?: string | null;
             /**
              * Model Calls
              * @default 0
              */
             model_calls: number;
-            /** Retrieval Queries */
-            retrieval_queries?: string[];
+            /** Fallback Reason */
+            fallback_reason?: ("api_key_missing" | "dependency_missing" | "no_evidence" | "grounding_failed" | "authentication_failed" | "permission_denied" | "model_not_found" | "rate_limited" | "api_timeout" | "network_error" | "model_api_error" | "deadline_exceeded" | "model_timeout" | "model_unavailable" | "provider_unavailable" | "model_call_failed" | "generation_failed" | "citation_validation_failed" | "grounding_audit_failed" | "repair_failed" | "structured_output_invalid" | "verification_skipped_timeout") | null;
         };
         /** SourceImportCreate */
         SourceImportCreate: {
-            /** Content */
-            content: string;
-            /** Content Hash */
-            content_hash: string;
             /**
              * Kind
              * @enum {string}
@@ -1756,6 +1832,10 @@ export interface components {
             kind: "latex" | "python" | "notebook" | "csv" | "chat" | "markdown";
             /** Locator */
             locator: string;
+            /** Content */
+            content: string;
+            /** Content Hash */
+            content_hash: string;
             /** Metadata */
             metadata?: {
                 [key: string]: unknown;
@@ -1769,137 +1849,137 @@ export interface components {
         };
         /** SourceSpan */
         SourceSpan: {
+            /** Id */
+            id: string;
+            /** Workspace Id */
+            workspace_id: string;
+            /** Source Version Id */
+            source_version_id: string;
+            /** Page */
+            page?: number | null;
+            /** Line Start */
+            line_start?: number | null;
+            /** Line End */
+            line_end?: number | null;
+            /** Char Start */
+            char_start?: number | null;
+            /** Char End */
+            char_end?: number | null;
             /** Bbox */
             bbox?: number[] | null;
             /** Cell */
             cell?: {
                 [key: string]: unknown;
             } | unknown[] | null;
-            /** Char End */
-            char_end?: number | null;
-            /** Char Start */
-            char_start?: number | null;
-            /** Created At */
-            created_at: string;
-            /** Id */
-            id: string;
-            /** Line End */
-            line_end?: number | null;
-            /** Line Start */
-            line_start?: number | null;
             /** Locator */
             locator?: {
                 [key: string]: unknown;
             };
-            /** Page */
-            page?: number | null;
-            /** Source Version Id */
-            source_version_id: string;
             /**
              * Text
              * @default
              */
             text: string;
-            /** Workspace Id */
-            workspace_id: string;
+            /** Created At */
+            created_at: string;
         };
         /** SourceVersion */
         SourceVersion: {
-            /** Content Hash */
-            content_hash: string;
-            /** Created At */
-            created_at: string;
             /** Id */
             id: string;
+            /** Workspace Id */
+            workspace_id: string;
+            /** Paper Id */
+            paper_id?: string | null;
             /** Kind */
             kind: string;
             /** Locator */
             locator: string;
+            /** Content Hash */
+            content_hash: string;
             /** Metadata */
             metadata?: {
                 [key: string]: unknown;
             };
-            /** Paper Id */
-            paper_id?: string | null;
-            /** Workspace Id */
-            workspace_id: string;
+            /** Created At */
+            created_at: string;
         };
         /** SourceVersionCreate */
         SourceVersionCreate: {
-            /** Content */
-            content?: string | null;
-            /** Content Hash */
-            content_hash: string;
             /** Kind */
             kind: string;
             /** Locator */
             locator: string;
+            /** Content Hash */
+            content_hash: string;
+            /** Paper Id */
+            paper_id?: string | null;
+            /** Content */
+            content?: string | null;
             /** Metadata */
             metadata?: {
                 [key: string]: unknown;
             };
-            /** Paper Id */
-            paper_id?: string | null;
         };
         /** Tag */
         Tag: {
+            /** Name */
+            name: string;
             /**
              * Color
              * @default #64748b
              */
             color: string;
-            /** Created At */
-            created_at: string;
             /** Id */
             id: string;
-            /** Name */
-            name: string;
+            /** Created At */
+            created_at: string;
         };
         /** TagCreate */
         TagCreate: {
+            /** Name */
+            name: string;
             /**
              * Color
              * @default #64748b
              */
             color: string;
-            /** Name */
-            name: string;
         };
         /** UploadResult */
         UploadResult: {
-            /**
-             * Duplicate
-             * @default false
-             */
-            duplicate: boolean;
-            /** Error */
-            error?: string | null;
             /** Filename */
             filename: string;
-            job?: components["schemas"]["IngestionJob"] | null;
-            paper?: components["schemas"]["PaperSummary"] | null;
+            /** Success */
+            success: boolean;
             /**
              * Status
              * @enum {string}
              */
             status: "processing" | "ready" | "failed" | "duplicate" | "rejected";
-            /** Success */
-            success: boolean;
+            paper?: components["schemas"]["PaperSummary"] | null;
+            /** Error */
+            error?: string | null;
+            /**
+             * Duplicate
+             * @default false
+             */
+            duplicate: boolean;
+            job?: components["schemas"]["IngestionJob"] | null;
         };
         /** User */
         User: {
-            /** Created At */
-            created_at: string;
-            /** Display Name */
-            display_name?: string | null;
-            /** Email */
-            email?: string | null;
             /** Id */
             id: string;
             /** Issuer */
             issuer: string;
             /** Subject */
             subject: string;
+            /** Email */
+            email?: string | null;
+            /** Display Name */
+            display_name?: string | null;
+            /** Created At */
+            created_at: string;
         };
         /** ValidationError */
         ValidationError: {
@@ -1912,12 +1992,8 @@ export interface components {
         };
         /** Workspace */
         Workspace: {
-            /** Created At */
-            created_at: string;
             /** Id */
             id: string;
-            /** Is Personal */
-            is_personal: boolean;
             /** Name */
             name: string;
             /**
@@ -1925,11 +2001,53 @@ export interface components {
              * @enum {string}
              */
             role: "owner" | "editor" | "viewer";
+            /** Is Personal */
+            is_personal: boolean;
+            /** Created At */
+            created_at: string;
         };
         /** WorkspaceCreate */
         WorkspaceCreate: {
             /** Name */
             name: string;
+        };
+        /**
+         * WorkspaceMember
+         * @description A workspace member with the identity fields safe to show to collaborators.
+         */
+        WorkspaceMember: {
+            user: components["schemas"]["User"];
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "owner" | "editor" | "viewer";
+            /** Created At */
+            created_at: string;
+        };
+        /**
+         * WorkspaceMemberCreate
+         * @description Identify an already-provisioned collaborator in the same identity provider.
+         */
+        WorkspaceMemberCreate: {
+            /** Email */
+            email?: string | null;
+            /** Subject */
+            subject?: string | null;
+            /**
+             * Role
+             * @default editor
+             * @enum {string}
+             */
+            role: "owner" | "editor" | "viewer";
+        };
+        /** WorkspaceMemberUpdate */
+        WorkspaceMemberUpdate: {
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "owner" | "editor" | "viewer";
         };
     };
     responses: never;
@@ -1940,6 +2058,931 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    health_api_health_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
+                };
+            };
+        };
+    };
+    me_api_me_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeResponse"];
+                };
+            };
+        };
+    };
+    llm_status_api_llm_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LLMStatus"];
+                };
+            };
+        };
+    };
+    list_workspaces_api_workspaces_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Workspace"][];
+                };
+            };
+        };
+    };
+    create_workspace_api_workspaces_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Workspace"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_workspace_api_workspaces__workspace_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Workspace"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rename_workspace_api_workspaces__workspace_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Workspace"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_workspace_members_api_workspaces__workspace_id__members_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceMember"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_workspace_member_api_workspaces__workspace_id__members_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceMemberCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceMember"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_workspace_member_api_workspaces__workspace_id__members__member_user_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                member_user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_workspace_member_api_workspaces__workspace_id__members__member_user_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                member_user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceMemberUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceMember"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_papers_api_papers_get: {
+        parameters: {
+            query?: {
+                /** @deprecated */
+                user_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaperSummary"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upload_papers_api_papers_upload_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_upload_papers_api_papers_upload_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UploadResult"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_external_paper_api_papers_external_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExternalPaperRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaperSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_paper_detail_api_papers__paper_id__get: {
+        parameters: {
+            query?: {
+                /** @deprecated */
+                user_id?: string | null;
+            };
+            header?: never;
+            path: {
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaperDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_paper_api_papers__paper_id__delete: {
+        parameters: {
+            query?: {
+                /** @deprecated */
+                user_id?: string | null;
+            };
+            header?: never;
+            path: {
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_paper_file_api_papers__paper_id__file_get: {
+        parameters: {
+            query?: {
+                /** @deprecated */
+                user_id?: string | null;
+            };
+            header?: never;
+            path: {
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_paper_page_api_papers__paper_id__pages__page__get: {
+        parameters: {
+            query?: {
+                /** @deprecated */
+                user_id?: string | null;
+            };
+            header?: never;
+            path: {
+                paper_id: string;
+                page: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaperPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_paper_chunk_api_papers__paper_id__chunks__chunk_id__get: {
+        parameters: {
+            query?: {
+                /** @deprecated */
+                user_id?: string | null;
+            };
+            header?: never;
+            path: {
+                paper_id: string;
+                chunk_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Chunk"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_ingestion_job_api_jobs__job_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IngestionJob"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_paper_assets_api_papers__paper_id__assets_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentElement"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_figure_asset_api_papers__paper_id__assets__element_id__file_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                paper_id: string;
+                element_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    summarize_paper_api_papers__paper_id__summary_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaperMarkdownSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    answer_api_search_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SearchRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_research_conversations_api_research_conversations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResearchConversation"][];
+                };
+            };
+        };
+    };
+    create_research_conversation_api_research_conversations_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResearchConversationCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResearchConversation"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_research_conversation_api_research_conversations__conversation_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResearchConversationDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_research_messages_page_api_research_conversations__conversation_id__messages_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                before_ordinal?: number | null;
+            };
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResearchMessagePage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_research_memory_page_api_research_conversations__conversation_id__memory_get: {
+        parameters: {
+            query?: {
+                kind?: ("hypothesis" | "assumption" | "unresolved_question" | "planned_test") | null;
+                limit?: number;
+                before_ordinal?: number | null;
+            };
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResearchMemoryPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    answer_stream_api_search_stream_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SearchRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     compare_api_analysis_compare_post: {
         parameters: {
             query?: never;
@@ -2006,120 +3049,6 @@ export interface operations {
             };
         };
     };
-    list_saved_comparisons_api_comparisons_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SavedComparison"][];
-                };
-            };
-        };
-    };
-    save_comparison_api_comparisons_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SavedComparisonCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SavedComparison"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    delete_comparison_api_comparisons__comparison_id__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                comparison_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    export_papers_api_exports_papers_get: {
-        parameters: {
-            query: {
-                format: string;
-                paper_ids?: string[];
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     graph_snapshot_api_graph_get: {
         parameters: {
             query?: {
@@ -2138,341 +3067,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GraphSnapshot"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    create_graph_edge_api_graph_edges_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["KnowledgeEdgeCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["KnowledgeEdge"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    update_graph_edge_status_api_graph_edges__edge_id__status_patch: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                edge_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["KnowledgeEdgeStatusUpdate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["KnowledgeEdge"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_graph_nodes_api_graph_nodes_get: {
-        parameters: {
-            query?: {
-                status?: string | null;
-                layer?: number | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["KnowledgeNode"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    create_graph_node_api_graph_nodes_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["KnowledgeNodeCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["KnowledgeNode"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_graph_node_api_graph_nodes__node_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                node_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["KnowledgeNode"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    add_graph_node_feedback_api_graph_nodes__node_id__feedback_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                node_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["NodeFeedbackCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["NodeFeedback"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    update_graph_layout_api_graph_nodes__node_id__layout_put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                node_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CanvasLayoutUpdate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CanvasLayout"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    update_graph_node_status_api_graph_nodes__node_id__status_patch: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                node_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["KnowledgeNodeStatusUpdate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["KnowledgeNodeStatusResult"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    retrieve_graph_api_graph_retrieve_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["GraphRetrieveRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["GraphRetrievalHit"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    create_graph_reasoning_run_api_graph_runs_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ReasoningRunCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ReasoningRun"];
                 };
             };
             /** @description Validation Error */
@@ -2614,9 +3208,12 @@ export interface operations {
             };
         };
     };
-    health_api_health_get: {
+    list_graph_nodes_api_graph_nodes_get: {
         parameters: {
-            query?: never;
+            query?: {
+                status?: string | null;
+                layer?: number | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -2629,31 +3226,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
-                };
-            };
-        };
-    };
-    get_ingestion_job_api_jobs__job_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                job_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["IngestionJob"];
+                    "application/json": components["schemas"]["KnowledgeNode"][];
                 };
             };
             /** @description Validation Error */
@@ -2667,27 +3240,310 @@ export interface operations {
             };
         };
     };
-    llm_status_api_llm_status_get: {
+    create_graph_node_api_graph_nodes_post: {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeNodeCreate"];
+            };
+        };
         responses: {
             /** @description Successful Response */
-            200: {
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["LLMStatus"];
+                    "application/json": components["schemas"]["KnowledgeNode"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
     };
-    me_api_me_get: {
+    get_graph_node_api_graph_nodes__node_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                node_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeNode"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_graph_node_status_api_graph_nodes__node_id__status_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                node_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeNodeStatusUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeNodeStatusResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_graph_edge_api_graph_edges_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeEdgeCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeEdge"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_graph_edge_status_api_graph_edges__edge_id__status_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                edge_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeEdgeStatusUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeEdge"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_graph_reasoning_run_api_graph_runs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReasoningRunCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReasoningRun"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_graph_node_feedback_api_graph_nodes__node_id__feedback_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                node_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NodeFeedbackCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NodeFeedback"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_graph_layout_api_graph_nodes__node_id__layout_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                node_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CanvasLayoutUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CanvasLayout"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    retrieve_graph_api_graph_retrieve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GraphRetrieveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphRetrievalHit"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_tags_api_tags_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -2702,7 +3558,170 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MeResponse"];
+                    "application/json": components["schemas"]["Tag"][];
+                };
+            };
+        };
+    };
+    create_tag_api_tags_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TagCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Tag"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_tag_api_tags__tag_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tag_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TagCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Tag"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_tag_api_tags__tag_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tag_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    paper_tags_api_papers__paper_id__tags_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Tag"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_paper_tags_api_papers__paper_id__tags_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PaperTagsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Tag"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -2835,589 +3854,6 @@ export interface operations {
             };
         };
     };
-    list_papers_api_papers_get: {
-        parameters: {
-            query?: {
-                /** @deprecated */
-                user_id?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PaperSummary"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    add_external_paper_api_papers_external_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ExternalPaperRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PaperSummary"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    upload_papers_api_papers_upload_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "multipart/form-data": components["schemas"]["Body_upload_papers_api_papers_upload_post"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["UploadResult"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_paper_detail_api_papers__paper_id__get: {
-        parameters: {
-            query?: {
-                /** @deprecated */
-                user_id?: string | null;
-            };
-            header?: never;
-            path: {
-                paper_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PaperDetail"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    delete_paper_api_papers__paper_id__delete: {
-        parameters: {
-            query?: {
-                /** @deprecated */
-                user_id?: string | null;
-            };
-            header?: never;
-            path: {
-                paper_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_paper_assets_api_papers__paper_id__assets_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                paper_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DocumentElement"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_figure_asset_api_papers__paper_id__assets__element_id__file_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                paper_id: string;
-                element_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_paper_chunk_api_papers__paper_id__chunks__chunk_id__get: {
-        parameters: {
-            query?: {
-                /** @deprecated */
-                user_id?: string | null;
-            };
-            header?: never;
-            path: {
-                paper_id: string;
-                chunk_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Chunk"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_paper_file_api_papers__paper_id__file_get: {
-        parameters: {
-            query?: {
-                /** @deprecated */
-                user_id?: string | null;
-            };
-            header?: never;
-            path: {
-                paper_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_paper_page_api_papers__paper_id__pages__page__get: {
-        parameters: {
-            query?: {
-                /** @deprecated */
-                user_id?: string | null;
-            };
-            header?: never;
-            path: {
-                paper_id: string;
-                page: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PaperPage"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    paper_tags_api_papers__paper_id__tags_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                paper_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Tag"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    set_paper_tags_api_papers__paper_id__tags_put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                paper_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PaperTagsUpdate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Tag"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_research_conversations_api_research_conversations_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ResearchConversation"][];
-                };
-            };
-        };
-    };
-    create_research_conversation_api_research_conversations_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ResearchConversationCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ResearchConversation"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_research_conversation_api_research_conversations__conversation_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                conversation_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ResearchConversationDetail"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_research_memory_page_api_research_conversations__conversation_id__memory_get: {
-        parameters: {
-            query?: {
-                kind?: ("hypothesis" | "assumption" | "unresolved_question" | "planned_test") | null;
-                limit?: number;
-                before_ordinal?: number | null;
-            };
-            header?: never;
-            path: {
-                conversation_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ResearchMemoryPage"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_research_messages_page_api_research_conversations__conversation_id__messages_get: {
-        parameters: {
-            query?: {
-                limit?: number;
-                before_ordinal?: number | null;
-            };
-            header?: never;
-            path: {
-                conversation_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ResearchMessagePage"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    answer_api_search_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SearchRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SearchResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     search_history_api_search_history_get: {
         parameters: {
             query?: never;
@@ -3467,40 +3903,7 @@ export interface operations {
             };
         };
     };
-    answer_stream_api_search_stream_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SearchRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_tags_api_tags_get: {
+    list_saved_comparisons_api_comparisons_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -3515,12 +3918,12 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Tag"][];
+                    "application/json": components["schemas"]["SavedComparison"][];
                 };
             };
         };
     };
-    create_tag_api_tags_post: {
+    save_comparison_api_comparisons_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -3529,7 +3932,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["TagCreate"];
+                "application/json": components["schemas"]["SavedComparisonCreate"];
             };
         };
         responses: {
@@ -3539,7 +3942,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Tag"];
+                    "application/json": components["schemas"]["SavedComparison"];
                 };
             };
             /** @description Validation Error */
@@ -3553,47 +3956,12 @@ export interface operations {
             };
         };
     };
-    update_tag_api_tags__tag_id__put: {
+    delete_comparison_api_comparisons__comparison_id__delete: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                tag_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["TagCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Tag"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    delete_tag_api_tags__tag_id__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                tag_id: string;
+                comparison_id: string;
             };
             cookie?: never;
         };
@@ -3617,9 +3985,12 @@ export interface operations {
             };
         };
     };
-    list_workspaces_api_workspaces_get: {
+    export_papers_api_exports_papers_get: {
         parameters: {
-            query?: never;
+            query: {
+                format: string;
+                paper_ids?: string[];
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -3632,97 +4003,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Workspace"][];
-                };
-            };
-        };
-    };
-    create_workspace_api_workspaces_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["WorkspaceCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Workspace"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_workspace_api_workspaces__workspace_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                workspace_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Workspace"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    rename_workspace_api_workspaces__workspace_id__patch: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                workspace_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["WorkspaceCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Workspace"];
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

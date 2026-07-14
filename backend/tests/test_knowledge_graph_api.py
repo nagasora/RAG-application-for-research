@@ -40,6 +40,22 @@ def _import_source(client: TestClient, content: str, locator: str = "note://evid
     return response.json()
 
 
+def test_graph_source_import_uses_writable_asset_namespace(tmp_path):
+    """User-entered immutable sources must not require the paper-original mount."""
+    _setup(tmp_path)
+    content = "A durable research note"
+    try:
+        with TestClient(main.app) as client:
+            imported = _import_source(client, content, "note://asset-backed")
+        source = imported["source"]
+        storage = main.app.dependency_overrides[main.get_original_storage]()
+        storage_key = source["metadata"]["storage_key"]
+        assert storage_key == f"assets/sources/{hashlib.sha256(content.encode('utf-8')).hexdigest()}/source.txt"
+        assert storage.path_for(storage_key).read_bytes() == content.encode("utf-8")
+    finally:
+        main.app.dependency_overrides.clear()
+
+
 def test_graph_keeps_immutable_provenance_and_marks_downstream_nodes_for_review(tmp_path):
     store = _setup(tmp_path)
     source_content = "loss = objective(theta)\n"

@@ -1,15 +1,20 @@
 "use client";
 
 import {
-  ArrowLeftIcon, ArrowRightIcon, DocumentTextIcon, XMarkIcon,
+  ArrowLeftIcon, ArrowRightIcon, DocumentTextIcon, SparklesIcon, XMarkIcon,
 } from "@heroicons/react/24/outline";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import rehypeKatex from "rehype-katex";
+import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
 
 import {
-  createNote, deleteNote, getAssetFile, getPaperChunk, getPaperDetail, getPaperFile, getPaperPage, listAssets, listNotes, updateNote,
-  type Chunk, type DocumentElement, type Note, type PaperDetail, type PaperPage,
+  createNote, deleteNote, generatePaperSummary, getAssetFile, getPaperChunk, getPaperDetail, getPaperFile, getPaperPage, listAssets, listNotes, updateNote,
+  type Chunk, type Citation, type DocumentElement, type Note, type PaperDetail, type PaperMarkdownSummary, type PaperPage,
 } from "@/lib/api/client";
 import { apiErrorMessage, toApiError } from "@/lib/api/error";
+import { normalizeResearchMarkdown } from "@/lib/markdown";
 
 export type EvidenceTarget = {
   paperId: string;
@@ -50,11 +55,22 @@ export function EvidenceViewer({ target, canWrite, onClose }: EvidenceViewerProp
   const [assets, setAssets] = useState<DocumentElement[]>([]);
   const [assetsLoading, setAssetsLoading] = useState(true);
   const [assetError, setAssetError] = useState("");
+  const [paperSummary, setPaperSummary] = useState<PaperMarkdownSummary | null>(null);
+  const [summaryBusy, setSummaryBusy] = useState(false);
+  const [summaryError, setSummaryError] = useState("");
+  const summaryAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     setPage(Math.max(1, target.page ?? 1));
     setChunkId(target.chunkId);
   }, [target]);
+
+  useEffect(() => {
+    summaryAbortRef.current?.abort();
+    setPaperSummary(null); setSummaryBusy(false); setSummaryError("");
+  }, [target.paperId]);
+
+  useEffect(() => () => summaryAbortRef.current?.abort(), []);
 
   useEffect(() => {
     const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -151,10 +167,32 @@ export function EvidenceViewer({ target, canWrite, onClose }: EvidenceViewerProp
   const extractedText = paperPage?.text || chunks.map(item => item.text).join("\n\n");
   const pageElements = (paperPage?.elements?.length ? paperPage.elements : assets.filter(item => item.page === page));
   const visibleElements = pageElements.filter(item => item.kind === "table" || item.kind === "figure").slice(0, 50);
+  const summaryCitations = paperSummary?.citations ?? [];
 
   const movePage = (nextPage: number) => {
     setChunkId(undefined);
     setPage(nextPage);
+  };
+
+  const generateSummary = async () => {
+    if (!canWrite || summaryBusy) return;
+    summaryAbortRef.current?.abort();
+    const controller = new AbortController(); summaryAbortRef.current = controller;
+    setSummaryBusy(true); setSummaryError("");
+    try {
+      setPaperSummary(await generatePaperSummary(target.paperId, controller.signal));
+    } catch (requestError) {
+      const normalized = toApiError(requestError, "論文要約を生成できませんでした");
+      if (normalized.code !== "aborted") setSummaryError(normalized.message);
+    } finally {
+      if (summaryAbortRef.current === controller) summaryAbortRef.current = null;
+      if (!controller.signal.aborted) setSummaryBusy(false);
+    }
+  };
+
+  const openSummaryCitation = (citation: Citation) => {
+    setChunkId(citation.chunk_id);
+    setPage(citation.page);
   };
 
   const saveNote = async (event: FormEvent) => {
@@ -211,6 +249,11 @@ export function EvidenceViewer({ target, canWrite, onClose }: EvidenceViewerProp
             <section aria-labelledby="document-elements-title" className="mt-8"><h3 id="document-elements-title" className="serif text-xl font-semibold">表・図版</h3>{assetsLoading ? <p role="status" className="mt-3 text-xs text-[#68736f]">文書要素を読み込んでいます…</p> : assetError ? <p role="alert" className="mt-3 text-xs text-red-700">{assetError}</p> : visibleElements.length ? <div className="mt-4 space-y-5">{visibleElements.map(element => element.kind === "table" ? <SafeTable key={element.id} element={element}/> : <AssetFigure key={element.id} paperId={target.paperId} element={element} caption={captionFor(pageElements, element)}/>)}</div> : <p className="mt-3 text-xs text-[#68736f]">このページに抽出済みの表・図版はありません。</p>}{pageElements.filter(item => item.kind === "table" || item.kind === "figure").length > 50 && <p className="mt-3 text-xs text-amber-800">表示上限50件まで表示しています。</p>}{assets.length > 100 && <p className="mt-2 text-xs text-amber-800">文書全体の要素が多いため、現在ページのみを優先表示しています。</p>}</section>
             {!isPdf && hasOriginal && (loadingFile ? <p className="mt-5 text-xs text-[#68736f]">認証済み原本を準備しています…</p> : fileUrl ? <a href={fileUrl} target="_blank" rel="noreferrer" className="mt-5 inline-flex rounded-full border border-[#164f3b] px-4 py-2 text-xs font-semibold text-[#164f3b]">原本ファイルを開く</a> : fileError && <p role="alert" className="mt-5 text-xs text-red-700">{fileError}</p>)}
           </>}
+          <section aria-labelledby="paper-summary-title" className="mt-8 border-t border-[#d8dad4] pt-6"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex items-center gap-2"><SparklesIcon className="h-5 w-5 text-[#35634f]"/><h3 id="paper-summary-title" className="serif text-xl font-semibold">論文の日本語要約</h3></div><p className="mt-1 text-xs leading-5 text-[#68736f]">本文から日本語で要点を整理します。数式はLaTeX、表はMarkdownで読みやすく表示します。</p></div>{canWrite && <button type="button" onClick={() => void generateSummary()} disabled={summaryBusy} className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-[#164f3b] px-4 py-2 text-xs font-semibold text-white hover:bg-[#245b45] disabled:cursor-wait disabled:opacity-55"><SparklesIcon className={`h-3.5 w-3.5 ${summaryBusy ? "animate-pulse" : ""}`}/>{summaryBusy ? "要約を作成中…" : paperSummary ? "もう一度要約" : "AIで日本語要約"}</button>}</div>{!canWrite && <p className="mt-3 rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-800">viewer権限では要約生成を実行できません。</p>}
+            {summaryBusy && <div role="status" className="mt-4 rounded-2xl border border-[#d8e7dd] bg-[#f1f7f3] p-4 text-sm text-[#35634f]">本文と抽出箇所を読み込み、要約を生成しています。論文が長い場合は少し時間がかかります。</div>}
+            {summaryError && <div role="alert" className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm leading-6 text-red-800"><p>{summaryError}</p><button type="button" onClick={() => void generateSummary()} disabled={!canWrite || summaryBusy} className="mt-3 rounded-full border border-red-300 px-3 py-1.5 text-xs font-semibold disabled:opacity-40">再試行</button></div>}
+            {paperSummary && <div className="mt-4 rounded-2xl border border-[#d8ded9] bg-white/80 p-4 md:p-5"><div className="flex flex-wrap items-center gap-2 border-b border-[#e2e5e0] pb-3 text-[10px]"><span className={`rounded-full px-2.5 py-1 font-bold ${paperSummary.generation_mode === "llm" ? "bg-[#dfeee6] text-[#164f3b]" : "bg-amber-50 text-amber-800"}`}>{paperSummary.generation_mode === "llm" ? "LLMによる日本語要約" : "ローカル要約（LLM未使用）"}</span>{paperSummary.model && <span className="text-[#68736f]">モデル: {paperSummary.model}</span>}</div>{paperSummary.generation_mode === "local_fallback" && <p className="mt-3 rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-900">LLMを利用できなかったため、抽出済みの本文から要約を作成しました。{paperSummary.fallback_reason ? ` 理由: ${paperSummary.fallback_reason}` : ""}</p>}<PaperSummaryMarkdown content={paperSummary.summary}/>{summaryCitations.length > 0 && <div className="mt-5 border-t border-[#e2e5e0] pt-4"><p className="text-xs font-bold text-[#35634f]">要約の根拠箇所</p><div className="mt-2 grid gap-2 sm:grid-cols-2">{summaryCitations.map(citation => <button type="button" key={`${citation.chunk_id}-${citation.index}`} onClick={() => openSummaryCitation(citation)} className="rounded-xl border border-[#d8ded9] bg-[#fbfcfa] p-3 text-left hover:border-[#6f9d86]"><p className="text-[10px] font-bold text-[#a06a28]">{citation.section} · p. {citation.page}</p><p className="mt-1 line-clamp-3 text-xs leading-5 text-[#52605b]">{citation.excerpt}</p><span className="mt-2 inline-block text-[10px] font-bold text-[#35634f]">本文の該当箇所を開く</span></button>)}</div></div>}</div>}
+          </section>
           <section aria-labelledby="paper-notes-title" className="mt-8 border-t border-[#d8dad4] pt-6"><h3 id="paper-notes-title" className="serif text-xl font-semibold">論文ノート</h3>{!canWrite && <p className="mt-2 text-xs text-amber-800">viewer権限ではノートを編集できません。</p>}
             {canWrite && <form onSubmit={saveNote} className="mt-4 space-y-2"><label htmlFor="note-title" className="sr-only">ノートタイトル</label><input id="note-title" maxLength={255} value={noteTitle} onChange={event => setNoteTitle(event.target.value)} placeholder="ノートタイトル" className="w-full rounded-xl border border-[#d5d8d2] bg-white px-3 py-2 text-sm"/><label htmlFor="note-content" className="sr-only">ノート本文</label><textarea id="note-content" maxLength={100000} rows={4} value={noteContent} onChange={event => setNoteContent(event.target.value)} placeholder="考察や再現メモを入力" className="w-full resize-y rounded-xl border border-[#d5d8d2] bg-white px-3 py-2 text-sm"/><div className="flex gap-2"><button disabled={noteBusy || !noteTitle.trim()} className="rounded-full bg-[#164f3b] px-4 py-2 text-xs font-semibold text-white disabled:opacity-40">{editingNoteId ? "更新" : "ノートを追加"}</button>{editingNoteId && <button type="button" onClick={() => { setEditingNoteId(null); setNoteTitle(""); setNoteContent(""); }} className="text-xs text-[#68736f]">取消</button>}</div></form>}
             {noteError && <p role="alert" className="mt-3 text-xs text-red-700">{noteError}</p>}
@@ -224,6 +267,31 @@ export function EvidenceViewer({ target, canWrite, onClose }: EvidenceViewerProp
 
 function Loading({ label }: { label: string }) {
   return <div role="status" className="grid h-full min-h-48 place-items-center p-8 text-center text-sm text-[#68736f]"><div><div className="mx-auto mb-3 h-7 w-7 animate-spin rounded-full border-2 border-[#b9c8c0] border-t-[#164f3b]"/><span>{label}</span></div></div>;
+}
+
+function PaperSummaryMarkdown({ content }: { content: string }) {
+  return <div className="research-markdown mt-4 min-w-0 text-sm leading-7 text-[#26342e]">
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm, remarkMath]}
+      rehypePlugins={[[rehypeKatex, { throwOnError:false, strict:"warn" }]]}
+      components={{
+        h1: ({ children }) => <h4 className="serif mb-2 mt-5 text-lg font-semibold first:mt-0">{children}</h4>,
+        h2: ({ children }) => <h5 className="serif mb-2 mt-5 text-base font-semibold first:mt-0">{children}</h5>,
+        h3: ({ children }) => <h6 className="mb-2 mt-4 text-sm font-bold first:mt-0">{children}</h6>,
+        p: ({ children }) => <p className="my-2">{children}</p>,
+        ul: ({ children }) => <ul className="my-3 list-disc space-y-1 pl-5">{children}</ul>,
+        ol: ({ children }) => <ol className="my-3 list-decimal space-y-1 pl-5">{children}</ol>,
+        blockquote: ({ children }) => <blockquote className="my-3 border-l-4 border-[#9db9aa] bg-[#eef4f0] px-4 py-2 text-[#40534a]">{children}</blockquote>,
+        pre: ({ children }) => <pre className="my-3 overflow-x-auto rounded-xl bg-[#10231b] p-4 text-xs leading-6 text-[#e5f0ea]">{children}</pre>,
+        code: ({ children, className }) => className ? <code className={className}>{children}</code> : <code className="rounded bg-[#e7ebe7] px-1.5 py-0.5 font-mono text-[.9em] text-[#234538]">{children}</code>,
+        table: ({ children }) => <div className="my-4 overflow-x-auto"><table className="min-w-full border-collapse text-left text-xs">{children}</table></div>,
+        th: ({ children }) => <th className="border border-[#ccd5cf] bg-[#eaf0ec] px-3 py-2 font-bold">{children}</th>,
+        td: ({ children }) => <td className="border border-[#d8ddd9] px-3 py-2 align-top">{children}</td>,
+        img: ({ alt }) => <span role="img" aria-label={alt || "外部画像"} className="inline-flex rounded bg-[#f1eee8] px-2 py-1 text-xs text-[#6d6459]">画像は安全のため表示していません{alt ? `: ${alt}` : ""}</span>,
+        a: ({ href, children }) => <a href={href} target="_blank" rel="noreferrer noopener" className="font-semibold text-[#176143] underline decoration-[#8cb9a4] underline-offset-4">{children}</a>,
+      }}
+    >{normalizeResearchMarkdown(content)}</ReactMarkdown>
+  </div>;
 }
 
 function captionFor(elements: DocumentElement[], figure: DocumentElement): string {

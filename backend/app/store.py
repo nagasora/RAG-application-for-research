@@ -30,6 +30,7 @@ from .models import (
     ReasoningRun, ReasoningRunLink, ResearchConversation, ResearchConversationDetail,
     ResearchMemoryEvent, ResearchMemoryPage, ResearchMessage, ResearchMessagePage,
     SavedComparison, SearchHistory, SourceSpan, SourceVersion, Tag, User, Workspace,
+    WorkspaceMember,
 )
 
 
@@ -48,6 +49,14 @@ class WorkspaceAccessError(Exception):
 
 
 class WorkspacePermissionError(Exception):
+    pass
+
+
+class WorkspaceMemberNotFoundError(Exception):
+    pass
+
+
+class WorkspaceMemberConflictError(Exception):
     pass
 
 
@@ -223,6 +232,12 @@ def _workspace_model(record: WorkspaceRecord, role: str) -> Workspace:
         role=role,
         is_personal=record.is_personal,
         created_at=record.created_at.isoformat(),
+    )
+
+
+def _workspace_member_model(record: WorkspaceMemberRecord, user: UserRecord) -> WorkspaceMember:
+    return WorkspaceMember(
+        user=_user_model(user), role=record.role, created_at=record.created_at.isoformat(),
     )
 
 
@@ -522,6 +537,107 @@ class PaperStore:
                 role=role,
                 created_at=datetime.now(timezone.utc),
             ))
+
+    @staticmethod
+    def _require_workspace_owner(
+        session: Session, actor_id: str, workspace_id: str,
+    ) -> WorkspaceRecord:
+        """Lock the workspace and require an owner membership for member administration."""
+        workspace = session.scalar(
+            select(WorkspaceRecord).where(WorkspaceRecord.id == workspace_id).with_for_update()
+        )
+        if workspace is None:
+            raise WorkspaceAccessError(workspace_id)
+        membership = session.get(WorkspaceMemberRecord, (workspace_id, actor_id))
+        if membership is None:
+            raise WorkspaceAccessError(workspace_id)
+        if membership.role != "owner":
+            raise WorkspacePermissionError(workspace_id)
+        return workspace
+
+    @staticmethod
+    def _require_remaining_owner(
+        session: Session, workspace: WorkspaceRecord, member: WorkspaceMemberRecord,
+    ) -> None:
+        """Protect the personal-workspace invariant and prevent owner-less projects."""
+        if workspace.personal_owner_id == member.user_id:
+            raise WorkspacePermissionError("the personal workspace owner must remain an owner")
+        if member.role != "owner":
+            return
+        owner_count = session.scalar(
+            select(func.count()).select_from(WorkspaceMemberRecord).where(
+                WorkspaceMemberRecord.workspace_id == workspace.id,
+                WorkspaceMemberRecord.role == "owner",
+            )
+        )
+        if int(owner_count or 0) <= 1:
+            raise WorkspacePermissionError("a workspace must retain at least one owner")
+
+    def list_workspace_members(self, workspace_id: str) -> list[WorkspaceMember]:
+        with self.session_factory() as session:
+            rows = session.execute(
+                select(WorkspaceMemberRecord, UserRecord)
+                .join(UserRecord, UserRecord.id == WorkspaceMemberRecord.user_id)
+                .where(WorkspaceMemberRecord.workspace_id == workspace_id)
+                .order_by(WorkspaceMemberRecord.created_at, UserRecord.id)
+            ).all()
+            return [_workspace_member_model(member, user) for member, user in rows]
+
+    def add_workspace_member_for_owner(
+        self, actor_id: str, workspace_id: str, *, issuer: str, email: str | None,
+        subject: str | None, role: str,
+    ) -> WorkspaceMember:
+        with self.session_factory.begin() as session:
+            self._require_workspace_owner(session, actor_id, workspace_id)
+            statement = select(UserRecord).where(UserRecord.issuer == issuer)
+            if email:
+                statement = statement.where(UserRecord.email == email)
+            else:
+                statement = statement.where(UserRecord.subject == subject)
+            users = session.scalars(statement).all()
+            if not users:
+                raise WorkspaceMemberNotFoundError(email or subject or "member")
+            if len(users) != 1:
+                raise WorkspaceMemberConflictError("member identity is ambiguous")
+            user = users[0]
+            if session.get(WorkspaceMemberRecord, (workspace_id, user.id)) is not None:
+                raise WorkspaceMemberConflictError("member already belongs to this workspace")
+            member = WorkspaceMemberRecord(
+                workspace_id=workspace_id, user_id=user.id, role=role,
+                created_at=datetime.now(timezone.utc),
+            )
+            session.add(member)
+            session.flush()
+            return _workspace_member_model(member, user)
+
+    def update_workspace_member_for_owner(
+        self, actor_id: str, workspace_id: str, member_user_id: str, *, role: str,
+    ) -> WorkspaceMember:
+        with self.session_factory.begin() as session:
+            workspace = self._require_workspace_owner(session, actor_id, workspace_id)
+            member = session.get(WorkspaceMemberRecord, (workspace_id, member_user_id))
+            if member is None:
+                raise WorkspaceMemberNotFoundError(member_user_id)
+            if member.role != role:
+                if role != "owner":
+                    self._require_remaining_owner(session, workspace, member)
+                member.role = role
+            user = session.get(UserRecord, member.user_id)
+            if user is None:  # Defensive: the FK normally makes this unreachable.
+                raise WorkspaceMemberNotFoundError(member_user_id)
+            session.flush()
+            return _workspace_member_model(member, user)
+
+    def remove_workspace_member_for_owner(
+        self, actor_id: str, workspace_id: str, member_user_id: str,
+    ) -> None:
+        with self.session_factory.begin() as session:
+            workspace = self._require_workspace_owner(session, actor_id, workspace_id)
+            member = session.get(WorkspaceMemberRecord, (workspace_id, member_user_id))
+            if member is None:
+                raise WorkspaceMemberNotFoundError(member_user_id)
+            self._require_remaining_owner(session, workspace, member)
+            session.delete(member)
 
     def list(self, workspace_id: str) -> list[Paper]:
         with self.session_factory() as session:
@@ -1693,6 +1809,10 @@ class PaperStore:
                 metadata_json=source_metadata, created_at=datetime.now(timezone.utc),
             )
             session.add(source)
+            # SourceSpan has only the scalar source_version_id, not an ORM
+            # relationship.  Flush the parent explicitly before adding spans so
+            # PostgreSQL always observes the immutable source first.
+            session.flush()
             records: list[SourceSpanRecord] = []
             for item in spans:
                 line_start, line_end = item.get("line_start"), item.get("line_end")

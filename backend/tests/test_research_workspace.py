@@ -185,6 +185,26 @@ def test_research_conversation_remembers_grounded_turns(tmp_path, monkeypatch):
         main.app.dependency_overrides.clear()
 
 
+def test_first_question_title_is_normalized_at_the_conversation_boundary(tmp_path):
+    setup_app(tmp_path)
+    try:
+        with TestClient(main.app) as client:
+            created = client.post(
+                "/api/research/conversations", headers=headers("alice"),
+                json={"title": "  最初の質問を使って、会話タイトルが自動的に作られることを確認したい  "},
+            )
+
+        assert created.status_code == 201
+        assert created.json()["title"] == "最初の質問を使って、会話タイトルが自動的に作られることを確認したい"
+    finally:
+        main.app.dependency_overrides.clear()
+
+
+def test_initial_conversation_title_is_normalized_and_bounded():
+    assert main._initial_conversation_title("  a\n b\t c ") == "a b c"
+    assert main._initial_conversation_title("x" * 65) == "x" * 63 + "…"
+
+
 def test_search_uses_agentic_rag_and_returns_generation_metadata(tmp_path, monkeypatch):
     setup_app(tmp_path)
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")

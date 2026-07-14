@@ -19,6 +19,8 @@ export type PaperDetail = components["schemas"]["PaperDetail"];
 export type PaperPage = components["schemas"]["PaperPage"];
 export type Me = components["schemas"]["MeResponse"];
 export type Workspace = components["schemas"]["Workspace"];
+export type WorkspaceMember = components["schemas"]["WorkspaceMember"];
+export type WorkspaceMemberRole = WorkspaceMember["role"];
 export type Tag = components["schemas"]["Tag"];
 export type Note = components["schemas"]["Note"];
 export type SearchHistory = components["schemas"]["SearchHistory"];
@@ -34,6 +36,7 @@ export type ResearchMemoryEvent = components["schemas"]["ResearchMemoryEvent"];
 export type ResearchMemoryPage = components["schemas"]["ResearchMemoryPage"];
 export type ResearchMemoryKind = ResearchMemoryEvent["kind"];
 export type LLMStatus = components["schemas"]["LLMStatus"];
+export type PaperMarkdownSummary = components["schemas"]["PaperMarkdownSummary"];
 export type GraphSnapshot = components["schemas"]["GraphSnapshot"];
 export type SourceVersion = components["schemas"]["SourceVersion"];
 export type SourceVersionCreate = components["schemas"]["SourceVersionCreate"];
@@ -42,9 +45,13 @@ export type SourceImportResult = components["schemas"]["SourceImportResult"];
 export type SourceSpan = components["schemas"]["SourceSpan"];
 export type KnowledgeNode = components["schemas"]["KnowledgeNode"];
 export type KnowledgeNodeCreate = components["schemas"]["KnowledgeNodeCreate"];
+export type KnowledgeNodeStatusUpdate = components["schemas"]["KnowledgeNodeStatusUpdate"];
+export type KnowledgeNodeStatusResult = components["schemas"]["KnowledgeNodeStatusResult"];
 export type KnowledgeEdge = components["schemas"]["KnowledgeEdge"];
 export type KnowledgeEdgeCreate = components["schemas"]["KnowledgeEdgeCreate"];
 export type KnowledgeEdgeStatusUpdate = components["schemas"]["KnowledgeEdgeStatusUpdate"];
+export type GraphRetrieveRequest = components["schemas"]["GraphRetrieveRequest"];
+export type GraphRetrievalHit = components["schemas"]["GraphRetrievalHit"];
 
 export type ResearchMessagePageOptions = { limit?: number; beforeOrdinal?: number | null };
 export type ResearchMemoryPageOptions = ResearchMessagePageOptions & { kind?: ResearchMemoryKind | null };
@@ -103,6 +110,34 @@ export async function renameWorkspace(workspaceId: string, name: string, signal?
   return unwrap(result, "ワークスペース名を変更できませんでした");
 }
 
+export async function listWorkspaceMembers(workspaceId: string, signal?: AbortSignal): Promise<WorkspaceMember[]> {
+  const result = await api.GET("/api/workspaces/{workspace_id}/members", {
+    params: { path: { workspace_id: workspaceId } }, signal,
+  });
+  return unwrap(result, "プロジェクトメンバーを取得できませんでした");
+}
+
+export async function addWorkspaceMember(workspaceId: string, body: { email?: string; subject?: string; role: WorkspaceMemberRole }, signal?: AbortSignal): Promise<WorkspaceMember> {
+  const result = await api.POST("/api/workspaces/{workspace_id}/members", {
+    params: { path: { workspace_id: workspaceId } }, body, signal,
+  });
+  return unwrap(result, "メンバーを追加できませんでした");
+}
+
+export async function updateWorkspaceMemberRole(workspaceId: string, memberUserId: string, role: WorkspaceMemberRole, signal?: AbortSignal): Promise<WorkspaceMember> {
+  const result = await api.PATCH("/api/workspaces/{workspace_id}/members/{member_user_id}", {
+    params: { path: { workspace_id: workspaceId, member_user_id: memberUserId } }, body: { role }, signal,
+  });
+  return unwrap(result, "メンバー権限を変更できませんでした");
+}
+
+export async function removeWorkspaceMember(workspaceId: string, memberUserId: string, signal?: AbortSignal): Promise<void> {
+  const result = await api.DELETE("/api/workspaces/{workspace_id}/members/{member_user_id}", {
+    params: { path: { workspace_id: workspaceId, member_user_id: memberUserId } }, signal,
+  });
+  if (result.error !== undefined || !result.response.ok) throw apiErrorFromResponse(result.response, result.error, "メンバーを削除できませんでした");
+}
+
 export async function listPapers(signal?: AbortSignal): Promise<Paper[]> {
   const result = await api.GET("/api/papers", { signal });
   return unwrap(result, "論文一覧を取得できませんでした");
@@ -134,6 +169,12 @@ export async function createGraphNode(body: KnowledgeNodeCreate, signal?: AbortS
   return unwrap(await api.POST("/api/graph/nodes", { body, signal }), "知識ノードを作成できませんでした");
 }
 
+export async function updateGraphNodeStatus(nodeId: string, body: KnowledgeNodeStatusUpdate, signal?: AbortSignal): Promise<KnowledgeNodeStatusResult> {
+  return unwrap(await api.PATCH("/api/graph/nodes/{node_id}/status", {
+    params: { path: { node_id:nodeId } }, body, signal,
+  }), "知識ノードの状態を更新できませんでした");
+}
+
 export async function createGraphEdge(body: KnowledgeEdgeCreate, signal?: AbortSignal): Promise<KnowledgeEdge> {
   return unwrap(await api.POST("/api/graph/edges", { body, signal }), "知識エッジを作成できませんでした");
 }
@@ -144,12 +185,22 @@ export async function updateGraphEdgeStatus(edgeId: string, body: KnowledgeEdgeS
   }), "知識エッジの状態を更新できませんでした");
 }
 
+export async function retrieveGraph(body: GraphRetrieveRequest, signal?: AbortSignal): Promise<GraphRetrievalHit[]> {
+  return unwrap(await api.POST("/api/graph/retrieve", { body, signal }), "グラフを展開できませんでした");
+}
+
 export async function getPaperDetail(paperId: string, signal?: AbortSignal): Promise<PaperDetail> {
   const result = await api.GET("/api/papers/{paper_id}", {
     params: { path: { paper_id: paperId } },
     signal,
   });
   return unwrap(result, "論文詳細を取得できませんでした");
+}
+
+export async function generatePaperSummary(paperId: string, signal?: AbortSignal): Promise<PaperMarkdownSummary> {
+  return unwrap(await api.POST("/api/papers/{paper_id}/summary", {
+    params: { path: { paper_id: paperId } }, signal,
+  }), "論文要約を生成できませんでした");
 }
 
 export async function getPaperPage(paperId: string, page: number, signal?: AbortSignal): Promise<PaperPage> {

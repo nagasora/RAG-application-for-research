@@ -1,0 +1,57 @@
+# Render Blueprint for a disposable PaperPilot public-preview API.
+#
+# This intentionally omits Celery/Redis. Inline ingestion keeps the preview to
+# one API service, but uploaded PDFs remain on its ephemeral filesystem. See
+# docs/RENDER_DEPLOYMENT.md before using this with real research data.
+services:
+  - type: web
+    runtime: docker
+    name: paperpilot-api
+    region: singapore
+    plan: free
+    rootDir: backend
+    dockerfilePath: Dockerfile
+    dockerContext: .
+    dockerCommand: >-
+      sh -c 'python -m alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port "$PORT"'
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: paperpilot-db
+          property: connectionString
+      - key: AUTH_MODE
+        value: oidc
+      - key: OIDC_ISSUER
+        sync: false
+      - key: OIDC_AUDIENCE
+        sync: false
+      - key: OIDC_JWKS_URL
+        sync: false
+      - key: FRONTEND_ORIGIN
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-5.4-nano
+      - key: OPENAI_EMBEDDING_MODEL
+        value: text-embedding-3-small
+      - key: EMBEDDING_PROVIDER
+        value: openai
+      - key: RAG_REQUEST_DEADLINE_SECONDS
+        value: "25"
+      - key: INGESTION_MODE
+        value: inline
+      - key: ENABLE_OCR
+        value: "false"
+      - key: PAPER_ORIGINAL_STORAGE_DIR
+        value: /app/data/originals
+      - key: PAPER_ASSET_STORAGE_DIR
+        value: /app/data/assets
+
+databases:
+  - name: paperpilot-db
+    region: singapore
+    plan: free
+    databaseName: paperpilot
+    user: paperpilot
