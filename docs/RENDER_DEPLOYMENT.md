@@ -59,7 +59,7 @@ Auth0 SPA の Application Settings では、Web の公開URLを `Allowed Callbac
 
 ## 最小構成の制約
 
-- `INGESTION_MODE=inline` です。PDF の抽出中は API リクエストが完了するまで待ちます。
+- `INGESTION_MODE=background` です。アップロードはすぐに `202 Accepted` とジョブ ID を返し、PDF の抽出状況は `/api/jobs/{job_id}` で確認します。単一 API プロセス内の簡易キューのため、サービス再起動中のジョブは完了できません。本番の確実な再試行には Celery worker + Redis を使ってください。
 - OCR は無効です。必要になったら、まず有料 worker と共有オブジェクトストレージへ移行します。
 - Free Web Service は 15 分無アクセスで停止し、次のアクセス時には起動待ちが発生します。
 - Free Web Service は persistent disk を利用できません。

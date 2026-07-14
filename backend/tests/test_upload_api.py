@@ -85,6 +85,42 @@ def test_parse_failure_is_retained_as_failed_and_duplicate_is_rejected(tmp_path)
         main.app.dependency_overrides.clear()
 
 
+def test_background_upload_returns_a_durable_processing_job_before_extraction(tmp_path, monkeypatch):
+    """A deployed PDF upload must not wait for extraction in the HTTP request."""
+    store = make_store(tmp_path)
+    originals = LocalOriginalStorage(tmp_path / "originals")
+    main.app.dependency_overrides[main.get_store] = lambda: store
+    main.app.dependency_overrides[main.get_original_storage] = lambda: originals
+    monkeypatch.setenv("INGESTION_MODE", "background")
+    invoked: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        main,
+        "run_background_ingestion",
+        lambda _store, _originals, job_id, paper_id: invoked.append((job_id, paper_id)),
+    )
+    try:
+        with TestClient(main.app) as client:
+            response = client.post(
+                "/api/papers/upload",
+                data={"user_id": "u"},
+                headers=dev("u"),
+                files={"files": ("queued.txt", b"background extraction", "text/plain")},
+            )
+
+        assert response.status_code == 202
+        result = response.json()[0]
+        assert result["success"] is True
+        assert result["status"] == "processing"
+        assert result["paper"]["status"] == "processing"
+        assert result["job"]["status"] == "queued"
+        assert invoked == [(result["job"]["id"], result["paper"]["id"])]
+        papers = store.list(personal_workspace(store, "u").id)
+        assert len(papers) == 1
+        assert papers[0].status == "processing"
+    finally:
+        main.app.dependency_overrides.clear()
+
+
 def test_detail_evidence_file_range_and_delete_are_owner_scoped(tmp_path):
     store = make_store(tmp_path)
     originals = LocalOriginalStorage(tmp_path / "originals")

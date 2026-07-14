@@ -42,7 +42,10 @@ services:
       - key: RAG_REQUEST_DEADLINE_SECONDS
         value: "25"
       - key: INGESTION_MODE
-        value: inline
+        # Free Render instances can take longer than the browser/proxy request
+        # window for PDF extraction.  Return a durable job and process locally
+        # after the upload response; the client polls /api/jobs/{job_id}.
+        value: background
       - key: ENABLE_OCR
         value: "false"
       - key: PAPER_ORIGINAL_STORAGE_DIR
