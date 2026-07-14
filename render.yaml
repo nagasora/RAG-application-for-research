@@ -12,6 +12,9 @@ services:
     rootDir: backend
     dockerfilePath: Dockerfile
     dockerContext: .
+    # Keep this explicit: Render preserves an existing Docker command when the
+    # field is omitted from a later Blueprint sync.
+    dockerCommand: /app/start.sh
     healthCheckPath: /api/health
     envVars:
       - key: DATABASE_URL
