@@ -20,7 +20,8 @@ test("knowledge graph snapshot remains typed and grounded endpoints stay public 
   assert.equal(spec.components.schemas.SourceSpanCreate, undefined);
   assert.equal(spec.components.schemas.SourceImportCreate.properties.content_hash.type, "string");
   assert.equal(edge.requestBody.content["application/json"].schema.$ref, "#/components/schemas/KnowledgeEdgeCreate");
-  assert.equal(spec.components.schemas.KnowledgeEdgeCreate.properties.evidence_span_ids.minItems, 1);
+  assert.equal(spec.components.schemas.KnowledgeEdgeCreate.properties.evidence_span_ids.maxItems, 32);
+  assert.equal(spec.components.schemas.KnowledgeEdgeCreate.properties.evidence_links.items.$ref, "#/components/schemas/EvidenceLinkCreate");
   assert.equal(edgeStatus.requestBody.content["application/json"].schema.$ref, "#/components/schemas/KnowledgeEdgeStatusUpdate");
   assert.equal(spec.components.schemas.KnowledgeEdgeCreate.properties.relation.enum.length, 8);
   assert.equal(retrieve.requestBody.content["application/json"].schema.$ref, "#/components/schemas/GraphRetrieveRequest");

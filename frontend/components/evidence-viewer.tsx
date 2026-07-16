@@ -96,13 +96,22 @@ export function EvidenceViewer({ target, canWrite, onClose }: EvidenceViewerProp
   }, [onClose]);
 
   useEffect(() => {
+    const move = (event: KeyboardEvent) => {
+      if (event.altKey || event.ctrlKey || event.metaKey || event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
+      if (event.key === "ArrowLeft" && page > 1) { event.preventDefault(); movePage(page - 1); }
+      if (event.key === "ArrowRight" && detail && page < detail.page_count) { event.preventDefault(); movePage(page + 1); }
+    };
+    document.addEventListener("keydown", move); return () => document.removeEventListener("keydown", move);
+  }, [page, detail]);
+
+  useEffect(() => {
     const controller = new AbortController();
     setLoadingDetail(true); setDetail(null); setError("");
     getPaperDetail(target.paperId, controller.signal)
       .then(setDetail)
       .catch(requestError => {
         const normalized = toApiError(requestError, "論文詳細を取得できませんでした");
-        if (normalized.code !== "aborted") setError(normalized.message);
+        if (normalized.code !== "aborted") setError(`原典または抽出spanを開けませんでした: ${normalized.message}。原本が削除・移動された場合は、取り込み履歴を確認してください。`);
       })
       .finally(() => { if (!controller.signal.aborted) setLoadingDetail(false); });
     return () => controller.abort();
@@ -169,10 +178,10 @@ export function EvidenceViewer({ target, canWrite, onClose }: EvidenceViewerProp
   const visibleElements = pageElements.filter(item => item.kind === "table" || item.kind === "figure").slice(0, 50);
   const summaryCitations = paperSummary?.citations ?? [];
 
-  const movePage = (nextPage: number) => {
+  function movePage(nextPage: number) {
     setChunkId(undefined);
     setPage(nextPage);
-  };
+  }
 
   const generateSummary = async () => {
     if (!canWrite || summaryBusy) return;
@@ -228,11 +237,12 @@ export function EvidenceViewer({ target, canWrite, onClose }: EvidenceViewerProp
       </header>
 
       {error ? <div className="m-5 rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-800" role="alert"><p>{error}</p><button onClick={onClose} className="mt-4 rounded-full border border-red-300 px-4 py-2 font-semibold">閉じる</button></div> :
-      <div className={`grid min-h-0 flex-1 ${isPdf && hasOriginal ? "lg:grid-cols-[minmax(0,1.45fr)_minmax(340px,.55fr)]" : "grid-cols-1"}`}>
+      <div className={`grid min-h-0 flex-1 ${isPdf && hasOriginal ? "lg:grid-cols-[minmax(0,1fr)_260px_minmax(340px,.65fr)]" : "grid-cols-1"}`}>
         {isPdf && hasOriginal && <section aria-label={`PDF原本 ${page}ページ`} className="relative min-h-[42vh] border-b border-[#d9dbd4] bg-[#343c38] lg:min-h-0 lg:border-b-0 lg:border-r">
           <div className="pointer-events-none absolute left-3 top-3 z-10 rounded-full bg-[#10231b] px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-white shadow-lg">PDF原本 · スクロール可能</div>
           {loadingDetail || loadingFile ? <Loading label="認証済みPDFを準備しています" /> : fileUrl ? <iframe key={fileUrl} src={fileUrl} title={`${title} ${page}ページ`} className="h-full min-h-[42vh] w-full bg-white lg:min-h-0" /> : <div role="alert" className="grid h-full min-h-[42vh] place-items-center p-8 text-center text-sm text-red-100">{fileError || "PDFを表示できませんでした"}</div>}
         </section>}
+        {isPdf && hasOriginal && <aside aria-label="引用一覧" className="hidden min-h-0 overflow-y-auto border-r border-[#d9dbd4] bg-[#edf0eb] p-3 lg:block"><h3 className="text-xs font-bold uppercase tracking-wider text-[#52605b]">Citation / span</h3><p className="mt-1 text-[10px] leading-4 text-[#68736f]">引用を選ぶと、右の抽出原文へ移動します。</p><div className="mt-3 space-y-2">{chunks.map((item, index) => <button type="button" key={item.id} onClick={() => setFocusedChunk(item)} className={`w-full rounded-xl border p-3 text-left text-xs ${item.id === focusedChunk?.id ? "border-[#5d9878] bg-[#e3f1e8]" : "border-[#d4dbd5] bg-white"}`}><span className="font-bold text-[#a06a28]">[{index + 1}] {item.section}</span><p className="mt-1 line-clamp-4 leading-5 text-[#52605b]">{item.text}</p></button>)}{!chunks.length && <p className="rounded-xl border border-dashed p-3 text-xs text-[#68736f]">このページに引用可能な抽出spanはありません。</p>}</div></aside>}
         <section aria-label="抽出された根拠テキスト" className="min-h-0 overflow-y-auto overscroll-contain p-5 md:p-7">
           <div className="sticky top-0 z-10 -mx-5 -mt-5 mb-5 flex items-center justify-between gap-3 border-b border-[#d9dbd4] bg-[#f6f4ee]/95 px-5 py-4 shadow-sm backdrop-blur md:-mx-7 md:-mt-7 md:px-7">
             <div><div className="flex items-center gap-2"><DocumentTextIcon className="h-5 w-5 text-[#164f3b]" /><h3 className="font-semibold">抽出テキスト</h3></div>{paperPage && <p className="mt-1 text-[10px] text-[#68736f]">{paperPage.text_source === "ocr" ? "OCR" : paperPage.text_source === "native" ? "原文抽出" : "テキストなし"} · 品質 {Math.round(paperPage.quality * 100)}%</p>}</div>
@@ -244,6 +254,8 @@ export function EvidenceViewer({ target, canWrite, onClose }: EvidenceViewerProp
           </div>
 
           {loadingPage ? <Loading label="ページの根拠を読み込んでいます" /> : <>
+            {paperPage?.text_source === "none" && <p role="alert" className="mb-4 rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-900">抽出テキストがありません。原本PDFを確認するか、OCR設定・取り込み結果を運用者に確認してください。</p>}
+            {paperPage?.text_source === "ocr" && paperPage.quality < 0.7 && <p role="alert" className="mb-4 rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-900">低品質OCR（{Math.round(paperPage.quality * 100)}%）です。引用・数値・数式は必ず原本PDFと照合してください。</p>}
             {focusedChunk && <div className="mb-5 rounded-2xl border-2 border-[#6f9d86] bg-[#eaf3ee] p-4" aria-label="引用された箇所"><p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-[#35634f]">Selected evidence · {focusedChunk.section}</p><p className="whitespace-pre-wrap text-sm leading-7">{focusedChunk.text}</p></div>}
             {chunks.length ? <div className="space-y-4">{chunks.map(item => <article key={item.id} className={`rounded-2xl border p-4 ${item.id === focusedChunk?.id ? "border-[#6f9d86] bg-[#eef6f1]" : "border-[#deddd5] bg-white/70"}`}><p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-[#7a837f]">{item.section}</p><p className="whitespace-pre-wrap text-sm leading-7 text-[#38443f]">{item.text}</p></article>)}</div> : extractedText ? <p className="whitespace-pre-wrap text-sm leading-7">{extractedText}</p> : <p className="rounded-2xl bg-white/65 p-5 text-sm text-[#68736f]">このページから抽出されたテキストはありません。</p>}
             <section aria-labelledby="document-elements-title" className="mt-8"><h3 id="document-elements-title" className="serif text-xl font-semibold">表・図版</h3>{assetsLoading ? <p role="status" className="mt-3 text-xs text-[#68736f]">文書要素を読み込んでいます…</p> : assetError ? <p role="alert" className="mt-3 text-xs text-red-700">{assetError}</p> : visibleElements.length ? <div className="mt-4 space-y-5">{visibleElements.map(element => element.kind === "table" ? <SafeTable key={element.id} element={element}/> : <AssetFigure key={element.id} paperId={target.paperId} element={element} caption={captionFor(pageElements, element)}/>)}</div> : <p className="mt-3 text-xs text-[#68736f]">このページに抽出済みの表・図版はありません。</p>}{pageElements.filter(item => item.kind === "table" || item.kind === "figure").length > 50 && <p className="mt-3 text-xs text-amber-800">表示上限50件まで表示しています。</p>}{assets.length > 100 && <p className="mt-2 text-xs text-amber-800">文書全体の要素が多いため、現在ページのみを優先表示しています。</p>}</section>

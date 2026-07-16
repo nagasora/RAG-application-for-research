@@ -28,10 +28,12 @@ from pypdf import PdfReader
 from .auth import get_current_principal
 from .agentic_rag import AgenticRAG
 from .models import (
-    AnalysisRequest, Chunk, ComparisonRow, ExternalPaperRequest, LLMStatus, MeResponse, Paper, PaperDetail, PaperMarkdownSummary,
-    DocumentElement, IngestionJob, Note, NoteCreate, NoteUpdate, PaperPage, PaperSummary, PaperTagsUpdate, Principal,
-    ResearchGap, SavedComparison, SavedComparisonCreate, SearchHistory, SearchRequest,
+    AnalysisRequest, Chunk, ComparisonRow, ExternalPaperRequest, LLMStatus, OperationsStatus, MeResponse, Paper, PaperDetail, PaperMarkdownSummary,
+    DocumentElement, IngestionJob, Note, NoteCreate, NoteUpdate, PaperDecision, PaperDecisionUpdate, PaperLibraryPage, PaperPage, PaperSummary, PaperTagsBulkUpdate, PaperTagsUpdate, Principal,
+    Citation, ResearchGap, SavedComparison, SavedComparisonCreate, SearchHistory, SearchPreviewResponse, SearchRequest,
     SearchResponse, Tag, TagCreate, UploadResult, User, Workspace, WorkspaceCreate,
+    ResearchQuestion, ResearchQuestionCreate, ResearchQuestionUpdate, SourceSet, SourceSetCreate, SourceSetUpdate,
+    ResearchRun, ResearchRunCreate, RunArtifact, RunArtifactCreate,
     ResearchConversation, ResearchConversationCreate, ResearchConversationDetail,
     ResearchMemoryPage, ResearchMessagePage,
     WorkspaceMember, WorkspaceMemberCreate, WorkspaceMemberUpdate,
@@ -40,12 +42,16 @@ from .models import (
     KnowledgeNodeCreate, KnowledgeNodeStatusResult, KnowledgeNodeStatusUpdate, NodeFeedback,
     NodeFeedbackCreate, ReasoningRun, ReasoningRunCreate, SourceSpan,
     SourceImportCreate, SourceImportResult, SourceVersion, SourceVersionCreate,
+    HypothesisCard, HypothesisCardCreate, HypothesisCardStatusUpdate,
+    DiscoveryItem, DiscoveryItemCreate, DiscoveryReviewUpdate,
+    BeliefEvent, BeliefEventCreate, ExperimentPlan, ExperimentPlanCreate, ExperimentPlanSnapshot, ExperimentResultCreate, Idea, IdeaCreate, IdeaUpdate,
+    ReviewAssignmentUpdate, ReviewCommentCreate, ReviewDecisionCreate, ReviewThread, ReviewThreadCreate,
 )
 from .graph_rag import GraphEdge as RetrievalGraphEdge, PrunedTwoHopConfig, RetrievalSeed, pruned_two_hop_retrieve
 from .source_parsers import SourceParseLimitError, parse_source
 from .rag import (
     ANSWER_MODEL, chunk_pages, citations_from, compare_papers, embed_texts, embedding_config, embedding_model, extractive_answer,
-    hybrid_search, research_gaps, search,
+    hybrid_search, reciprocal_rank_fusion, research_gaps, search,
 )
 from .ingestion import process_ingestion_job
 from .storage import ImmutableObjectExists, LocalOriginalStorage, OriginalStorage, storage_from_environment
@@ -371,6 +377,22 @@ def health(store: PaperStore = Depends(get_store)) -> dict[str, str]:
     return {"status": "ok", "database": "ok"}
 
 
+@app.get("/api/operations/status", response_model=OperationsStatus)
+def operations_status(current: CurrentUser = Depends(get_current_user)) -> OperationsStatus:
+    """Configuration-only operational readiness; never probes Redis or providers."""
+    mode = os.getenv("INGESTION_MODE", "inline").strip().lower()
+    mode = mode if mode in {"inline", "celery"} else "inline"
+    configured = bool(os.getenv("CELERY_BROKER_URL")) and bool(os.getenv("CELERY_RESULT_BACKEND"))
+    warnings = []
+    if mode == "celery" and not configured:
+        warnings.append("celery mode requires broker and result backend URLs")
+    if mode != "celery":
+        warnings.append("Celery is required before production asynchronous ingestion")
+    return OperationsStatus(ingestion_mode=mode, celery_required=True, celery_configured=configured,
+        retry_limit=int(os.getenv("INGESTION_MAX_ATTEMPTS", "3")), embedding_retry_limit=int(os.getenv("EMBEDDING_MAX_ATTEMPTS", "3")),
+        backup_restore_runbook="docs/OPERATIONS_RUNBOOK.md#backup-restore", ci017_outbox_note="CI-017 partial failures require compensating storage actions and queued-job reaping.", warnings=warnings)
+
+
 @app.get("/api/me", response_model=MeResponse)
 def me(current: CurrentUser = Depends(get_current_user)) -> MeResponse:
     return MeResponse(user=current.user, personal_workspace=current.personal_workspace)
@@ -514,6 +536,250 @@ def remove_workspace_member(
     return Response(status_code=204)
 
 
+@app.get("/api/research/questions", response_model=list[ResearchQuestion])
+def list_research_questions(
+    store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context),
+) -> list[ResearchQuestion]:
+    return store.list_research_questions(context.workspace.id)
+
+
+@app.post("/api/research/questions", response_model=ResearchQuestion, status_code=201)
+def create_research_question(
+    body: ResearchQuestionCreate, store: PaperStore = Depends(get_store),
+    context: WorkspaceContext = Depends(get_workspace_context),
+) -> ResearchQuestion:
+    require_workspace_write(context)
+    return store.create_research_question(
+        context.workspace.id, context.user.id, title=body.title, question=body.question,
+    )
+
+
+@app.get("/api/research/questions/{question_id}", response_model=ResearchQuestion)
+def get_research_question(
+    question_id: str, store: PaperStore = Depends(get_store),
+    context: WorkspaceContext = Depends(get_workspace_context),
+) -> ResearchQuestion:
+    try:
+        return store.get_research_question(context.workspace.id, question_id)
+    except PaperNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="research question not found") from exc
+
+
+@app.patch("/api/research/questions/{question_id}", response_model=ResearchQuestion)
+def update_research_question(
+    question_id: str, body: ResearchQuestionUpdate, store: PaperStore = Depends(get_store),
+    context: WorkspaceContext = Depends(get_workspace_context),
+) -> ResearchQuestion:
+    require_workspace_write(context)
+    try:
+        return store.update_research_question(
+            context.workspace.id, question_id, title=body.title, question=body.question,
+        )
+    except PaperNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="research question not found") from exc
+
+
+@app.delete("/api/research/questions/{question_id}", status_code=204)
+def delete_research_question(
+    question_id: str, store: PaperStore = Depends(get_store),
+    context: WorkspaceContext = Depends(get_workspace_context),
+) -> Response:
+    require_workspace_write(context)
+    if not store.delete_research_question(context.workspace.id, question_id):
+        raise HTTPException(status_code=404, detail="research question not found")
+    return Response(status_code=204)
+
+
+@app.get("/api/source-sets", response_model=list[SourceSet])
+def list_source_sets(
+    store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context),
+) -> list[SourceSet]:
+    return store.list_source_sets(context.workspace.id)
+
+
+@app.post("/api/source-sets", response_model=SourceSet, status_code=201)
+def create_source_set(
+    body: SourceSetCreate, store: PaperStore = Depends(get_store),
+    context: WorkspaceContext = Depends(get_workspace_context),
+) -> SourceSet:
+    require_workspace_write(context)
+    try:
+        return store.create_source_set(
+            context.workspace.id, context.user.id, name=body.name,
+            description=body.description, paper_ids=body.paper_ids,
+        )
+    except PaperNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="paper not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/source-sets/{source_set_id}", response_model=SourceSet)
+def get_source_set(
+    source_set_id: str, store: PaperStore = Depends(get_store),
+    context: WorkspaceContext = Depends(get_workspace_context),
+) -> SourceSet:
+    try:
+        return store.get_source_set(context.workspace.id, source_set_id)
+    except PaperNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="source set not found") from exc
+
+
+@app.patch("/api/source-sets/{source_set_id}", response_model=SourceSet)
+def update_source_set(
+    source_set_id: str, body: SourceSetUpdate, store: PaperStore = Depends(get_store),
+    context: WorkspaceContext = Depends(get_workspace_context),
+) -> SourceSet:
+    require_workspace_write(context)
+    try:
+        return store.update_source_set(
+            context.workspace.id, source_set_id, name=body.name,
+            description=body.description, paper_ids=body.paper_ids,
+        )
+    except PaperNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="source set or paper not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.delete("/api/source-sets/{source_set_id}", status_code=204)
+def delete_source_set(
+    source_set_id: str, store: PaperStore = Depends(get_store),
+    context: WorkspaceContext = Depends(get_workspace_context),
+) -> Response:
+    require_workspace_write(context)
+    if not store.delete_source_set(context.workspace.id, source_set_id):
+        raise HTTPException(status_code=404, detail="source set not found")
+    return Response(status_code=204)
+
+
+@app.get("/api/ideas", response_model=list[Idea])
+def list_ideas(store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    return store.list_ideas(context.workspace.id)
+
+@app.post("/api/ideas", response_model=Idea, status_code=201)
+def create_idea(body: IdeaCreate, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    require_workspace_write(context)
+    try: return store.create_idea(context.workspace.id, context.user.id, body)
+    except PaperNotFoundError as exc: raise HTTPException(status_code=404, detail="idea anchor not found") from exc
+    except ValueError as exc: raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+@app.patch("/api/ideas/{idea_id}", response_model=Idea)
+def update_idea(idea_id: str, body: IdeaUpdate, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    require_workspace_write(context)
+    try: return store.update_idea(context.workspace.id, idea_id, body)
+    except PaperNotFoundError as exc: raise HTTPException(status_code=404, detail="idea or anchor not found") from exc
+    except ValueError as exc: raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+@app.post("/api/ideas/{idea_id}/promote", response_model=Idea)
+def promote_idea(idea_id: str, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    require_workspace_write(context)
+    try: return store.promote_idea(context.workspace.id, context.user.id, idea_id)
+    except PaperNotFoundError as exc: raise HTTPException(status_code=404, detail="idea not found") from exc
+    except ValueError as exc: raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/reviews", response_model=list[ReviewThread])
+def list_review_threads(store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    return store.list_review_threads(context.workspace.id)
+
+
+@app.post("/api/reviews", response_model=ReviewThread, status_code=201)
+def create_review_thread(body: ReviewThreadCreate, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    require_workspace_write(context)
+    try: return store.create_review_thread(context.workspace.id, context.user.id, body)
+    except PaperNotFoundError as exc: raise HTTPException(status_code=404, detail="review anchor or assignee not found") from exc
+    except ValueError as exc: raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/reviews/report.md")
+def export_review_report(store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    return Response(
+        content=store.export_review_report_markdown(context.workspace.id),
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="paperpilot-review-report.md"'},
+    )
+
+
+@app.get("/api/reviews/{thread_id}", response_model=ReviewThread)
+def get_review_thread(thread_id: str, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    try: return store.get_review_thread(context.workspace.id, thread_id)
+    except PaperNotFoundError as exc: raise HTTPException(status_code=404, detail="review thread not found") from exc
+
+
+@app.patch("/api/reviews/{thread_id}/assignment", response_model=ReviewThread)
+def assign_review_thread(thread_id: str, body: ReviewAssignmentUpdate, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    require_workspace_write(context)
+    try: return store.assign_review_thread(context.workspace.id, thread_id, body.assigned_to)
+    except PaperNotFoundError as exc: raise HTTPException(status_code=404, detail="review thread or assignee not found") from exc
+
+
+@app.post("/api/reviews/{thread_id}/comments", response_model=ReviewThread)
+def add_review_comment(thread_id: str, body: ReviewCommentCreate, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    require_workspace_write(context)
+    try: return store.add_review_comment(context.workspace.id, thread_id, context.user.id, body.body)
+    except PaperNotFoundError as exc: raise HTTPException(status_code=404, detail="review thread not found") from exc
+
+
+@app.post("/api/reviews/{thread_id}/decisions", response_model=ReviewThread)
+def add_review_decision(thread_id: str, body: ReviewDecisionCreate, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    require_workspace_write(context)
+    try: return store.add_review_decision(
+        context.workspace.id, thread_id, context.user.id,
+        verdict=body.verdict, reason=body.reason,
+    )
+    except PaperNotFoundError as exc: raise HTTPException(status_code=404, detail="review thread not found") from exc
+
+@app.get("/api/research/runs", response_model=list[ResearchRun])
+def list_research_runs(store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    return store.list_research_runs(context.workspace.id)
+
+
+@app.post("/api/research/runs", response_model=ResearchRun, status_code=201)
+def create_research_run(
+    body: ResearchRunCreate, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context),
+):
+    require_workspace_write(context)
+    try:
+        return store.create_research_run(context.workspace.id, context.user.id, **body.model_dump())
+    except PaperNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="research question, source set, or paper not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/research/runs/{run_id}", response_model=ResearchRun)
+def get_research_run(run_id: str, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    try:
+        return store.get_research_run(context.workspace.id, run_id)
+    except PaperNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="research run not found") from exc
+
+
+@app.post("/api/research/runs/{run_id}/artifacts", response_model=RunArtifact, status_code=201)
+def append_run_artifact(
+    run_id: str, body: RunArtifactCreate, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context),
+):
+    require_workspace_write(context)
+    try:
+        return store.append_run_artifact(context.workspace.id, run_id, kind=body.kind, payload=body.payload)
+    except PaperNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="research run not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/research/runs/{run_id}/cancel", response_model=ResearchRun)
+def cancel_research_run(run_id: str, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    require_workspace_write(context)
+    try:
+        return store.cancel_research_run(context.workspace.id, run_id)
+    except PaperNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="research run not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @app.get("/api/papers", response_model=list[PaperSummary])
 def list_papers(
     user_id: str | None = Query(default=None, deprecated=True),
@@ -524,6 +790,45 @@ def list_papers(
         summary(paper)
         for paper in sorted(store.list(context.workspace.id), key=lambda p: p.created_at, reverse=True)
     ]
+
+
+@app.get("/api/library/papers", response_model=PaperLibraryPage)
+def list_library_papers(
+    page: int = Query(default=1, ge=1), page_size: int = Query(default=50, ge=1, le=100),
+    query: str = Query(default="", max_length=500), status: str | None = None, source: str | None = None,
+    tag_id: str | None = None, source_set_id: str | None = None,
+    decision: Literal["undecided", "included", "excluded"] | None = None,
+    store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context),
+) -> PaperLibraryPage:
+    try:
+        return store.list_library_page(context.workspace.id, page=page, page_size=page_size, query=query, status=status, source=source, tag_id=tag_id, source_set_id=source_set_id, decision=decision)
+    except PaperNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="source set not found") from exc
+
+
+@app.put("/api/papers/{paper_id}/decision", response_model=PaperDecision)
+def set_paper_decision(
+    paper_id: str, body: PaperDecisionUpdate, store: PaperStore = Depends(get_store),
+    context: WorkspaceContext = Depends(get_workspace_context),
+) -> PaperDecision:
+    require_workspace_write(context)
+    try:
+        return store.update_paper_decision(context.workspace.id, paper_id, decision=body.decision, reason=body.reason)
+    except PaperNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="paper not found") from exc
+
+
+@app.post("/api/papers/bulk/tags", status_code=204)
+def bulk_update_paper_tags(
+    body: PaperTagsBulkUpdate, store: PaperStore = Depends(get_store),
+    context: WorkspaceContext = Depends(get_workspace_context),
+) -> Response:
+    require_workspace_write(context)
+    try:
+        store.bulk_update_paper_tags(context.workspace.id, body.paper_ids, body.tag_ids, operation=body.operation)
+    except PaperNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="paper or tag not found") from exc
+    return Response(status_code=204)
 
 
 @app.post("/api/papers/upload", response_model=list[UploadResult])
@@ -616,8 +921,23 @@ async def upload_papers(
             job = store.create_ingestion_job(context.workspace.id, paper.id)
         except Exception as exc:
             message = f"ingestion job creation failed: {exc}"
-            failed = store.mark_failed(paper.id, message)
-            results.append(UploadResult(filename=filename, success=False, status="failed", paper=summary(failed), error=message))
+            try:
+                failed = store.mark_failed(paper.id, message)
+                failed_summary = summary(failed)
+                status = "failed"
+            except Exception:
+                # Do not report a durable failed paper if its failure state could
+                # not be committed.  Best-effort compensation removes both the
+                # unqueueable record and its freshly written original.
+                try:
+                    store.delete(context.workspace.id, paper.id)
+                    if paper.storage_key:
+                        originals.delete(paper.storage_key)
+                except Exception:
+                    logger.exception("Could not compensate failed ingestion job creation: paper_id=%s", paper.id)
+                failed_summary = None
+                status = "rejected"
+            results.append(UploadResult(filename=filename, success=False, status=status, paper=failed_summary, error=message))
             continue
         if ingestion_mode == "celery":
             from .celery_app import enqueue_ingestion
@@ -827,22 +1147,62 @@ def delete_paper(
 ):
     require_workspace_write(context)
     try:
+        paper = store.get_owned(context.workspace.id, paper_id)
         extracted_assets = [element.asset_key for element in store.list_document_elements(context.workspace.id, paper_id) if element.asset_key]
     except PaperNotFoundError:
-        extracted_assets = []
+        raise HTTPException(status_code=404, detail="論文が見つかりません") from None
+    storage_keys = [key for key in [paper.storage_key, *extracted_assets] if key]
+    # Snapshot first, then delete the blobs before committing the DB deletion.
+    # If either phase fails, compensate the blobs so a paper is never reported
+    # deleted while its original/asset set is only partly removed.
+    snapshots: list[tuple[str, bytes]] = []
+    try:
+        for key in storage_keys:
+            try:
+                snapshots.append((key, originals.path_for(key).read_bytes()))
+            except FileNotFoundError:
+                pass
+        for key in storage_keys:
+            originals.delete(key)
+    except Exception as exc:
+        for key, content in snapshots:
+            try:
+                originals.put(key, content)
+            except ImmutableObjectExists:
+                pass
+            except Exception:
+                logger.exception("Could not restore paper storage after failed delete: key=%s", key)
+        raise HTTPException(status_code=503, detail="原本または抽出アセットを削除できなかったため、論文は保持されました") from exc
     try:
         deleted = store.delete(context.workspace.id, paper_id)
     except ResourceConflictError as exc:
+        for key, content in snapshots:
+            try:
+                originals.put(key, content)
+            except ImmutableObjectExists:
+                pass
+            except Exception:
+                logger.exception("Could not restore paper storage after rejected delete: key=%s", key)
         raise HTTPException(
             status_code=409,
             detail="この論文は知識グラフの根拠として使用されているため削除できません",
         ) from exc
+    except Exception as exc:
+        for key, content in snapshots:
+            try:
+                originals.put(key, content)
+            except ImmutableObjectExists:
+                pass
+            except Exception:
+                logger.exception("Could not restore paper storage after failed DB delete: key=%s", key)
+        raise HTTPException(status_code=500, detail="論文削除を完了できなかったため、原本を復元しました") from exc
     if not deleted:
+        for key, content in snapshots:
+            try:
+                originals.put(key, content)
+            except ImmutableObjectExists:
+                pass
         raise HTTPException(status_code=404, detail="論文が見つかりません")
-    if deleted.storage_key:
-        originals.delete(deleted.storage_key)
-    for asset_key in extracted_assets:
-        originals.delete(asset_key)
 
 
 def filtered_papers(body: SearchRequest, store: PaperStore, workspace_id: str) -> list[Paper]:
@@ -855,6 +1215,299 @@ def filtered_papers(body: SearchRequest, store: PaperStore, workspace_id: str) -
     if body.year_to is not None:
         papers = [p for p in papers if p.year is None or p.year <= body.year_to]
     return papers
+
+
+def _query_relevance(query: str, text: str) -> float:
+    """Small deterministic seed scorer; graph expansion remains bounded later."""
+    normalized_query, normalized_text = query.casefold().strip(), text.casefold()
+    raw_terms = re.findall(r"[a-z0-9_]+|[一-龯ぁ-んァ-ヶ]{2,}", normalized_query)
+    terms: list[str] = []
+    for term in raw_terms:
+        terms.append(term)
+        if re.search(r"[一-龯ぁ-んァ-ヶ]", term) and len(term) > 2:
+            terms.extend(term[index:index + 2] for index in range(len(term) - 1))
+    terms = list(dict.fromkeys(terms))
+    if not terms:
+        return 0.0
+    matched = sum(1 for term in terms if term in normalized_text)
+    exact_bonus = 0.25 if normalized_query and normalized_query in normalized_text else 0.0
+    return min(1.0, matched / len(terms) + exact_bonus)
+
+
+def _best_span_chunk(paper: Paper, span_text: str, page: int | None) -> Chunk | None:
+    """Resolve graph evidence to a real, clickable chunk on the same page."""
+    candidates = [chunk for chunk in paper.chunks if page is None or chunk.page == page]
+    if not candidates:
+        return None
+    span_terms = set(re.findall(r"[a-z0-9_]+|[一-龯ぁ-んァ-ヶ]{2,}", span_text.casefold()))
+
+    def overlap(chunk: Chunk) -> tuple[float, int, str]:
+        chunk_terms = set(re.findall(r"[a-z0-9_]+|[一-龯ぁ-んァ-ヶ]{2,}", chunk.text.casefold()))
+        lexical = len(span_terms & chunk_terms) / max(1, len(span_terms))
+        contains = 1.0 if span_text.strip() and span_text.strip() in chunk.text else 0.0
+        return (contains + lexical, -abs(len(chunk.text) - len(span_text)), chunk.id)
+
+    selected = max(candidates, key=overlap)
+    # A page match alone is not evidence that this chunk contains the quoted
+    # span.  Refuse to manufacture a clickable target when text overlap is zero.
+    return selected if overlap(selected)[0] > 0 else None
+
+
+def _paper_backed_graph_citation(
+    store: PaperStore, workspace_id: str, allowed_papers: dict[str, Paper], *,
+    evidence, source_kind: Literal["graph_node", "graph_edge"], score: float,
+    knowledge_node_id: str | None = None, knowledge_edge_id: str | None = None,
+    graph_path: list[dict] | None = None,
+    retrieval_reason: str | None = None, retrieval_stance: str | None = None,
+    source_versions: dict | None = None, source_spans: dict | None = None,
+) -> Citation | None:
+    """Convert only authorized, paper-backed immutable evidence to Citation."""
+    try:
+        version = (
+            source_versions.get(evidence.source_version_id)
+            if source_versions is not None else store.get_source_version(workspace_id, evidence.source_version_id)
+        )
+        if version is None:
+            return None
+        if not version.paper_id or version.paper_id not in allowed_papers:
+            return None
+        span = (
+            source_spans.get(evidence.source_span_id)
+            if source_spans is not None else store.get_source_span(workspace_id, evidence.source_span_id)
+        )
+        if span is None:
+            return None
+    except PaperNotFoundError:
+        return None
+    paper = allowed_papers[version.paper_id]
+    quote = evidence.verbatim_quote or span.text
+    chunk = _best_span_chunk(paper, quote, span.page)
+    if chunk is None:
+        return None
+    return Citation(
+        index=0, paper_id=paper.id, paper_title=paper.title, chunk_id=chunk.id,
+        page=chunk.page, section=chunk.section, excerpt=chunk.text[:1_000],
+        score=round(max(0.0, min(1.0, score)), 4), source_kind=source_kind,
+        source_version_id=version.id, source_span_id=span.id,
+        evidence_role=evidence.role,
+        knowledge_node_id=knowledge_node_id, knowledge_edge_id=knowledge_edge_id,
+        graph_path=list(graph_path or []),
+        extraction_quality=evidence.extraction_quality,
+        retrieval_reason=retrieval_reason, source_quote=quote,
+        retrieval_stance=retrieval_stance,
+    )
+
+
+def _graph_citation_candidates(
+    store: PaperStore, workspace_id: str, query: str, papers: list[Paper], limit: int,
+    *, paper_ids: list[str] | None = None, year_from: int | None = None,
+    year_to: int | None = None,
+) -> dict[str, list[tuple[str, Citation]]]:
+    """Retrieve workspace-scoped graph evidence via lexical seeds and two hops."""
+    allowed_papers = {paper.id: paper for paper in papers}
+    if hasattr(store, "retrieve_knowledge_subgraph"):
+        graph_nodes, graph_edges = store.retrieve_knowledge_subgraph(
+            workspace_id, query, seed_limit=12, edge_limit=200, evidence_limit=400,
+        )
+    else:
+        graph_nodes = store.list_knowledge_nodes(workspace_id)
+        graph_edges = store.list_knowledge_edges(workspace_id)
+    retrievable = {
+        node.id: node for node in graph_nodes if node.status in {"active", "verified"}
+    }
+    seed_scores = [
+        (node_id, _query_relevance(query, " ".join([
+            node.content,
+            *(item.target_claim for item in node.evidence),
+            *(item.verbatim_quote for item in node.evidence),
+        ])))
+        for node_id, node in retrievable.items()
+    ]
+    seeds = [
+        RetrievalSeed(node_id=node_id, relevance=score, confidence=1.0 if node.confidence is None else node.confidence,
+                      retrieval_reason="query_graph_seed")
+        for node_id, score in sorted(seed_scores, key=lambda item: (-item[1], item[0]))[:12]
+        if score > 0 for node in [retrievable[node_id]]
+    ]
+    if not seeds:
+        return {"graph_nodes": [], "graph_contradicts": []}
+    edges = [
+        edge for edge in graph_edges
+        if edge.status in {"active", "verified"}
+        and edge.source_node_id in retrievable and edge.target_node_id in retrievable
+    ]
+    outgoing: dict[str, list[RetrievalGraphEdge]] = {}
+    for edge in edges:
+        try:
+            confidence = float(edge.metadata.get("confidence", 1.0))
+        except (TypeError, ValueError):
+            confidence = 1.0
+        outgoing.setdefault(edge.source_node_id, []).append(RetrievalGraphEdge(
+            id=edge.id, source_id=edge.source_node_id, target_id=edge.target_node_id,
+            relation=edge.relation, confidence=confidence,
+        ))
+
+    class WorkspaceNeighbors:
+        def outgoing_edges(self, requested_workspace_id: str, node_id: str):
+            return outgoing.get(node_id, []) if requested_workspace_id == workspace_id else []
+
+    hits = pruned_two_hop_retrieve(
+        workspace_id, seeds, WorkspaceNeighbors(),
+        config=PrunedTwoHopConfig(top_k=max(limit * 2, 8)),
+    )
+    reached = {hit.node_id for hit in hits}
+    relevant_edges = [
+        edge for edge in edges
+        if edge.relation == "contradicts"
+        and ({edge.source_node_id, edge.target_node_id} & reached)
+    ]
+    relevant_evidence = [
+        evidence for hit in hits for evidence in retrievable[hit.node_id].evidence
+    ] + [evidence for edge in relevant_edges for evidence in edge.evidence]
+    if hasattr(store, "get_source_materials"):
+        source_versions, source_spans = store.get_source_materials(
+            workspace_id,
+            [item.source_version_id for item in relevant_evidence][:400],
+            [item.source_span_id for item in relevant_evidence][:400],
+        )
+        if hasattr(store, "load_scoped_graph_papers"):
+            paper_pages: dict[str, set[int | None]] = {}
+            for evidence in relevant_evidence[:400]:
+                version = source_versions.get(evidence.source_version_id)
+                span = source_spans.get(evidence.source_span_id)
+                if version is not None and version.paper_id and span is not None:
+                    paper_pages.setdefault(version.paper_id, set()).add(span.page)
+            graph_papers = store.load_scoped_graph_papers(
+                workspace_id, paper_pages, paper_ids=paper_ids,
+                year_from=year_from, year_to=year_to, chunk_limit=200,
+            )
+            allowed_papers.update({paper.id: paper for paper in graph_papers})
+    else:  # Narrow compatibility seam for custom/test store implementations.
+        source_versions = source_spans = None
+    node_candidates: list[tuple[str, Citation]] = []
+    for hit in hits:
+        node = retrievable.get(hit.node_id)
+        if node is None:
+            continue
+        path = [{
+            "edge_id": step.edge_id, "from_node_id": step.from_node_id,
+            "to_node_id": step.to_node_id, "relation": step.relation,
+            "confidence": step.confidence,
+        } for step in hit.hop_path]
+        path_is_negative = any(step.relation == "contradicts" for step in hit.hop_path)
+        for evidence in node.evidence:
+            stance = "negative" if path_is_negative or evidence.role == "contradicts" else "positive"
+            citation = _paper_backed_graph_citation(
+                store, workspace_id, allowed_papers, evidence=evidence,
+                source_kind="graph_node", score=hit.score,
+                knowledge_node_id=node.id, graph_path=path,
+                retrieval_reason=hit.retrieval_reason, retrieval_stance=stance,
+                source_versions=source_versions, source_spans=source_spans,
+            )
+            if citation is not None:
+                node_candidates.append((f"node:{node.id}:{evidence.id}", citation))
+                break
+
+    contradiction_candidates: list[tuple[str, Citation]] = []
+    hit_scores = {hit.node_id: hit.score for hit in hits}
+    for edge in relevant_edges:
+        try:
+            confidence = float(edge.metadata.get("confidence", 1.0))
+        except (TypeError, ValueError):
+            confidence = 1.0
+        query_path_score = max(
+            hit_scores.get(edge.source_node_id, 0.0),
+            hit_scores.get(edge.target_node_id, 0.0),
+        )
+        combined_score = 0.65 * query_path_score + 0.35 * max(0.0, min(1.0, confidence))
+        path = [{
+            "edge_id": edge.id, "from_node_id": edge.source_node_id,
+            "to_node_id": edge.target_node_id, "relation": edge.relation,
+            "confidence": confidence,
+        }]
+        for evidence in edge.evidence:
+            citation = _paper_backed_graph_citation(
+                store, workspace_id, allowed_papers, evidence=evidence,
+                source_kind="graph_edge", score=combined_score,
+                knowledge_edge_id=edge.id, graph_path=path,
+                retrieval_reason="query_graph_seed; graph_contradiction",
+                retrieval_stance="negative",
+                source_versions=source_versions, source_spans=source_spans,
+            )
+            if citation is not None:
+                contradiction_candidates.append((f"edge:{edge.id}:{evidence.id}", citation))
+                break
+    return {
+        "graph_nodes": node_candidates,
+        "graph_contradicts": contradiction_candidates,
+    }
+
+
+def _safe_graph_citation_candidates(
+    store: PaperStore, workspace_id: str, query: str, papers: list[Paper], limit: int,
+    *, paper_ids: list[str] | None = None, year_from: int | None = None,
+    year_to: int | None = None,
+) -> dict[str, list[tuple[str, Citation]]]:
+    """Keep the optional graph channel from taking down paper retrieval."""
+    try:
+        return _graph_citation_candidates(
+            store, workspace_id, query, papers, limit, paper_ids=paper_ids,
+            year_from=year_from, year_to=year_to,
+        )
+    except Exception as exc:
+        # Do not include the query, graph content, or database details in logs.
+        logger.warning(
+            "code=graph_retrieval_unavailable exception_type=%s",
+            exc.__class__.__name__,
+        )
+        return {"graph_nodes": [], "graph_contradicts": []}
+
+
+def _fused_retrieval_citations(
+    paper_citations: list[Citation], graph_candidates: dict[str, list[tuple[str, Citation]]],
+    limit: int, *, require_contradiction: bool = False,
+) -> list[Citation]:
+    candidate_map = {item.chunk_id: item for item in paper_citations}
+    rankings = {"paper": list(candidate_map)}
+    for channel, candidates in graph_candidates.items():
+        channel_keys: list[str] = []
+        for _, citation in candidates:
+            key = citation.chunk_id
+            if key not in channel_keys:
+                channel_keys.append(key)
+            current = candidate_map.get(key)
+            # Keep the most auditable representation of a shared chunk.  A
+            # contradiction edge wins over a node, which wins over plain paper,
+            # while the strongest relevance score is retained independently.
+            priority = {"paper_chunk": 0, "graph_node": 1, "graph_edge": 2}
+            if current is None or priority[citation.source_kind] > priority[current.source_kind]:
+                candidate_map[key] = citation.model_copy(update={
+                    "score": max(citation.score, current.score if current else 0.0),
+                })
+            elif citation.score > current.score:
+                # Keep score and provenance from the same candidate.
+                candidate_map[key] = citation
+        rankings[channel] = channel_keys
+    fused = reciprocal_rank_fusion(rankings, limit=max(len(candidate_map), 1))
+    selected = sorted(
+        fused, key=lambda item: (-item[1], -candidate_map[item[0]].score, item[0]),
+    )[:max(limit, 1)]
+    negative = graph_candidates.get("graph_contradicts", [])
+    if require_contradiction and negative and not any(
+        "graph_contradicts" in channels
+        or any(step.get("relation") == "contradicts" for step in candidate_map[key].graph_path)
+        for key, _, channels in selected
+    ):
+        replacement_key = negative[0][1].chunk_id
+        replacement = (replacement_key, 1.0 / 61.0, ["graph_contradicts"])
+        selected = ([*selected[:-1], replacement] if selected else [replacement])
+    result: list[Citation] = []
+    for index, (key, fusion_score, channels) in enumerate(selected, 1):
+        result.append(candidate_map[key].model_copy(update={
+            "index": index, "fusion_score": round(fusion_score, 6),
+            "retrieval_channels": channels,
+        }))
+    return result
 
 
 def _paper_summary_citations(paper: Paper, limit: int = 6) -> list:
@@ -953,7 +1606,26 @@ def answer(
     store: PaperStore = Depends(get_store),
     context: WorkspaceContext = Depends(get_workspace_context),
 ):
+    # Full answers may invoke the embedding and chat providers and can persist a
+    # conversation.  Keep this cost-bearing operation to writers.
+    require_workspace_write(context)
     return _answer(body, store, context)
+
+
+@app.post("/api/search/preview", response_model=SearchPreviewResponse)
+def search_preview(
+    body: SearchRequest,
+    store: PaperStore = Depends(get_store),
+    context: WorkspaceContext = Depends(get_workspace_context),
+):
+    """Return local lexical matches for every workspace member without side effects.
+
+    This is deliberately a separate route from answer generation: it performs
+    no embedding, LLM, persistence, or SSE work, so viewers can inspect source
+    evidence without consuming the workspace's model budget.
+    """
+    papers = filtered_papers(body, store, context.workspace.id)
+    return SearchPreviewResponse(citations=citations_from(search(papers, body.query, body.limit), query=body.query))
 
 
 def _load_answer_conversation(
@@ -1033,6 +1705,8 @@ def _search_result_summary(response: SearchResponse) -> dict:
         "claims": [claim.model_dump(mode="json") for claim in response.claims],
         "memory_delta": response.memory_delta,
         "model_calls": response.model_calls,
+        "interaction_mode": response.interaction_mode,
+        "draft": response.draft,
     }
     if os.getenv("SEARCH_HISTORY_STORE_ANSWER", "false").lower() in {"1", "true", "yes"}:
         result["answer"] = response.answer
@@ -1066,6 +1740,74 @@ def _initial_conversation_title(query: str) -> str:
     return compact if len(compact) <= maximum else compact[: maximum - 1].rstrip() + "…"
 
 
+def _claim_classification(claim: dict) -> str:
+    """Translate legacy claim kinds into the CI-005 audit vocabulary."""
+    if claim.get("kind") == "paper" and claim.get("citation_ids"):
+        return "evidence_backed"
+    if claim.get("kind") == "general":
+        return "general_knowledge"
+    if claim.get("kind") == "hypothesis":
+        return "hypothesis"
+    return "inference" if claim.get("citation_ids") else "unverified"
+
+
+def _mode_claims(body: SearchRequest, citations: list, claims: list[dict]) -> tuple[str, list[dict], bool]:
+    """Apply the explicit research interaction contract without weakening citations.
+
+    AgenticRAG remains responsible for grounded synthesis.  These bounded mode
+    adapters make non-synthesis requests auditable even when the critic/model
+    is unavailable and the request falls back to extractive evidence.
+    """
+    mode = body.interaction_mode
+    normalized = [{**claim, "classification": _claim_classification(claim)} for claim in claims]
+    if mode == "evidence":
+        evidence_claims = normalized or [
+            {"claim_id": f"evidence-{citation.index}", "text": citation.excerpt,
+             "kind": "paper", "citation_ids": [citation.index], "classification": "evidence_backed"}
+            for citation in citations[:6]
+        ]
+        return "", evidence_claims, False
+    if mode == "explore":
+        mechanisms = ["機構A: 表現・検索空間の整合性", "機構B: 評価信号による選択圧", "機構C: 条件依存の媒介要因"]
+        mode_claims = [{"claim_id": f"explore-{index}", "text": text, "kind": "hypothesis", "citation_ids": [], "classification": "hypothesis"}
+                       for index, text in enumerate(mechanisms, start=1)]
+        return "\n\n## 異なる機構の探索案\n" + "\n".join(f"- {text}" for text in mechanisms), mode_claims, True
+    if mode == "challenge":
+        contradiction = next((
+            item for item in citations
+            if item.retrieval_stance == "negative"
+            or "graph_contradicts" in item.retrieval_channels
+            or any(step.get("relation") == "contradicts" for step in item.graph_path)
+        ), None)
+        items = ["競合仮説: 観測された効果は別の交絡要因で説明できる。"]
+        mode_claims = [{
+            "claim_id": "challenge-1", "text": items[0], "kind": "hypothesis",
+            "citation_ids": [], "classification": "hypothesis",
+        }]
+        if contradiction is not None:
+            text = f"取得済みの反証根拠: {contradiction.excerpt[:240]} [{contradiction.index}]"
+            items.append(text)
+            mode_claims.append({
+                "claim_id": "challenge-2", "text": text, "kind": "paper",
+                "citation_ids": [contradiction.index], "classification": "evidence_backed",
+            })
+        else:
+            text = "反証根拠は取得できていません（unverified）。追加の反証検索と人間の確認が必要です。"
+            items.append(text)
+            mode_claims.append({
+                "claim_id": "challenge-2", "text": text, "kind": "hypothesis",
+                "citation_ids": [], "classification": "unverified",
+            })
+        return "\n\n## Challenge（批判的検討）\n" + "\n".join(f"- {text}" for text in items), mode_claims, True
+    if mode == "design":
+        text = "実験設計案: 競合仮説を区別する対照、測定指標、事前の判定基準を明示する。"
+        return "\n\n## Design\n- " + text, [{"claim_id": "design-1", "text": text, "kind": "hypothesis", "citation_ids": [], "classification": "hypothesis"}], True
+    if mode == "update":
+        text = "更新候補: 新しい根拠によって支持・反証・保留のどれが変わるかを人間がレビューする。"
+        return "\n\n## Update\n- " + text, [{"claim_id": "update-1", "text": text, "kind": "hypothesis", "citation_ids": [], "classification": "hypothesis"}], True
+    return "", normalized, False
+
+
 def _answer(
     body: SearchRequest,
     store: PaperStore,
@@ -1076,6 +1818,8 @@ def _answer(
 ) -> SearchResponse:
     """Answer within one absolute budget; retrieval never creates document vectors."""
     deadline = deadline or (time.monotonic() + RAG_REQUEST_DEADLINE_SECONDS)
+    if body.interaction_mode == "evidence" and not body.paper_ids:
+        raise HTTPException(status_code=422, detail="evidence mode requires selected paper_ids")
 
     def emit(stage: str) -> None:
         if progress is not None:
@@ -1083,15 +1827,44 @@ def _answer(
 
     conversation = _load_answer_conversation(body, store, context)
 
-    papers = filtered_papers(body, store, context.workspace.id)
-    chunks = [chunk for paper in papers for chunk in paper.chunks]
     vector_model = embedding_model()
-    emit("embedding")
-    embeddings = store.get_chunk_embeddings(context.workspace.id, [chunk.id for chunk in chunks], vector_model)
     query_vector_cache: dict[str, list[float] | None] = {}
+    graph_candidate_cache: dict[tuple[str, int], dict[str, list[tuple[str, Citation]]]] = {}
+    candidate_cache: dict[tuple[str, int], tuple[list[Paper], dict[str, list[float]]]] = {}
+
+    def load_candidates(scoped_query: str, limit: int) -> tuple[list[Paper], dict[str, list[float]]]:
+        cache_key = (scoped_query, limit)
+        cached = candidate_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        started = time.perf_counter_ns()
+        papers = store.search_chunk_candidates(
+            context.workspace.id, scoped_query, limit=limit,
+            paper_ids=body.paper_ids, year_from=body.year_from, year_to=body.year_to,
+        )
+        chunks = [chunk for paper in papers for chunk in paper.chunks]
+        logger.info(
+            "rag_query_stage stage=db_candidates duration_ms=%.3f candidate_count=%d",
+            (time.perf_counter_ns() - started) / 1_000_000, len(chunks),
+        )
+        emit("embedding")
+        started = time.perf_counter_ns()
+        embeddings = store.get_chunk_embeddings(
+            context.workspace.id, [chunk.id for chunk in chunks], vector_model,
+        )
+        logger.info(
+            "rag_query_stage stage=embedding_cache duration_ms=%.3f candidate_count=%d",
+            (time.perf_counter_ns() - started) / 1_000_000, len(embeddings),
+        )
+        candidate_cache[cache_key] = (papers, embeddings)
+        return papers, embeddings
+
+    initial_papers, _ = load_candidates(body.query, body.limit)
+    initial_chunks = [chunk for paper in initial_papers for chunk in paper.chunks]
 
     def retrieve(scoped_query: str, limit: int):
         emit("retrieving")
+        papers, embeddings = load_candidates(scoped_query, limit)
         if scoped_query not in query_vector_cache:
             # Only the small query vector is generated on the request path. Paper
             # vectors are populated asynchronously by the embedding worker.
@@ -1104,11 +1877,28 @@ def _answer(
             )
             query_vector_cache[scoped_query] = query_vectors[0] if query_vectors else None
         query_vector = query_vector_cache[scoped_query]
+        started = time.perf_counter_ns()
         results = (
             hybrid_search(papers, scoped_query, embeddings, query_vector, limit)
             if query_vector is not None else search(papers, scoped_query, limit)
         )
-        return citations_from(results, query=scoped_query)
+        paper_citations = citations_from(results, query=scoped_query)
+        graph_cache_key = (scoped_query, limit)
+        if graph_cache_key not in graph_candidate_cache:
+            graph_candidate_cache[graph_cache_key] = _safe_graph_citation_candidates(
+                store, context.workspace.id, scoped_query, papers, limit,
+                paper_ids=body.paper_ids, year_from=body.year_from, year_to=body.year_to,
+            )
+        citations = _fused_retrieval_citations(
+            paper_citations, graph_candidate_cache[graph_cache_key], limit,
+            require_contradiction=body.interaction_mode == "challenge",
+        )
+        logger.info(
+            "rag_query_stage stage=rank_and_graph duration_ms=%.3f candidate_count=%d result_count=%d",
+            (time.perf_counter_ns() - started) / 1_000_000,
+            sum(len(paper.chunks) for paper in papers), len(citations),
+        )
+        return citations
 
     model_name = ANSWER_MODEL
     generated: str | None = None
@@ -1126,7 +1916,14 @@ def _answer(
     if not os.getenv("OPENAI_API_KEY"):
         fallback_reason = "api_key_missing"
         _set_last_llm_failure(fallback_reason)
-    elif not chunks:
+    elif not initial_chunks and not any(
+        graph_candidate_cache.setdefault(
+            (body.query, body.limit), _safe_graph_citation_candidates(
+                store, context.workspace.id, body.query, initial_papers, body.limit,
+                paper_ids=body.paper_ids, year_from=body.year_from, year_to=body.year_to,
+            ),
+        ).values()
+    ):
         fallback_reason = "no_evidence"
         grounding_status = "no_evidence"
         _set_last_llm_failure(fallback_reason)
@@ -1178,14 +1975,18 @@ def _answer(
             context.workspace.id, conversation.id, body.query, generated, citations,
             memory_delta=memory_delta,
         )
+    mode_appendix, classified_claims, mode_draft = _mode_claims(body, citations, claims)
     response = SearchResponse(
         answer=generated, citations=citations, conversation_id=body.conversation_id,
+        interaction_mode=body.interaction_mode, draft=mode_draft or (body.interaction_mode == "synthesis" and not grounded),
         generation_mode=generation_mode, model=model_name if llm_succeeded else None,
         retrieval_queries=retrieval_queries, grounded=grounded,
         llm_attempted=llm_attempted, llm_succeeded=llm_succeeded,
         grounding_status=grounding_status, fallback_reason=fallback_reason,
-        claims=claims, memory_delta=memory_delta, model_calls=model_calls,
+        claims=classified_claims, memory_delta=memory_delta, model_calls=model_calls,
     )
+    if mode_appendix:
+        response.answer += mode_appendix
     result_summary = _search_result_summary(response)
     _persist_search_history_best_effort(store, context, body, response, result_summary)
     return response
@@ -1269,11 +2070,25 @@ async def answer_stream(
     store: PaperStore = Depends(get_store),
     context: WorkspaceContext = Depends(get_workspace_context),
 ):
+    # Check before opening an SSE response so a viewer cannot hold a stream or
+    # trigger embedding/LLM work before authorization is enforced.
+    require_workspace_write(context)
     async def events():
         # Open the SSE response before retrieval/model work begins. Comment frames
         # are valid SSE and are deliberately ignored by existing clients.
         yield ": stream-open\n\n"
         yield f"data: {json.dumps({'type': 'stage', 'value': 'accepted'})}\n\n"
+        run_id = body.research_run_id
+        if run_id:
+            try:
+                store.start_research_run(context.workspace.id, run_id)
+            except PaperNotFoundError:
+                yield f"data: {json.dumps({'type': 'error', 'message': 'research run not found'}, ensure_ascii=False)}\n\n"
+                return
+            except ValueError as exc:
+                yield f"data: {json.dumps({'type': 'error', 'message': str(exc)}, ensure_ascii=False)}\n\n"
+                return
+            yield f"data: {json.dumps({'type': 'run', 'run_id': run_id})}\n\n"
         stages: asyncio.Queue[str] = asyncio.Queue()
         loop = asyncio.get_running_loop()
 
@@ -1293,6 +2108,11 @@ async def answer_stream(
                 if stage_task in done:
                     stage = stage_task.result()
                     yield f"data: {json.dumps({'type': 'stage', 'value': stage})}\n\n"
+                    if run_id and store.research_run_cancel_requested(context.workspace.id, run_id):
+                        task.cancel()
+                        store.finish_research_run(context.workspace.id, run_id, status="cancelled")
+                        yield f"data: {json.dumps({'type': 'cancelled', 'run_id': run_id})}\n\n"
+                        return
                 else:
                     stage_task.cancel()
                 if task in done:
@@ -1305,20 +2125,45 @@ async def answer_stream(
             # terminate an already-running SDK call in the worker thread; its own
             # request timeout remains the final bound for that call.
             task.cancel()
+            if run_id:
+                try:
+                    store.cancel_research_run(context.workspace.id, run_id)
+                except (PaperNotFoundError, ValueError):
+                    pass
             raise
         except HTTPException as exc:
+            if run_id:
+                store.append_run_artifact(context.workspace.id, run_id, kind="error", payload={"message": str(exc.detail)})
+                store.finish_research_run(context.workspace.id, run_id, status="failed")
             yield f"data: {json.dumps({'type': 'error', 'message': str(exc.detail)}, ensure_ascii=False)}\n\n"
             return
         except Exception:
             logger.exception("Streaming RAG generation failed")
+            if run_id:
+                store.append_run_artifact(context.workspace.id, run_id, kind="error", payload={"message": "generation_failed"})
+                store.finish_research_run(context.workspace.id, run_id, status="failed")
             yield f"data: {json.dumps({'type': 'error', 'message': '回答生成に失敗しました'}, ensure_ascii=False)}\n\n"
             return
+        if run_id:
+            if store.research_run_cancel_requested(context.workspace.id, run_id):
+                store.finish_research_run(context.workspace.id, run_id, status="cancelled")
+                yield f"data: {json.dumps({'type': 'cancelled', 'run_id': run_id})}\n\n"
+                return
+            response.research_run_id = run_id
+            store.append_run_artifact(context.workspace.id, run_id, kind="retrieval_candidates", payload={
+                "candidates": [citation.model_dump(mode="json") for citation in response.citations],
+            })
+            store.append_run_artifact(context.workspace.id, run_id, kind="validation", payload={
+                "grounded": response.grounded, "grounding_status": response.grounding_status,
+                "claims": [claim.model_dump(mode="json") for claim in response.claims],
+            })
+            store.finish_research_run(context.workspace.id, run_id, status="succeeded")
         words = re.split(r"(?<=。)|(?<=\n)", response.answer)
         for word in words:
             if word:
                 yield f"data: {json.dumps({'type': 'token', 'value': word}, ensure_ascii=False)}\n\n"
         yield f"data: {json.dumps({'type': 'citations', 'value': [c.model_dump() for c in response.citations]}, ensure_ascii=False)}\n\n"
-        yield f"data: {json.dumps({'type': 'meta', 'value': {'generation_mode': response.generation_mode, 'model': response.model, 'retrieval_queries': response.retrieval_queries, 'grounded': response.grounded, 'llm_attempted': response.llm_attempted, 'llm_succeeded': response.llm_succeeded, 'grounding_status': response.grounding_status, 'fallback_reason': response.fallback_reason, 'claims': [claim.model_dump(mode='json') for claim in response.claims], 'memory_delta': response.memory_delta, 'model_calls': response.model_calls}}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'type': 'meta', 'value': {'research_run_id': response.research_run_id, 'interaction_mode': response.interaction_mode, 'draft': response.draft, 'generation_mode': response.generation_mode, 'model': response.model, 'retrieval_queries': response.retrieval_queries, 'grounded': response.grounded, 'llm_attempted': response.llm_attempted, 'llm_succeeded': response.llm_succeeded, 'grounding_status': response.grounding_status, 'fallback_reason': response.fallback_reason, 'claims': [claim.model_dump(mode='json') for claim in response.claims], 'memory_delta': response.memory_delta, 'model_calls': response.model_calls}}, ensure_ascii=False)}\n\n"
         yield "data: {\"type\":\"done\"}\n\n"
 
     return StreamingResponse(events(), media_type="text/event-stream")
@@ -1441,8 +2286,10 @@ def import_graph_source(
     # See create_graph_source: imported Source Versions must not depend on the
     # read-mostly original-paper mount being writable.
     storage_key = f"assets/sources/{content_hash}/source.txt"
+    created_asset = False
     try:
         originals.put(storage_key, encoded)
+        created_asset = True
     except ImmutableObjectExists:
         pass
     except Exception as exc:
@@ -1465,11 +2312,33 @@ def import_graph_source(
         )
         return SourceImportResult(source=source, spans=spans)
     except PaperNotFoundError as exc:
+        if created_asset:
+            try:
+                originals.delete(storage_key)
+            except Exception:
+                logger.exception("Could not compensate failed source import: key=%s", storage_key)
         raise _graph_not_found(exc) from exc
     except ResourceConflictError as exc:
+        if created_asset:
+            try:
+                originals.delete(storage_key)
+            except Exception:
+                logger.exception("Could not compensate failed source import: key=%s", storage_key)
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
+        if created_asset:
+            try:
+                originals.delete(storage_key)
+            except Exception:
+                logger.exception("Could not compensate failed source import: key=%s", storage_key)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        if created_asset:
+            try:
+                originals.delete(storage_key)
+            except Exception:
+                logger.exception("Could not compensate failed source import: key=%s", storage_key)
+        raise HTTPException(status_code=500, detail="source metadata could not be persisted") from exc
 
 
 @app.get("/api/graph/sources/{source_version_id}/spans", response_model=list[SourceSpan])
@@ -1481,6 +2350,88 @@ def list_graph_source_spans(
         return store.list_source_spans(context.workspace.id, source_version_id)
     except PaperNotFoundError as exc:
         raise _graph_not_found(exc) from exc
+
+
+@app.get("/api/hypotheses", response_model=list[HypothesisCard])
+def list_hypothesis_cards(store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    return store.list_hypothesis_cards(context.workspace.id)
+
+@app.get("/api/hypotheses/{card_id}", response_model=HypothesisCard)
+def get_hypothesis_card(card_id: str, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    try: return store.get_hypothesis_card(context.workspace.id, card_id)
+    except PaperNotFoundError as exc: raise HTTPException(status_code=404, detail="hypothesis card not found") from exc
+
+
+@app.get("/api/discovery/review-queue", response_model=list[DiscoveryItem])
+def list_discovery_review_queue(store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    return store.list_discovery_items(context.workspace.id)
+
+
+@app.get("/api/beliefs", response_model=list[BeliefEvent])
+def search_beliefs(query: str = "", store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    return store.search_positive_beliefs(context.workspace.id, query)
+
+
+@app.post("/api/beliefs", response_model=BeliefEvent, status_code=201)
+def append_belief_event(body: BeliefEventCreate, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    require_workspace_write(context)
+    return store.append_belief_event(context.workspace.id, context.user.id, body)
+
+@app.post("/api/experiments", response_model=ExperimentPlan, status_code=201)
+def create_experiment(body: ExperimentPlanCreate, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    require_workspace_write(context)
+    try: return store.create_experiment_plan(context.workspace.id, context.user.id, body)
+    except PaperNotFoundError as exc: raise HTTPException(status_code=404, detail="hypothesis card not found") from exc
+
+@app.get("/api/experiments", response_model=list[ExperimentPlan])
+def list_experiments(store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    return store.list_experiment_plans(context.workspace.id)
+
+@app.get("/api/experiments/{plan_id}", response_model=ExperimentPlan)
+def get_experiment(plan_id: str, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    try: return store.get_experiment_plan(context.workspace.id, plan_id)
+    except PaperNotFoundError as exc: raise HTTPException(status_code=404, detail="experiment plan not found") from exc
+
+@app.post("/api/experiments/{plan_id}/results", response_model=ExperimentPlan)
+def record_experiment_result(plan_id: str, body: ExperimentResultCreate, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    require_workspace_write(context)
+    try: return store.add_experiment_result(context.workspace.id, plan_id, body.model_dump())
+    except PaperNotFoundError as exc: raise HTTPException(status_code=404, detail="experiment plan not found") from exc
+
+@app.get("/api/experiments/{plan_id}/snapshot", response_model=ExperimentPlanSnapshot)
+def export_experiment_snapshot(plan_id: str, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    try: return store.export_experiment_plan_snapshot(context.workspace.id, plan_id)
+    except PaperNotFoundError as exc: raise HTTPException(status_code=404, detail="experiment plan not found") from exc
+
+
+@app.post("/api/discovery/items", response_model=DiscoveryItem, status_code=201)
+def create_discovery_item(body: DiscoveryItemCreate, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    require_workspace_write(context)
+    return store.create_discovery_item(context.workspace.id, context.user.id, body)
+
+
+@app.patch("/api/discovery/items/{item_id}/review", response_model=DiscoveryItem)
+def review_discovery_item(item_id: str, body: DiscoveryReviewUpdate, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    require_workspace_write(context)
+    try: return store.review_discovery_item(context.workspace.id, item_id, body.review_status)
+    except PaperNotFoundError as exc: raise HTTPException(status_code=404, detail="discovery item not found") from exc
+
+
+@app.post("/api/hypotheses", response_model=HypothesisCard, status_code=201)
+def create_hypothesis_card(body: HypothesisCardCreate, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    require_workspace_write(context)
+    return store.create_hypothesis_card(context.workspace.id, context.user.id, body)
+
+
+@app.patch("/api/hypotheses/{card_id}/status", response_model=HypothesisCard)
+def update_hypothesis_card_status(card_id: str, body: HypothesisCardStatusUpdate, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    require_workspace_write(context)
+    try:
+        return store.set_hypothesis_card_status(context.workspace.id, card_id, body.status, human_reviewed=body.human_reviewed, empirically_supported=body.empirically_supported)
+    except PaperNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="hypothesis card not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.get("/api/graph/nodes", response_model=list[KnowledgeNode])
@@ -1503,6 +2454,7 @@ def create_graph_node(
             layer=body.layer, status=body.status, phase=body.phase,
             confidence=body.confidence, created_by=context.user.id, metadata=body.metadata,
             evidence_span_ids=body.evidence_span_ids, evidence_excerpt=body.evidence_excerpt,
+            evidence_links=body.evidence_links,
         )
     except PaperNotFoundError as exc:
         raise _graph_not_found(exc) from exc
@@ -1548,6 +2500,7 @@ def create_graph_edge(
             target_node_id=body.target_node_id, relation=body.relation,
             evidence_span_ids=body.evidence_span_ids, metadata=body.metadata,
             evidence_excerpt=body.evidence_excerpt, created_by=context.user.id,
+            evidence_links=body.evidence_links,
         )
     except PaperNotFoundError as exc:
         raise _graph_not_found(exc) from exc
@@ -1608,7 +2561,10 @@ def forward_propagate_graph_hypothesis(
             ]
             spans = [
                 store.get_source_span(context.workspace.id, span_id)
-                for span_id in dict.fromkeys(body.evidence_span_ids)
+                for span_id in dict.fromkeys([
+                    *body.evidence_span_ids,
+                    *(link.source_span_id for link in body.evidence_links),
+                ])
             ]
             hypothesis_content, generation_metadata = _generate_forward_hypothesis(
                 [node.content for node in inputs], [span.text for span in spans], body.prompt,
@@ -1623,7 +2579,7 @@ def forward_propagate_graph_hypothesis(
             evidence_excerpt=body.evidence_excerpt, prompt=body.prompt,
             operator=body.operator, metadata=metadata,
             confidence=body.confidence, phase=body.phase,
-            created_by=context.user.id,
+            created_by=context.user.id, evidence_links=body.evidence_links,
         )
     except PaperNotFoundError as exc:
         raise _graph_not_found(exc) from exc
@@ -1816,7 +2772,11 @@ def save_comparison(body: SavedComparisonCreate, store: PaperStore = Depends(get
     papers = selected_papers(AnalysisRequest(paper_ids=body.paper_ids), store, context.workspace.id)
     if len(papers) != len(set(body.paper_ids)): raise HTTPException(status_code=404, detail="paper not found")
     result = [row.model_dump(mode="json") for row in compare_papers(papers)]
-    return store.save_comparison(context.workspace.id, context.user.id, body.name, body.paper_ids, result)
+    snapshot = body.citation_snapshot or [evidence for row in result for evidence in row.get("evidence", [])]
+    try:
+        return store.save_comparison(context.workspace.id, context.user.id, body.name, body.paper_ids, result, source_set_id=body.source_set_id, citation_snapshot=snapshot, human_judgment=body.human_judgment, judgment_reason=body.judgment_reason)
+    except PaperNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="source set not found") from exc
 
 
 @app.delete("/api/comparisons/{comparison_id}", status_code=204)

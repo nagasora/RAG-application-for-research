@@ -20,6 +20,7 @@ services:
     ports:
       - "127.0.0.1:6379:6379"
     networks: [backend_internal, host_access]
+    profiles: [workers]
   bootstrap:
     build: .
     command: ["sh", "-c", "python -m alembic upgrade head && python -m app.bootstrap_worker_role"]
@@ -54,16 +55,18 @@ services:
       DEV_AUTH_USER: ${DEV_AUTH_USER:-local-developer}
       DEV_AUTH_TOKEN: ${DEV_AUTH_TOKEN:-replace-with-a-long-random-local-secret}
       FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3000}
-      INGESTION_MODE: ${INGESTION_MODE:-celery}
+      # A personal installation is synchronous by default: no queue, cloud
+      # service, or extra worker process is required.  Set this to celery and
+      # start `docker compose --profile workers up -d` for asynchronous jobs.
+      INGESTION_MODE: ${INGESTION_MODE:-inline}
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
+      PAPER_STORAGE_BACKEND: ${PAPER_STORAGE_BACKEND:-local}
       PAPER_ORIGINAL_STORAGE_DIR: /app/data/originals
       PAPER_ASSET_STORAGE_DIR: /app/data/assets
     ports:
       - "127.0.0.1:${PAPERPILOT_API_PORT:-8000}:8000"
     depends_on:
-      redis:
-        condition: service_started
       bootstrap:
         condition: service_completed_successfully
     volumes:
@@ -127,6 +130,7 @@ services:
     mem_limit: 2g
     cpus: "2.0"
     networks: [backend_internal]
+    profiles: [workers]
   embedding-worker:
     build: .
     command: ["celery", "-A", "app.celery_app:celery_app", "worker", "--loglevel=info", "-Q", "${EMBEDDING_TASK_QUEUE:-embedding}"]
@@ -161,6 +165,7 @@ services:
     mem_limit: 1g
     cpus: "1.0"
     networks: [backend_internal, host_access]
+    profiles: [workers]
   beat:
     build: .
     command: celery -A app.celery_app:celery_app beat --loglevel=info --schedule=/tmp/celerybeat-schedule
@@ -190,6 +195,7 @@ services:
     mem_limit: 512m
     cpus: "0.5"
     networks: [backend_internal]
+    profiles: [workers]
 
 volumes:
   paperpilot-postgres:

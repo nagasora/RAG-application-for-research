@@ -143,6 +143,22 @@ def hybrid_search(
     return sorted(ranked, key=lambda item: item[2], reverse=True)[:limit]
 
 
+def reciprocal_rank_fusion(rankings: dict[str, list[str]], *, k: int = 60, limit: int = 8) -> list[tuple[str, float, list[str]]]:
+    """Fuse paper and graph candidates without dropping contradiction channels.
+
+    ``rankings`` keys are retrieval channels (for example ``paper`` and
+    ``graph_contradicts``); the returned provenance lists every channel that
+    contributed to a candidate, so negative evidence remains inspectable.
+    """
+    scores: dict[str, float] = {}
+    provenance: dict[str, list[str]] = {}
+    for channel, candidates in rankings.items():
+        for rank, candidate in enumerate(candidates, 1):
+            scores[candidate] = scores.get(candidate, 0.0) + 1.0 / (k + rank)
+            provenance.setdefault(candidate, []).append(channel)
+    return [(candidate, score, provenance[candidate]) for candidate, score in sorted(scores.items(), key=lambda item: (-item[1], item[0]))[:limit]]
+
+
 def _evidence_excerpt(text: str, query: str | None, limit: int = 1000) -> str:
     """Return a source-faithful window around the most relevant part of a chunk."""
     text = normalize(text)
@@ -174,6 +190,8 @@ def citations_from(
             section=chunk.section,
             excerpt=_evidence_excerpt(chunk.text, query),
             score=round(score, 4),
+            source_kind="paper_chunk",
+            retrieval_channels=["paper"],
         )
         for index, (paper, chunk, score) in enumerate(results, 1)
     ]
@@ -284,6 +302,8 @@ def compare_papers(papers: list[Paper]) -> list[ComparisonRow]:
             method=_find_sentence(text, ["手法", "method", "model", "approach"]),
             results=_find_sentence(text, ["結果", "result", "improved", "outperform"]),
             limitations=_find_sentence(text, ["限界", "課題", "limitation", "future work"]),
+            conditions="未判定（原文条件の人間確認が必要）", confidence=None,
+            evidence_status="unresolved",
         ))
     return rows
 
@@ -301,6 +321,8 @@ def research_gaps(papers: list[Paper]) -> list[dict[str, str]]:
                     "page": str(chunk.page),
                     "gap": sentence,
                     "opportunity": f"「{sentence[:90]}」を検証可能な仮説へ分解し、異なるデータセットまたは手法で再評価する。",
+                    "gap_type": "author_limitation", "evidence": [{"paper_id": paper.id, "chunk_id": chunk.id, "page": chunk.page, "excerpt": sentence}],
+                    "evidence_status": "grounded", "conditions": "著者が記載した限界", "confidence": 0.7,
                 })
                 break
     return gaps

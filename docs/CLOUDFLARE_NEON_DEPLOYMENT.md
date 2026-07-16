@@ -36,13 +36,15 @@ R2_PREFIX=paperpilot
 
 `R2_SECRET_ACCESS_KEY` は一度しか表示されないため、安全なパスワード管理ツールにも保管してください。R2 bucket は公開設定にせず、PDF の取得は PaperPilot API の認可済みエンドポイント経由にします。
 
+アプリはR2をS3互換APIとして使います。`R2_ACCOUNT_ID`を設定するとendpointは自動で `https://<account-id>.r2.cloudflarestorage.com` になります。独自endpointを使う場合は `R2_ENDPOINT_URL` を設定できます。`PAPER_STORAGE_CACHE_DIR` は一時的な読み取りキャッシュだけであり、R2が原本・アセットの正本です。Render APIと、将来追加するworkerには同じR2設定を渡してください。
+
 ## 3. Render API
 
 既存の `paperpilot-api` サービスで以下を更新します。
 
 - `DATABASE_URL`: Neon の pooled connection string
 - 上記 R2 の `PAPER_STORAGE_BACKEND` / `R2_*` 値
-- `INGESTION_MODE=background`
+- `INGESTION_MODE=background`（Render API単体ではプロセス再起動中のジョブを完了できない。確実な非同期再試行にはRedis/Celery workerを別途用意する）
 - `FRONTEND_ORIGIN`: Cloudflare Pages の本番 URL（例: `https://paperpilot.pages.dev`）
 
 Auth0 の OIDC、OpenAI の設定は現在の値を維持します。保存後、**Manual Deploy → Deploy latest commit** を実行します。

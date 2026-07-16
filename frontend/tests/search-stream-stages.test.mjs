@@ -53,6 +53,61 @@ test("legacy token/done events remain compatible and a top-level stage is accept
   assert.equal(received[2].type, "done");
 });
 
+const paperCitation = {
+  index:1, paper_id:"paper-1", paper_title:"Paper", chunk_id:"chunk-1",
+  page:2, section:"Results", excerpt:"Paper evidence", score:0.8,
+};
+
+const graphContradiction = {
+  ...paperCitation, index:2, source_kind:"graph_edge", evidence_role:"contradicts",
+  retrieval_stance:"negative",
+  source_version_id:"version-1", source_span_id:"span-1", knowledge_edge_id:"edge-1",
+  source_quote:"Contradicting source quote", graph_path:[{ relation:"contradicts" }],
+  retrieval_channels:["paper", "graph_contradicts"], retrieval_reason:"graph_contradiction",
+  extraction_quality:"high", fusion_score:0.72,
+};
+
+test("citation events accept legacy paper and graph contradiction payloads together", async () => {
+  const api = await loadSearchStreamModule();
+  const frame = `data: ${JSON.stringify({ type:"citations", value:[paperCitation, graphContradiction] })}\n\n`;
+  const received = [];
+  for await (const event of api.parseEventStream(eventStream(frame))) received.push(event);
+  assert.equal(received[0].type, "citations");
+  assert.equal(received[0].value.length, 2);
+  assert.equal(received[0].value[0].source_kind, undefined);
+  assert.equal(received[0].value[1].evidence_role, "contradicts");
+  assert.equal(received[0].value[1].retrieval_stance, "negative");
+  assert.equal(received[0].value[1].retrieval_channels.join("|"), "paper|graph_contradicts");
+});
+
+test("negative retrieval stance remains distinct from a supporting source role", async () => {
+  const api = await loadSearchStreamModule();
+  const negativeSupport = { ...graphContradiction, evidence_role:"supports", retrieval_stance:"negative" };
+  const frame = `data: ${JSON.stringify({ type:"citations", value:[paperCitation, negativeSupport] })}\n\n`;
+  const received = [];
+  for await (const event of api.parseEventStream(eventStream(frame))) received.push(event);
+  assert.equal(received[0].value[1].evidence_role, "supports");
+  assert.equal(received[0].value[1].retrieval_stance, "negative");
+});
+
+test("citation events reject graph provenance without its immutable locator", async () => {
+  const api = await loadSearchStreamModule();
+  const malformed = { ...graphContradiction, source_span_id:null };
+  const frame = `data: ${JSON.stringify({ type:"citations", value:[malformed] })}\n\n`;
+  await assert.rejects(async () => {
+    for await (const _event of api.parseEventStream(eventStream(frame))) { /* consume */ }
+  }, error => error?.code === "invalid_sse_event");
+});
+
+test("citation events reject graph provenance without a retrieval stance", async () => {
+  const api = await loadSearchStreamModule();
+  const { retrieval_stance: _omitted, ...malformed } = graphContradiction;
+  const frame = `data: ${JSON.stringify({ type:"citations", value:[malformed] })}\n\n`;
+  await assert.rejects(async () => {
+    for await (const _event of api.parseEventStream(eventStream(frame))) { /* consume */ }
+  }, error => error?.code === "invalid_sse_event");
+});
+
 test("unknown stages are rejected instead of silently corrupting progress", async () => {
   const api = await loadSearchStreamModule();
   await assert.rejects(async () => {

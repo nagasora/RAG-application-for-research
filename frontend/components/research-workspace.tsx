@@ -11,15 +11,18 @@ import {
   type ExportFormat, type Paper, type SavedComparison, type SearchHistory, type Tag,
 } from "@/lib/api/client";
 import { apiErrorMessage } from "@/lib/api/error";
+import { CollaborativeReviews } from "@/components/collaborative-reviews";
+import { ResearchPipeline } from "@/components/research-pipeline";
 
 type ResearchWorkspaceProps = {
+  workspaceId: string;
   papers: Paper[];
   canWrite: boolean;
   exportPaperIds: string[];
   onReplay: (query: string, paperIds: string[]) => void;
 };
 
-export function ResearchWorkspace({ papers, canWrite, exportPaperIds, onReplay }: ResearchWorkspaceProps) {
+export function ResearchWorkspace({ workspaceId, papers, canWrite, exportPaperIds, onReplay }: ResearchWorkspaceProps) {
   const [tags, setTags] = useState<Tag[]>([]);
   const [paperTagIds, setPaperTagIds] = useState<Record<string, string[]>>({});
   const [history, setHistory] = useState<SearchHistory[]>([]);
@@ -105,6 +108,8 @@ export function ResearchWorkspace({ papers, canWrite, exportPaperIds, onReplay }
 
   return <section className="rise"><div className="mb-8"><p className="mb-2 text-xs font-bold uppercase tracking-[.2em] text-[#a06a28]">Research workspace</p><h1 className="serif text-4xl font-semibold md:text-5xl">調査の続きを、整理して残す。</h1><p className="mt-3 text-sm text-[#68736f]">タグ、検索履歴、保存した比較と文献エクスポートをまとめて管理します。</p>{!canWrite && <p className="mt-4 rounded-xl bg-amber-50 p-3 text-xs text-amber-800">viewer権限のため閲覧のみ可能です。</p>}</div>
     {error && <div role="alert" className="mb-6 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">{error}</div>}
+    <ResearchPipeline canWrite={canWrite}/>
+    <CollaborativeReviews workspaceId={workspaceId} canWrite={canWrite}/>
     <div className="grid gap-6 xl:grid-cols-2">
       <section className="paper-card rounded-3xl p-6"><div className="mb-5 flex items-center gap-2"><TagIcon className="h-5 w-5 text-[#164f3b]"/><h2 className="serif text-2xl font-semibold">タグと論文</h2></div>
         <form onSubmit={submitTag} className="mb-5 flex flex-wrap gap-2"><input aria-label="タグ色" type="color" disabled={!canWrite} value={tagColor} onChange={event => setTagColor(event.target.value)} className="h-10 w-12 rounded border border-[#d5d8d2] bg-white p-1 disabled:opacity-40"/><input aria-label="タグ名" disabled={!canWrite} maxLength={100} value={tagName} onChange={event => setTagName(event.target.value)} placeholder="タグ名" className="min-w-40 flex-1 rounded-xl border border-[#d5d8d2] bg-white px-3 py-2 text-sm disabled:opacity-40"/><button disabled={!canWrite || !tagName.trim() || busy === "tag"} className="rounded-full bg-[#164f3b] px-4 py-2 text-xs font-semibold text-white disabled:opacity-40">{editingTag ? "更新" : "作成"}</button>{editingTag && <button type="button" onClick={() => { setEditingTag(null); setTagName(""); }} className="text-xs text-[#68736f]">取消</button>}</form>

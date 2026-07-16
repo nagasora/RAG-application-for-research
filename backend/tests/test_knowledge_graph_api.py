@@ -165,6 +165,45 @@ def test_graph_keeps_immutable_provenance_and_marks_downstream_nodes_for_review(
         main.app.dependency_overrides.clear()
 
 
+def test_evidence_link_preserves_exact_quote_and_rejects_mismatched_quote(tmp_path):
+    _setup(tmp_path)
+    content = "Alpha evidence supports the proposed claim."
+    try:
+        with TestClient(main.app) as client:
+            imported = _import_source(client, content, "note://exact-quote")
+            source = imported["source"]
+            span = imported["spans"][0]
+            quote = "evidence supports"
+            start = content.index(quote)
+            response = client.post("/api/graph/nodes", headers=_headers("alice"), json={
+                "node_type": "source", "content": "The proposed claim is supported.",
+                "evidence_links": [{
+                    "source_span_id": span["id"], "target_claim": "The proposed claim is supported.",
+                    "role": "supports", "extraction_quality": "high",
+                    "quote_start": start, "quote_end": start + len(quote),
+                    "verbatim_quote": quote,
+                }],
+            })
+            assert response.status_code == 201
+            evidence = response.json()["evidence"][0]
+            assert evidence["source_version_id"] == source["id"]
+            assert evidence["verbatim_quote"] == quote
+            assert (evidence["quote_start"], evidence["quote_end"]) == (start, start + len(quote))
+            assert evidence["target_claim"] == "The proposed claim is supported."
+
+            rejected = client.post("/api/graph/nodes", headers=_headers("alice"), json={
+                "node_type": "source", "content": "Incorrect evidence must not be stored.",
+                "evidence_links": [{
+                    "source_span_id": span["id"], "quote_start": start,
+                    "quote_end": start + len(quote), "verbatim_quote": "fabricated quote",
+                }],
+            })
+            assert rejected.status_code == 422
+            assert "exactly match" in rejected.json()["detail"]
+    finally:
+        main.app.dependency_overrides.clear()
+
+
 def test_graph_rejects_cross_workspace_anchor_and_viewer_writes(tmp_path):
     store = _setup(tmp_path)
     try:

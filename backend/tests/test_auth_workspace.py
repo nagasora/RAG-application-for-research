@@ -210,6 +210,65 @@ def test_request_user_id_is_ignored_and_membership_prevents_idor(tmp_path):
         main.app.dependency_overrides.clear()
 
 
+def test_viewer_can_preview_local_evidence_but_cannot_start_cost_bearing_generation(tmp_path, monkeypatch):
+    store = setup_app(tmp_path)
+    model_calls: list[str] = []
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(main, "embed_texts", lambda *_args, **_kwargs: model_calls.append("embed") or [])
+    monkeypatch.setattr(main, "_run_agentic_rag", lambda *_args, **_kwargs: model_calls.append("llm"))
+    try:
+        with TestClient(main.app) as client:
+            uploaded = client.post(
+                "/api/papers/upload", headers={"X-Dev-User": "alice"},
+                files={"files": ("paper.txt", b"Grounded retrieval improves evidence review.", "text/plain")},
+            ).json()[0]["paper"]
+            alice, workspace = store.ensure_user(Principal(issuer="paperpilot-dev", subject="alice"))
+            bob, _ = store.ensure_user(Principal(issuer="paperpilot-dev", subject="bob"))
+            store.add_workspace_member(workspace.id, bob.id, "viewer")
+            headers = {"X-Dev-User": "bob", "X-Workspace-ID": workspace.id}
+
+            preview = client.post("/api/search/preview", headers=headers, json={"query": "evidence review"})
+            answer = client.post("/api/search", headers=headers, json={"query": "evidence review"})
+            streamed = client.post("/api/search/stream", headers=headers, json={"query": "evidence review"})
+            summary = client.post(f"/api/papers/{uploaded['id']}/summary", headers=headers)
+
+        assert preview.status_code == 200
+        assert preview.json()["citations"][0]["paper_id"] == uploaded["id"]
+        assert answer.status_code == 403
+        assert streamed.status_code == 403
+        assert summary.status_code == 403
+        assert model_calls == []
+    finally:
+        main.app.dependency_overrides.clear()
+
+
+def test_library_page_filters_source_sets_and_records_screening_decisions(tmp_path):
+    setup_app(tmp_path)
+    try:
+        with TestClient(main.app) as client:
+            headers = {"X-Dev-User": "alice"}
+            uploaded = client.post("/api/papers/upload", headers=headers, files=[
+                ("files", ("alpha.txt", b"alpha evidence", "text/plain")),
+                ("files", ("beta.txt", b"beta evidence", "text/plain")),
+            ]).json()
+            paper_ids = [item["paper"]["id"] for item in uploaded]
+            source_set = client.post("/api/source-sets", headers=headers, json={"name": "screening", "paper_ids": [paper_ids[0]]}).json()
+            included = client.put(f"/api/papers/{paper_ids[0]}/decision", headers=headers, json={"decision": "included", "reason": "matches scope"})
+            tag = client.post("/api/tags", headers=headers, json={"name": "priority", "color": "#123456"}).json()
+            bulk = client.post("/api/papers/bulk/tags", headers=headers, json={"paper_ids": paper_ids, "tag_ids": [tag["id"]], "operation": "add"})
+            page = client.get("/api/library/papers", headers=headers, params={"page": 1, "page_size": 1, "source_set_id": source_set["id"], "decision": "included"})
+
+        assert included.status_code == 200
+        assert bulk.status_code == 204
+        assert page.status_code == 200
+        payload = page.json()
+        assert payload["total"] == 1 and payload["items"][0]["id"] == paper_ids[0]
+        assert payload["items"][0]["decision"]["reason"] == "matches scope"
+        assert payload["items"][0]["tag_ids"] == [tag["id"]]
+    finally:
+        main.app.dependency_overrides.clear()
+
+
 def test_workspace_owner_can_manage_members_without_leaking_orphans(tmp_path):
     setup_app(tmp_path)
     try:

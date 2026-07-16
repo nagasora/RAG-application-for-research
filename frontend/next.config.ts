@@ -1,12 +1,9 @@
 import type { NextConfig } from "next";
 
-const isCloudflarePages = process.env.NEXT_DEPLOY_TARGET === "cloudflare-pages";
-
 const nextConfig: NextConfig = {
-  // Prevent parent-level lockfiles from changing Turbopack's workspace root.
+  // Keep the frontend self-contained when started from this repository.
   turbopack: { root: process.cwd() },
-  // Cloudflare Pages serves this client-first application as static assets.
-  // Keep the Node standalone output for the existing Docker/Render deployment.
-  output: isCloudflarePages ? "export" : "standalone",
+  // The local all-in-one Compose stack runs Next.js in a container.
+  output: "standalone",
 };
 export default nextConfig;

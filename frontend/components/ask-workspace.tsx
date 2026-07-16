@@ -12,7 +12,7 @@ import remarkMath from "remark-math";
 
 import type { EvidenceTarget } from "@/components/evidence-viewer";
 import {
-  createGraphNode, createResearchConversation, getLLMStatus, getResearchConversation, getResearchMemoryPage, importGraphSource, listResearchConversations,
+  createGraphNode, createResearchConversation, getLLMStatus, getResearchConversation, getResearchMemoryPage, importGraphSource, listResearchConversations, previewSearch,
   type Citation, type LLMStatus, type Paper, type ResearchConversation, type ResearchConversationDetail, type ResearchMemoryEvent, type ResearchMessage,
 } from "@/lib/api/client";
 import { apiErrorMessage, toApiError } from "@/lib/api/error";
@@ -78,6 +78,68 @@ function fallbackLabel(code?: string | null) {
   return code ? (FALLBACK_LABELS[code] ?? "LLM生成を完了できませんでした") : "";
 }
 
+function isGraphCitation(citation: Citation) {
+  return citation.source_kind === "graph_node" || citation.source_kind === "graph_edge";
+}
+
+function isNegativeCitation(citation: Citation) {
+  return citation.retrieval_stance === "negative" || citation.evidence_role === "contradicts";
+}
+
+function canOpenPaperEvidence(citation: Citation) {
+  return citation.paper_id.trim().length > 0 && citation.chunk_id.trim().length > 0
+    && Number.isInteger(citation.page) && citation.page >= 1;
+}
+
+function citationKey(citation: Citation) {
+  return `${citation.source_kind || "paper_chunk"}:${citation.source_span_id || citation.chunk_id}:${citation.index}`;
+}
+
+function CitationBadges({ citation }: { citation: Citation }) {
+  const negative = isNegativeCitation(citation);
+  return <span className="inline-flex flex-wrap items-center gap-1">
+    {isGraphCitation(citation) && <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[9px] font-bold text-sky-800">知識グラフ由来</span>}
+    {negative && <span className="rounded-full bg-red-50 px-2 py-0.5 text-[9px] font-bold text-red-800">反証根拠</span>}
+    {!negative && citation.retrieval_stance === "positive" && isGraphCitation(citation) && <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] font-bold text-emerald-800">支持根拠</span>}
+    {!negative && citation.retrieval_stance === "neutral" && isGraphCitation(citation) && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[9px] font-bold text-slate-700">中立根拠</span>}
+  </span>;
+}
+
+function CitationProvenance({ citation }: { citation: Citation }) {
+  if (!isGraphCitation(citation)) return null;
+  const channels = citation.retrieval_channels ?? [];
+  return <div className="mt-2 rounded-lg bg-[#f2f6f4] px-2.5 py-2 text-[10px] leading-4 text-[#52605b]">
+    {citation.source_quote && <p><span className="font-bold">原典引用:</span> {citation.source_quote}</p>}
+    <p className={citation.source_quote ? "mt-1" : ""}>
+      <span className="font-bold">Provenance:</span> {citation.source_kind === "graph_edge" ? "graph edge" : "graph node"}
+      {citation.retrieval_stance ? ` · stance ${citation.retrieval_stance}` : ""}
+      {channels.length ? ` · ${channels.join(" / ")}` : ""}
+      {citation.extraction_quality ? ` · 抽出品質 ${citation.extraction_quality}` : ""}
+    </p>
+    {citation.retrieval_reason && <p className="mt-1">取得理由: {citation.retrieval_reason}</p>}
+  </div>;
+}
+
+function CitationCard({ citation, openEvidence, compact = false }: {
+  citation: Citation; openEvidence: (target: EvidenceTarget) => void; compact?: boolean;
+}) {
+  const openable = canOpenPaperEvidence(citation);
+  const content = <>
+    <div className="flex items-start gap-2">
+      <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-[#164f3b] text-[9px] font-bold text-white">{citation.index}</span>
+      <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-1"><p className="min-w-0 flex-1 truncate text-xs font-semibold text-[#26342e]">{citation.paper_title}</p><CitationBadges citation={citation}/></div><p className="mt-0.5 text-[10px] font-semibold text-[#a06a28]">抽出箇所: {citation.section} · p. {citation.page}</p></div>
+      {openable && <ChevronRightIcon className="mt-1 h-3.5 w-3.5 shrink-0 text-[#35634f]"/>}
+    </div>
+    <p className="mt-2 text-[10px] font-bold text-[#68736f]">{citation.source_quote ? "検索に使用した抜粋" : "原文抜粋"}</p>
+    <p className={`mt-1 text-[11px] leading-5 text-[#52605b] ${compact ? "line-clamp-4" : "line-clamp-3"}`}>{citation.excerpt}</p>
+    <CitationProvenance citation={citation}/>
+    {openable && <span className="mt-2 inline-flex items-center gap-1 text-[10px] font-bold text-[#35634f]">対応する原文ページを確認<ChevronRightIcon className="h-3 w-3"/></span>}
+  </>;
+  const className = `block w-full rounded-xl border bg-white p-3 text-left ${isNegativeCitation(citation) ? "border-red-200" : "border-[#d8ded9]"}`;
+  if (!openable) return <div className={className}>{content}</div>;
+  return <button type="button" onClick={() => openEvidence({ paperId:citation.paper_id, paperTitle:citation.paper_title, page:citation.page, chunkId:citation.chunk_id })} aria-label={`引用${citation.index}: ${citation.paper_title} ${citation.page}ページの原文を確認`} className={`${className} transition hover:border-[#6f9d86] hover:bg-[#fafffb]`}>{content}</button>;
+}
+
 function AnswerWithCitations({ text, citations, openEvidence }: { text: string; citations: Citation[]; openEvidence: (target: EvidenceTarget) => void }) {
   return <div className="research-markdown min-w-0 text-[15px] leading-8">
     <ReactMarkdown
@@ -106,7 +168,11 @@ function AnswerWithCitations({ text, citations, openEvidence }: { text: string; 
             ? citations.find(item => item.index === Number(citationMatch[1]))
             : undefined;
           if (citation) {
-            return <button type="button" onClick={() => openEvidence({ paperId:citation.paper_id, paperTitle:citation.paper_title, page:citation.page, chunkId:citation.chunk_id })} aria-label={`引用${citation.index}: ${citation.paper_title} ${citation.page}ページを開く`} className="mx-0.5 inline-flex rounded bg-[#dfeee6] px-1.5 py-0.5 align-baseline text-xs font-bold text-[#164f3b] hover:bg-[#c9e2d5] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#164f3b]" title={`${citation.paper_title} p.${citation.page}`}>{children}</button>;
+            const graph = isGraphCitation(citation); const contradictory = isNegativeCitation(citation);
+            const className = `mx-0.5 inline-flex items-center gap-1 rounded px-1.5 py-0.5 align-baseline text-xs font-bold focus-visible:outline focus-visible:outline-2 ${contradictory ? "bg-red-100 text-red-800 focus-visible:outline-red-700" : "bg-[#dfeee6] text-[#164f3b] focus-visible:outline-[#164f3b]"}`;
+            const label = <>{children}{graph && <span className="text-[8px] uppercase">graph</span>}{contradictory && <span className="rounded bg-white/70 px-1 text-[8px]">反証</span>}</>;
+            if (!canOpenPaperEvidence(citation)) return <span className={className} title="対応する原文ページがないグラフ根拠です">{label}</span>;
+            return <button type="button" onClick={() => openEvidence({ paperId:citation.paper_id, paperTitle:citation.paper_title, page:citation.page, chunkId:citation.chunk_id })} aria-label={`引用${citation.index}: ${citation.paper_title} ${citation.page}ページを開く`} className={`${className} hover:brightness-95`} title={`${citation.paper_title} p.${citation.page}`}>{label}</button>;
           }
           return <a href={href} target="_blank" rel="noreferrer noopener" className="font-semibold text-[#176143] underline decoration-[#8cb9a4] underline-offset-4">{children}</a>;
         },
@@ -140,13 +206,13 @@ function SearchProgress({ label, stage, stageIndex }: { label: string; stage: Se
 function CitationEvidencePanel({ evidence, grounded, openEvidence }: {
   evidence: Citation[]; grounded: boolean; openEvidence: (target: EvidenceTarget) => void;
 }) {
-  return <aside className="hidden min-h-0 overflow-y-auto border-l border-[#deddd5] bg-[#f3f3ef] p-4 xl:block" aria-label="最新回答の論文根拠"><div className="mb-4 flex items-center justify-between"><h2 className="text-xs font-bold uppercase tracking-[.14em] text-[#52605b]">Evidence</h2><span className="rounded-full bg-white px-2 py-1 text-[10px] text-[#7a837f]">{evidence.length}件</span></div><div className="space-y-3">{evidence.map(citation => <button type="button" key={`${citation.chunk_id}-${citation.index}`} onClick={() => openEvidence({ paperId:citation.paper_id, paperTitle:citation.paper_title, page:citation.page, chunkId:citation.chunk_id })} aria-label={`引用${citation.index}: ${citation.paper_title} ${citation.page}ページを開く`} className="block w-full rounded-2xl border border-[#d8dad4] bg-white p-4 text-left hover:border-[#6f9d86] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#164f3b]"><div className="mb-2 flex items-center gap-2"><span className="grid h-6 w-6 place-items-center rounded-full bg-[#164f3b] text-[10px] font-bold text-white">{citation.index}</span><span className="text-xs font-semibold text-[#a06a28]">p. {citation.page} · {citation.section}</span></div><p className="line-clamp-2 text-xs font-semibold leading-5">{citation.paper_title}</p><p className="mt-2 line-clamp-4 text-xs leading-5 text-[#68736f]">{citation.excerpt}</p><span className="mt-3 inline-flex items-center gap-1 text-[10px] font-bold text-[#35634f]">根拠ページを確認<ChevronRightIcon className="h-3 w-3"/></span></button>)}{!evidence.length && <div className="rounded-2xl border border-dashed border-[#ccd1cc] p-5 text-center"><DocumentTextIcon className="mx-auto h-5 w-5 text-[#89918e]"/><p className="mt-2 text-xs leading-5 text-[#7a837f]">回答に引用が付くと、根拠のページと原文がここに表示されます。</p></div>}</div>{grounded && <div className="mt-4 flex items-center gap-2 rounded-xl bg-[#e1eee7] p-3 text-xs text-[#23513e]"><CheckCircleIcon className="h-4 w-4"/>引用番号を検証済み</div>}</aside>;
+  return <aside className="hidden min-h-0 overflow-y-auto border-l border-[#deddd5] bg-[#f3f3ef] p-4 xl:block" aria-label="最新回答の根拠"><div className="mb-4 flex items-center justify-between"><h2 className="text-xs font-bold uppercase tracking-[.14em] text-[#52605b]">Evidence</h2><span className="rounded-full bg-white px-2 py-1 text-[10px] text-[#7a837f]">{evidence.length}件</span></div><div className="space-y-3">{evidence.map(citation => <CitationCard key={citationKey(citation)} citation={citation} openEvidence={openEvidence} compact/>)}{!evidence.length && <div className="rounded-2xl border border-dashed border-[#ccd1cc] p-5 text-center"><DocumentTextIcon className="mx-auto h-5 w-5 text-[#89918e]"/><p className="mt-2 text-xs leading-5 text-[#7a837f]">回答に引用が付くと、根拠の出所と原文がここに表示されます。</p></div>}</div>{grounded && <div className="mt-4 flex items-center gap-2 rounded-xl bg-[#e1eee7] p-3 text-xs text-[#23513e]"><CheckCircleIcon className="h-4 w-4"/>根拠参照の整合性を検証済み</div>}</aside>;
 }
 
 function AnswerEvidenceList({ citations, openEvidence }: { citations: Citation[]; openEvidence: (target: EvidenceTarget) => void }) {
-  return <section className="ml-11 mt-4 rounded-2xl border border-[#d8ded9] bg-[#f7faf7] p-3" aria-label="この回答でRAGが使用した論文箇所">
-    <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-2 text-xs font-bold text-[#35634f]"><DocumentTextIcon className="h-4 w-4"/>この回答でRAGが使用した論文箇所</div><span className="shrink-0 rounded-full bg-white px-2 py-1 text-[10px] font-semibold text-[#68736f]">{citations.length}件</span></div>
-    {citations.length ? <div className="mt-3 grid gap-2 lg:grid-cols-2">{citations.map(citation => <button type="button" key={`${citation.chunk_id}-${citation.index}`} onClick={() => openEvidence({ paperId:citation.paper_id, paperTitle:citation.paper_title, page:citation.page, chunkId:citation.chunk_id })} aria-label={`引用${citation.index}: ${citation.paper_title} ${citation.page}ページの原文を確認`} className="rounded-xl border border-[#d8ded9] bg-white p-3 text-left transition hover:border-[#6f9d86] hover:bg-[#fafffb]"><div className="flex items-start gap-2"><span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-[#164f3b] text-[9px] font-bold text-white">{citation.index}</span><div className="min-w-0 flex-1"><p className="truncate text-xs font-semibold text-[#26342e]">{citation.paper_title}</p><p className="mt-0.5 text-[10px] font-semibold text-[#a06a28]">抽出箇所: {citation.section} · p. {citation.page}</p></div><ChevronRightIcon className="mt-1 h-3.5 w-3.5 shrink-0 text-[#35634f]"/></div><p className="mt-2 text-[10px] font-bold text-[#68736f]">原文抜粋</p><p className="mt-1 line-clamp-3 text-[11px] leading-5 text-[#52605b]">{citation.excerpt}</p><span className="mt-2 inline-flex items-center gap-1 text-[10px] font-bold text-[#35634f]">原文ページを確認<ChevronRightIcon className="h-3 w-3"/></span></button>)}</div> : <div className="mt-3 rounded-xl border border-dashed border-[#cbd3cc] bg-white/70 p-3 text-xs leading-5 text-[#68736f]">この回答には、RAGが使用した論文箇所はありません。一般知識またはローカル回答として扱い、原典の根拠にはしないでください。</div>}
+  return <section className="ml-11 mt-4 rounded-2xl border border-[#d8ded9] bg-[#f7faf7] p-3" aria-label="この回答でRAGが使用した根拠">
+    <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-2 text-xs font-bold text-[#35634f]"><DocumentTextIcon className="h-4 w-4"/>この回答でRAGが使用した根拠</div><span className="shrink-0 rounded-full bg-white px-2 py-1 text-[10px] font-semibold text-[#68736f]">{citations.length}件</span></div>
+    {citations.length ? <div className="mt-3 grid gap-2 lg:grid-cols-2">{citations.map(citation => <CitationCard key={citationKey(citation)} citation={citation} openEvidence={openEvidence}/>)}</div> : <div className="mt-3 rounded-xl border border-dashed border-[#cbd3cc] bg-white/70 p-3 text-xs leading-5 text-[#68736f]">この回答には、RAGが使用した根拠はありません。一般知識またはローカル回答として扱い、原典の根拠にはしないでください。</div>}
   </section>;
 }
 
@@ -302,8 +368,23 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
   const ask = async (event: FormEvent) => {
     event.preventDefault();
     const prompt = query.trim();
-    if (!canWrite || busy) return;
+    if (busy) return;
     if (Array.from(prompt).length < 2) { setError("質問は2文字以上で入力してください。"); return; }
+    if (!canWrite) {
+      setError(""); setSyncNotice(""); setLiveQuestion(prompt); setLiveAnswer(""); setLiveCitations([]);
+      setPhase("planning");
+      try {
+        const result = await previewSearch({ query:prompt, paper_ids:selected, limit:10, interaction_mode:"evidence" });
+        setLiveCitations(result.citations);
+        setSyncNotice(result.citations.length ? "原文根拠を表示しています。viewer権限ではLLM回答は生成されません。" : "一致する原文根拠は見つかりませんでした。");
+        setQuery("");
+      } catch (requestError) {
+        setError(apiErrorMessage(requestError, "論文内を検索できませんでした"));
+      } finally {
+        setPhase("idle");
+      }
+      return;
+    }
     detailAbortRef.current?.abort(); setDetailLoading(false);
     streamAbortRef.current?.abort(); setPhase("planning"); setSearchStage("accepted"); setError(""); setSyncNotice("");
     setLiveQuestion(prompt); setLiveAnswer(""); setLiveCitations([]); setLastMeta(null);
@@ -316,7 +397,7 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
         conversationId = created.id; activeIdRef.current = created.id; setActiveId(created.id);
         setConversations(current => [created, ...current]);
       }
-      for await (const streamEvent of streamSearch({ query:prompt, paper_ids:selected, limit:10, conversation_id:conversationId }, controller.signal)) {
+      for await (const streamEvent of streamSearch({ query:prompt, paper_ids:selected, limit:10, conversation_id:conversationId, interaction_mode:"synthesis" }, controller.signal)) {
         if (streamEvent.type === "token") { setPhase("answering"); setLiveAnswer(current => current + streamEvent.value); }
         if (streamEvent.type === "citations") setLiveCitations(streamEvent.value);
         if (streamEvent.type === "stage") setSearchStage(streamEvent.value);
@@ -515,7 +596,7 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
               {error && <div role="alert" className="mb-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{error}</div>}
               {syncNotice && <div role="status" className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-900">{syncNotice}</div>}
               {fallbackNotice && <div role="status" className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-medium leading-5 text-amber-950"><span className="font-bold">{lastMeta?.generation_mode === "agentic_rag" ? "根拠監査の注意:" : "LLMフォールバック:"}</span> {fallbackNotice}</div>}
-              <form onSubmit={ask} className="rounded-3xl border border-[#bfc9c2] bg-white p-2 shadow-[0_16px_50px_rgba(28,45,37,.13)]"><textarea aria-label="研究について質問" disabled={!canWrite || busy} maxLength={4000} value={query} onChange={event => setQuery(event.target.value)} rows={3} placeholder={canWrite ? "論文をまとめる、仮説を反証する、次の実験を設計する…" : "viewer権限では研究対話へ追記できません"} className="min-h-20 w-full resize-none rounded-2xl bg-transparent px-4 py-3 text-base outline-none placeholder:text-[#9ba19e]"/><div className="flex items-center justify-between gap-3 px-2 pb-1"><span className="flex min-w-0 items-center gap-1.5 truncate text-[11px] font-medium text-[#52605b]"><CircleStackIcon className="h-3.5 w-3.5 shrink-0 text-[#35634f]"/><span className="truncate">プロジェクト共通 · {sourceScopeLabel}</span></span>{busy ? <button type="button" onClick={stopDisplay} className="inline-flex shrink-0 items-center gap-2 rounded-full border border-[#b8bfba] px-4 py-2 text-xs font-semibold"><StopIcon className="h-4 w-4"/>表示を中断</button> : <button disabled={!canWrite || Array.from(query.trim()).length < 2} className="shrink-0 rounded-full bg-[#164f3b] px-5 py-2.5 text-xs font-semibold text-white disabled:opacity-40">質問する</button>}</div></form>
+              <form onSubmit={ask} className="rounded-3xl border border-[#bfc9c2] bg-white p-2 shadow-[0_16px_50px_rgba(28,45,37,.13)]"><textarea aria-label="研究について質問" disabled={busy} maxLength={4000} value={query} onChange={event => setQuery(event.target.value)} rows={3} placeholder={canWrite ? "論文をまとめる、仮説を反証する、次の実験を設計する…" : "論文の原文根拠を検索…（LLM回答は編集者のみ）"} className="min-h-20 w-full resize-none rounded-2xl bg-transparent px-4 py-3 text-base outline-none placeholder:text-[#9ba19e]"/><div className="flex items-center justify-between gap-3 px-2 pb-1"><span className="flex min-w-0 items-center gap-1.5 truncate text-[11px] font-medium text-[#52605b]"><CircleStackIcon className="h-3.5 w-3.5 shrink-0 text-[#35634f]"/><span className="truncate">プロジェクト共通 · {sourceScopeLabel}</span></span>{busy ? <button type="button" onClick={stopDisplay} className="inline-flex shrink-0 items-center gap-2 rounded-full border border-[#b8bfba] px-4 py-2 text-xs font-semibold"><StopIcon className="h-4 w-4"/>表示を中断</button> : <button disabled={Array.from(query.trim()).length < 2} className="shrink-0 rounded-full bg-[#164f3b] px-5 py-2.5 text-xs font-semibold text-white disabled:opacity-40">{canWrite ? "質問する" : "原文を検索"}</button>}</div></form>
               <div className="mt-3 flex gap-2 overflow-x-auto pb-1">{["論文全体から詳しくまとめて", "前提の弱い部分を反証して", "次の検証実験を設計して"].map(text => <button type="button" key={text} disabled={busy || !canWrite} onClick={() => setQuery(text)} className="shrink-0 rounded-full border border-[#d5d8d2] bg-white/70 px-3 py-1.5 text-xs text-[#52605b] disabled:opacity-40">{text}</button>)}</div>
             </div></div>
           </div>

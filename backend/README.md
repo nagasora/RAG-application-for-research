@@ -1,5 +1,39 @@
 # PaperPilot backend
 
+## 個人用のローカル永続運用（既定）
+
+このCompose構成は、個人のPC上で論文・データベースを保持して使う経路を既定にしています。
+外部公開、Render、Cloudflare R2、OIDCは必要ありません。データは Docker volume
+`paperpilot-local-postgres` と、ホストの `backend/data/originals` / `backend/data/assets`
+に保存され、コンテナを再起動・更新しても残ります。
+
+```powershell
+# リポジトリ直下で実行
+docker compose -f docker-compose.local.yml up -d --build
+```
+
+これで PostgreSQL、migration/bootstrap、API が起動します。API は
+`http://localhost:8000` のみに公開され、取り込みは同期（`INGESTION_MODE=inline`）で
+処理されます。ブラウザ側は `http://localhost:3000` を使います。停止は次で行えます。
+
+```powershell
+docker compose -f docker-compose.local.yml stop
+```
+
+`docker compose -f docker-compose.local.yml down -v` は PostgreSQL volume を削除するため、データを残したい場合は
+実行しないでください。論文原本・アセットは `backend/data/` にあるため、定期的に
+このフォルダと PostgreSQL のバックアップを取ることを推奨します。
+
+```powershell
+docker compose -f docker-compose.local.yml exec -T postgres pg_dump -U paperpilot -d paperpilot > paperpilot-backup.sql
+```
+
+`PAPER_STORAGE_BACKEND=local`、`AUTH_MODE=dev` がローカル個人利用の既定です。
+R2/S3 と OIDC の設定は `.env.example` に残しており、外部環境を再び使う場合にのみ有効化します。
+詳しくは [ローカル永続利用手順](../docs/LOCAL_PERSISTENT_USE.md) を参照してください。
+
+---
+
 The backend requires an explicit PostgreSQL connection. It never silently falls back to SQLite.
 Authentication is also explicit: `AUTH_MODE` must be `dev` or `oidc`; there is no
 production `demo-user` fallback.

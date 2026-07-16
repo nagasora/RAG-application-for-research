@@ -30,14 +30,47 @@ export function isSearchStage(value: unknown): value is SearchStage {
 function isCitation(value: unknown): value is Citation {
   if (!value || typeof value !== "object") return false;
   const citation = value as Partial<Citation>;
-  return typeof citation.index === "number"
-    && typeof citation.paper_id === "string"
-    && typeof citation.paper_title === "string"
-    && typeof citation.chunk_id === "string"
-    && typeof citation.page === "number"
-    && typeof citation.section === "string"
-    && typeof citation.excerpt === "string"
-    && typeof citation.score === "number";
+  const nonEmpty = (item: unknown): item is string => typeof item === "string" && item.trim().length > 0;
+  const nullableString = (item: unknown) => item === undefined || item === null || nonEmpty(item);
+  const sourceKind = citation.source_kind;
+  const graphPath = citation.graph_path;
+  const channels = citation.retrieval_channels;
+  const common = Number.isInteger(citation.index) && Number(citation.index) >= 1
+    && nonEmpty(citation.paper_id)
+    && nonEmpty(citation.paper_title)
+    && nonEmpty(citation.chunk_id)
+    && Number.isInteger(citation.page) && Number(citation.page) >= 1
+    && nonEmpty(citation.section)
+    && nonEmpty(citation.excerpt)
+    && typeof citation.score === "number" && Number.isFinite(citation.score)
+    && (sourceKind === undefined || ["paper_chunk", "graph_node", "graph_edge"].includes(sourceKind))
+    && (citation.evidence_role === undefined || citation.evidence_role === null
+      || ["supports", "contradicts", "context", "mentions"].includes(citation.evidence_role))
+    && (citation.retrieval_stance === undefined || citation.retrieval_stance === null
+      || ["positive", "negative", "neutral"].includes(citation.retrieval_stance))
+    && (citation.extraction_quality === undefined || citation.extraction_quality === null
+      || ["high", "medium", "low", "unknown"].includes(citation.extraction_quality))
+    && (citation.fusion_score === undefined || citation.fusion_score === null
+      || (typeof citation.fusion_score === "number" && Number.isFinite(citation.fusion_score)))
+    && nullableString(citation.source_version_id)
+    && nullableString(citation.source_span_id)
+    && nullableString(citation.knowledge_node_id)
+    && nullableString(citation.knowledge_edge_id)
+    && nullableString(citation.retrieval_reason)
+    && nullableString(citation.source_quote)
+    && (graphPath === undefined || (Array.isArray(graphPath)
+      && graphPath.every(item => Boolean(item) && typeof item === "object" && !Array.isArray(item))))
+    && (channels === undefined || (Array.isArray(channels) && channels.every(nonEmpty)));
+  if (!common || sourceKind === undefined || sourceKind === "paper_chunk") return common;
+  return nonEmpty(citation.source_version_id)
+    && nonEmpty(citation.source_span_id)
+    && nonEmpty(citation.source_quote)
+    && citation.evidence_role !== undefined && citation.evidence_role !== null
+    && citation.retrieval_stance !== undefined && citation.retrieval_stance !== null
+    && Array.isArray(channels) && channels.length > 0
+    && (sourceKind === "graph_node"
+      ? nonEmpty(citation.knowledge_node_id)
+      : nonEmpty(citation.knowledge_edge_id));
 }
 
 function isAnswerClaim(value: unknown): value is AnswerClaim {

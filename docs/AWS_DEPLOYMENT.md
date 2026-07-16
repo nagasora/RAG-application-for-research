@@ -68,9 +68,9 @@ ALB ── API (EC2/ECS) ── RDS PostgreSQL (private subnet)
               └─ S3（原本PDF・抽出アセット）
 ```
 
-本番構成へ進む前に、次を実装・確認します。
+本番構成へ進む前に、次を確認します。S3互換ストレージアダプタは実装済みですが、AWSでの運用・復元を確認したことはまだありません。
 
-1. S3用ストレージアダプタ（現状はローカルファイル保存のみ）
+1. `PAPER_STORAGE_BACKEND=s3`、`S3_ENDPOINT_URL`、`S3_BUCKET`、`S3_ACCESS_KEY_ID`、`S3_SECRET_ACCESS_KEY`、必要に応じて `S3_REGION` / `S3_PREFIX` をSecrets ManagerまたはSSMから設定する。バケットは非公開にし、原本・アセットは認可済みAPI経由でだけ提供する。
 2. S3 versioning、ライフサイクル、暗号化、RDSバックアップと復元テスト
 3. OIDC必須化（`AUTH_MODE=oidc`）、Secrets Manager または SSM Parameter Store で秘密情報を注入
 4. API用・worker用の最小権限DBロール、TLS終端、レート制限、監視・ログ・アラーム

@@ -4,6 +4,8 @@
 
 初めて利用する方は、[PaperPilot 利用説明書](docs/USER_GUIDE.md)を参照してください。論文登録、根拠付き質問、比較、整理、知識グラフ、権限、トラブル対応を画面に沿って説明しています。
 
+個人PCだけで永続利用する場合は、[ローカル永続利用ガイド](docs/LOCAL_PERSISTENT_USE.md)に従ってください。PostgreSQL、API、フロントエンドを `localhost` にのみ公開して一括起動します。
+
 ## 主な機能
 
 - PostgreSQL + Alembic によるトランザクション永続化

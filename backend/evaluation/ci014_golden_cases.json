@@ -1,0 +1,52 @@
+{
+  "schema_version": "ci014-v2",
+  "description": "Offline golden cases for deterministic retrieval, citation, graph contradiction, and immutable source re-import checks.",
+  "metrics": {
+    "recall_at_k": {"target": 1.0, "k": 3},
+    "citation_precision": {"target": 0.85},
+    "claim_entailment": {"mode": "human_or_model_judged", "target": null},
+    "contradiction_recall": {"target": 1.0},
+    "falsifier_coverage": {"mode": "human_review", "target": null},
+    "hypothesis_diversity": {"mode": "human_or_model_judged", "target": null},
+    "expert_acceptance_rate": {"mode": "human_review", "target": null},
+    "p95_ms": {"mode": "benchmark", "target": null},
+    "cost_usd": {"mode": "explicit_model_run", "target": null},
+    "quote_exact_match": {"target": 1.0},
+    "semantic_only_recall_at_k": {"target": 1.0, "k": 3},
+    "indexed_query_plan": {"target": true}
+  },
+  "papers": [
+    {"id": "jp-causal", "title": "高齢者の転倒予防", "page": 2, "text": "運動介入は高齢者の転倒率を20%低下させた。"},
+    {"id": "en-negative", "title": "Survival analysis", "page": 4, "text": "The intervention did not improve survival in the primary analysis."},
+    {"id": "support", "title": "Pain trial positive", "page": 5, "text": "Drug A reduced pain scores after six weeks."},
+    {"id": "contradiction", "title": "Pain trial null", "page": 7, "text": "Drug A did not reduce pain scores in the replication cohort."},
+    {"id": "ocr-low-quality", "title": "Scanned trial", "page": 9, "text": "Tbe tr1al sh0wed no statistica1 benefit.", "extraction_quality": "low"}
+  ],
+  "retrieval_cases": [
+    {"id": "japanese-causal-numeric", "query": "運動介入 転倒率 20%", "expected_paper_ids": ["jp-causal"], "expected_quotes": ["運動介入は高齢者の転倒率を20%低下させた。"]},
+    {"id": "english-negation", "query": "intervention did not improve survival", "expected_paper_ids": ["en-negative"], "expected_quotes": ["The intervention did not improve survival in the primary analysis."]},
+    {"id": "numeric-result", "query": "転倒率 20", "expected_paper_ids": ["jp-causal"], "expected_quotes": ["運動介入は高齢者の転倒率を20%低下させた。"]},
+    {"id": "low-quality-ocr", "query": "tr1al statistica1 benefit", "expected_paper_ids": ["ocr-low-quality"], "expected_quotes": ["Tbe tr1al sh0wed no statistica1 benefit."]}
+  ],
+  "graph_cases": [
+    {"id": "contradiction-recall", "seed_id": "support", "target_id": "contradiction", "relation": "contradicts", "expected_evidence_role": "contradicts", "expected_quote": "Drug A did not reduce pain scores in the replication cohort."}
+  ],
+  "semantic_only_cases": [
+    {
+      "id": "semantic-only-outside-lexical-pool",
+      "expected_id": "semantic-target",
+      "k": 3,
+      "candidate_pool_size": 32,
+      "lexical_ranking": ["decoy-00", "decoy-01", "decoy-02", "decoy-03", "decoy-04", "decoy-05", "decoy-06", "decoy-07", "decoy-08", "decoy-09", "decoy-10", "decoy-11", "decoy-12", "decoy-13", "decoy-14", "decoy-15", "decoy-16", "decoy-17", "decoy-18", "decoy-19", "decoy-20", "decoy-21", "decoy-22", "decoy-23", "decoy-24", "decoy-25", "decoy-26", "decoy-27", "decoy-28", "decoy-29", "decoy-30", "decoy-31", "semantic-target"],
+      "mock_vector_scores": {"semantic-target": 1.0, "decoy-00": 0.1}
+    }
+  ],
+  "performance_profile": {
+    "paper_counts": [100, 500, 5000],
+    "diagnostic_mock_latency_samples_ms": [8.0, 9.0, 10.0, 11.0, 12.0],
+    "sqlite_query_plan": ["SCAN chunks", "USE TEMP B-TREE FOR ORDER BY"]
+  },
+  "reingestion_cases": [
+    {"id": "same-revision-idempotent", "kind": "markdown", "locator": "note://ci014/reingest", "content": "Immutable source text.", "replacement_content": "Immutable source text, corrected extraction."}
+  ]
+}
