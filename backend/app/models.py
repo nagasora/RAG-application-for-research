@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 def utc_now() -> str:
@@ -62,6 +62,49 @@ class PaperDetail(PaperSummary):
     byte_size: int | None = None
 
 
+class PaperDecision(BaseModel):
+    paper_id: str
+    decision: Literal["undecided", "included", "excluded"] = "undecided"
+    reason: str = ""
+    updated_at: str | None = None
+
+
+class PaperDecisionUpdate(BaseModel):
+    decision: Literal["undecided", "included", "excluded"]
+    reason: str = Field(default="", max_length=10_000)
+
+    @field_validator("reason")
+    @classmethod
+    def strip_reason(cls, value: str) -> str:
+        return value.strip()
+
+
+class PaperTagsBulkUpdate(BaseModel):
+    paper_ids: list[str] = Field(min_length=1, max_length=500)
+    tag_ids: list[str] = Field(default_factory=list, max_length=100)
+    operation: Literal["add", "remove"] = "add"
+
+
+class PaperLibraryItem(PaperSummary):
+    tag_ids: list[str] = Field(default_factory=list)
+    decision: PaperDecision
+
+
+class PaperLibraryFacets(BaseModel):
+    sources: dict[str, int] = Field(default_factory=dict)
+    statuses: dict[str, int] = Field(default_factory=dict)
+    tags: dict[str, int] = Field(default_factory=dict)
+    decisions: dict[str, int] = Field(default_factory=dict)
+
+
+class PaperLibraryPage(BaseModel):
+    items: list[PaperLibraryItem] = Field(default_factory=list)
+    total: int = Field(ge=0)
+    page: int = Field(ge=1)
+    page_size: int = Field(ge=1, le=100)
+    facets: PaperLibraryFacets
+
+
 class PaperPage(BaseModel):
     paper_id: str
     page: int
@@ -116,6 +159,16 @@ class EvidenceRef(BaseModel):
     source_span_id: str
     knowledge_node_id: str | None = None
     knowledge_edge_id: str | None = None
+    # Immutable provenance captured at link creation.  These duplicate the
+    # span's version deliberately: a link remains resolvable after a source is
+    # re-imported as a newer version.
+    source_version_id: str
+    target_claim: str = ""
+    role: Literal["supports", "contradicts", "context", "mentions"] = "supports"
+    extraction_quality: Literal["high", "medium", "low", "unknown"] = "unknown"
+    quote_start: int = Field(ge=0)
+    quote_end: int = Field(ge=0)
+    verbatim_quote: str = ""
     excerpt: str = ""
     created_at: str
 
@@ -124,7 +177,7 @@ class KnowledgeNode(BaseModel):
     id: str
     workspace_id: str
     created_by: str | None = None
-    node_type: Literal["source", "idea", "constraint", "hypothesis"]
+    node_type: Literal["source", "idea", "constraint", "hypothesis", "experiment"]
     status: Literal["review_pending", "active", "verified", "rejected", "superseded", "review_required", "pruned"]
     layer: int = Field(ge=0)
     content: str
@@ -134,6 +187,103 @@ class KnowledgeNode(BaseModel):
     evidence: list[EvidenceRef] = Field(default_factory=list)
     created_at: str
     updated_at: str
+
+
+class HypothesisCardCreate(BaseModel):
+    claim: str = Field(min_length=1, max_length=20_000)
+    mechanism: str = ""
+    target: str = ""
+    conditions: str = ""
+    intervention: str = ""
+    outcome: str = ""
+    direction: str = ""
+    assumptions: list[str] = Field(default_factory=list)
+    competing_theories: list[str] = Field(default_factory=list)
+    predictions: list[str] = Field(default_factory=list)
+    falsifiers: list[str] = Field(default_factory=list)
+    test: str = ""
+
+
+class HypothesisCard(HypothesisCardCreate):
+    id: str
+    workspace_id: str
+    created_by: str | None = None
+    status: Literal["draft", "reviewable", "reviewed", "supported", "rejected"] = "draft"
+    human_reviewed: bool = False
+    empirically_supported: bool = False
+    metadata: dict = Field(default_factory=dict)
+    created_at: str
+    updated_at: str
+
+
+class HypothesisCardStatusUpdate(BaseModel):
+    status: Literal["draft", "reviewable", "reviewed", "supported", "rejected"]
+    human_reviewed: bool | None = None
+    empirically_supported: bool | None = None
+
+
+class DiscoveryItemCreate(BaseModel):
+    provider: Literal["semantic_scholar"] = "semantic_scholar"
+    provider_paper_id: str = Field(min_length=1, max_length=256)
+    classification: Literal["supports", "contradicts", "boundary_condition", "method_alternative", "duplicate"]
+    title: str = Field(min_length=1, max_length=20_000)
+    abstract: str = ""
+    source_quote: str = ""
+    source_url: str = ""
+    license: str = "unknown"
+    rate_limit_policy: str = "api_key_intro_1_rps"
+    snapshot: dict = Field(default_factory=dict)
+
+
+class DiscoveryItem(DiscoveryItemCreate):
+    id: str
+    workspace_id: str
+    created_by: str | None = None
+    review_status: Literal["pending", "accepted", "rejected"] = "pending"
+    fetched_at: str
+    created_at: str
+
+
+class DiscoveryReviewUpdate(BaseModel):
+    review_status: Literal["accepted", "rejected"]
+
+
+class BeliefEventCreate(BaseModel):
+    belief_key: str = Field(min_length=1, max_length=128)
+    content: str = Field(min_length=1, max_length=20_000)
+    status: Literal["proposed", "supported", "disputed", "rejected", "superseded"]
+    reason: str = ""
+    hypothesis_card_id: str | None = None
+    reasoning_run_id: str | None = None
+
+
+class BeliefEvent(BeliefEventCreate):
+    id: str
+    workspace_id: str
+    created_by: str | None = None
+    created_at: str
+
+
+class ExperimentPlanCreate(BaseModel):
+    hypothesis_card_id: str | None = None
+    intervention: str = Field(min_length=1); measurement: str = Field(min_length=1); controls: str = Field(min_length=1)
+    confounders: list[str] = Field(default_factory=list); predictions: list[str] = Field(default_factory=list)
+    decision_threshold: str = Field(min_length=1); stopping_rule: str = Field(min_length=1); required_data: str = Field(min_length=1)
+    cost: str = Field(min_length=1); competing_hypothesis_discrimination: str = Field(min_length=1); evidence: list[str] = Field(default_factory=list)
+
+
+class ExperimentPlan(ExperimentPlanCreate):
+    id: str; workspace_id: str; created_by: str | None = None; hypothesis_snapshot: dict | None = None; results: list[dict] = Field(default_factory=list); history: list[dict] = Field(default_factory=list); created_at: str; updated_at: str
+class ExperimentResultCreate(BaseModel):
+    outcome: str = Field(min_length=1)
+    data_snapshot: dict = Field(default_factory=dict)
+    interpretation: str = ""
+
+
+class ExperimentPlanSnapshot(BaseModel):
+    schema_version: Literal["paperpilot.experiment-plan.v1"] = "paperpilot.experiment-plan.v1"
+    exported_at: str
+    experiment: ExperimentPlan
 
 
 class KnowledgeEdge(BaseModel):
@@ -218,8 +368,30 @@ class SourceImportResult(BaseModel):
     spans: list[SourceSpan] = Field(default_factory=list)
 
 
+class EvidenceLinkCreate(BaseModel):
+    """A claim-level, offset-addressable link to one immutable source span."""
+
+    source_span_id: str
+    target_claim: str = Field(default="", max_length=100_000)
+    role: Literal["supports", "contradicts", "context", "mentions"] = "supports"
+    extraction_quality: Literal["high", "medium", "low", "unknown"] = "unknown"
+    quote_start: int | None = Field(default=None, ge=0)
+    quote_end: int | None = Field(default=None, ge=0)
+    verbatim_quote: str = Field(default="", max_length=100_000)
+
+    @model_validator(mode="after")
+    def explicit_quote_requires_offsets(self) -> "EvidenceLinkCreate":
+        if (self.quote_start is None) != (self.quote_end is None):
+            raise ValueError("quote_start and quote_end must be supplied together")
+        if self.verbatim_quote and self.quote_start is None:
+            raise ValueError("verbatim_quote requires quote_start and quote_end")
+        if self.quote_start is not None and self.quote_end is not None and self.quote_end < self.quote_start:
+            raise ValueError("quote_end must not precede quote_start")
+        return self
+
+
 class KnowledgeNodeCreate(BaseModel):
-    node_type: Literal["source", "idea", "constraint", "hypothesis"]
+    node_type: Literal["source", "idea", "constraint", "hypothesis", "experiment"]
     content: str = Field(min_length=1, max_length=100_000)
     layer: int = Field(default=0, ge=0, le=100)
     status: Literal["review_pending", "active", "verified", "rejected", "superseded", "review_required", "pruned"] = "review_pending"
@@ -228,6 +400,7 @@ class KnowledgeNodeCreate(BaseModel):
     metadata: dict = Field(default_factory=dict)
     evidence_span_ids: list[str] = Field(default_factory=list, max_length=32)
     evidence_excerpt: str = Field(default="", max_length=10_000)
+    evidence_links: list[EvidenceLinkCreate] = Field(default_factory=list, max_length=32)
 
 
 class KnowledgeNodeStatusUpdate(BaseModel):
@@ -243,9 +416,16 @@ class KnowledgeEdgeCreate(BaseModel):
     source_node_id: str
     target_node_id: str
     relation: Literal["informs", "supports", "extends", "formulates", "contradicts", "implements", "depends_on", "related"]
-    evidence_span_ids: list[str] = Field(min_length=1, max_length=32)
+    evidence_span_ids: list[str] = Field(default_factory=list, max_length=32)
     metadata: dict = Field(default_factory=dict)
     evidence_excerpt: str = Field(default="", max_length=10_000)
+    evidence_links: list[EvidenceLinkCreate] = Field(default_factory=list, max_length=32)
+
+    @model_validator(mode="after")
+    def requires_evidence(self) -> "KnowledgeEdgeCreate":
+        if not self.evidence_span_ids and not self.evidence_links:
+            raise ValueError("knowledge edges require at least one evidence span or evidence link")
+        return self
 
 
 class KnowledgeEdgeStatusUpdate(BaseModel):
@@ -259,6 +439,37 @@ class ReasoningRunCreate(BaseModel):
     output_node_ids: list[str] = Field(default_factory=list, max_length=32)
     prompt: str = Field(default="", max_length=20_000)
     metadata: dict = Field(default_factory=dict)
+
+
+class ForwardPropagationCreate(BaseModel):
+    """Create one reviewable hypothesis from selected graph nodes.
+
+    The caller supplies the generated text (normally from an LLM) and immutable
+    source spans that ground every newly-created premise edge.
+    """
+
+    input_node_ids: list[str] = Field(min_length=1, max_length=32)
+    hypothesis_content: str | None = Field(default=None, max_length=100_000)
+    evidence_span_ids: list[str] = Field(default_factory=list, max_length=32)
+    evidence_excerpt: str = Field(default="", max_length=10_000)
+    evidence_links: list[EvidenceLinkCreate] = Field(default_factory=list, max_length=32)
+    prompt: str = Field(default="", max_length=20_000)
+    operator: str = Field(default="formulate_hypothesis", min_length=1, max_length=64)
+    metadata: dict = Field(default_factory=dict)
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    phase: str = Field(default="hypothesis_generation", max_length=64)
+
+    @model_validator(mode="after")
+    def requires_evidence(self) -> "ForwardPropagationCreate":
+        if not self.evidence_span_ids and not self.evidence_links:
+            raise ValueError("forward propagation requires at least one evidence span or evidence link")
+        return self
+
+
+class ForwardPropagationResult(BaseModel):
+    hypothesis: KnowledgeNode
+    edges: list[KnowledgeEdge] = Field(default_factory=list)
+    reasoning_run: ReasoningRun
 
 
 class NodeFeedbackCreate(BaseModel):
@@ -391,6 +602,252 @@ class WorkspaceMemberUpdate(BaseModel):
     role: Literal["owner", "editor", "viewer"]
 
 
+class ResearchQuestion(BaseModel):
+    id: str
+    workspace_id: str
+    created_by: str | None = None
+    title: str = ""
+    question: str
+    created_at: str
+    updated_at: str
+
+
+class ResearchQuestionCreate(BaseModel):
+    title: str = Field(default="", max_length=255)
+    question: str = Field(min_length=1, max_length=100_000)
+
+    @field_validator("title", "question")
+    @classmethod
+    def strip_content(cls, value: str) -> str:
+        cleaned = value.strip()
+        if value and not cleaned:
+            raise ValueError("content must not be blank")
+        return cleaned
+
+
+class ResearchQuestionUpdate(BaseModel):
+    title: str | None = Field(default=None, max_length=255)
+    question: str | None = Field(default=None, min_length=1, max_length=100_000)
+
+    @field_validator("title", "question")
+    @classmethod
+    def strip_content(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        if value and not cleaned:
+            raise ValueError("content must not be blank")
+        return cleaned
+
+
+class SourceSet(BaseModel):
+    id: str
+    workspace_id: str
+    created_by: str | None = None
+    name: str
+    description: str = ""
+    paper_ids: list[str] = Field(default_factory=list, max_length=500)
+    created_at: str
+    updated_at: str
+
+
+class SourceSetCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    description: str = Field(default="", max_length=10_000)
+    paper_ids: list[str] = Field(default_factory=list, max_length=1_000)
+
+    @field_validator("name", "description")
+    @classmethod
+    def strip_content(cls, value: str) -> str:
+        cleaned = value.strip()
+        if value and not cleaned:
+            raise ValueError("content must not be blank")
+        return cleaned
+
+
+class SourceSetUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=10_000)
+    paper_ids: list[str] | None = Field(default=None, max_length=1_000)
+
+    @field_validator("name", "description")
+    @classmethod
+    def strip_content(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        if value and not cleaned:
+            raise ValueError("content must not be blank")
+        return cleaned
+
+
+class RunArtifact(BaseModel):
+    id: str
+    research_run_id: str
+    kind: str
+    payload: dict | list
+    ordinal: int
+    created_at: str
+
+
+class RunArtifactCreate(BaseModel):
+    kind: str = Field(min_length=1, max_length=64)
+    payload: dict | list
+
+
+class ResearchRun(BaseModel):
+    id: str
+    workspace_id: str
+    created_by: str | None = None
+    research_question_id: str | None = None
+    source_set_id: str | None = None
+    research_question: str = ""
+    source_paper_ids: list[str] = Field(default_factory=list)
+    excluded_paper_ids: list[str] = Field(default_factory=list)
+    purpose: str = ""
+    success_criteria: str = ""
+    plan: dict | list = Field(default_factory=dict)
+    model: str = ""
+    prompt_version: str = ""
+    status: Literal["queued", "running", "succeeded", "failed", "cancelled"]
+    cancel_requested: bool = False
+    started_at: str | None = None
+    completed_at: str | None = None
+    created_at: str
+    artifacts: list[RunArtifact] = Field(default_factory=list)
+
+
+class ResearchRunCreate(BaseModel):
+    research_question_id: str | None = None
+    source_set_id: str | None = None
+    source_paper_ids: list[str] = Field(default_factory=list, max_length=1_000)
+    excluded_paper_ids: list[str] = Field(default_factory=list, max_length=1_000)
+    purpose: str = Field(default="", max_length=20_000)
+    success_criteria: str = Field(default="", max_length=20_000)
+    plan: dict | list = Field(default_factory=dict)
+    model: str = Field(default="", max_length=255)
+    prompt_version: str = Field(default="", max_length=255)
+
+class IdeaCreate(BaseModel):
+    kind: Literal["observation", "interpretation", "hypothesis", "falsifier", "todo"] = "hypothesis"
+    content: str = Field(min_length=1, max_length=20_000)
+    research_run_id: str | None = None; claim_id: str | None = Field(default=None, max_length=128); paper_id: str | None = None; source_span_id: str | None = None
+    checklist: dict = Field(default_factory=dict)
+
+    @field_validator("content", mode="before")
+    @classmethod
+    def strip_nonempty_content(cls, value):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("idea content is required")
+        return value.strip()
+
+
+class IdeaUpdate(BaseModel):
+    # Non-Optional types with an omitted default distinguish PATCH omission
+    # from an explicit JSON null, which must be rejected for required fields.
+    kind: Literal["observation", "interpretation", "hypothesis", "falsifier", "todo"] = Field(default=None)  # type: ignore[assignment]
+    content: str = Field(default=None, min_length=1, max_length=20_000)  # type: ignore[assignment]
+    research_run_id: str | None = None
+    claim_id: str | None = Field(default=None, max_length=128)
+    paper_id: str | None = None
+    source_span_id: str | None = None
+    checklist: dict | None = None
+
+    @field_validator("content", mode="before")
+    @classmethod
+    def strip_nonempty_content(cls, value):
+        if value is None:
+            raise ValueError("idea content cannot be null")
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("idea content is required")
+        return value.strip()
+class Idea(BaseModel):
+    id: str; workspace_id: str; kind: str; content: str; research_run_id: str | None = None; claim_id: str | None = None; paper_id: str | None = None; source_span_id: str | None = None
+    checklist: dict = Field(default_factory=dict); status: Literal["unverified", "promoted"] = "unverified"; hypothesis_card_id: str | None = None; created_at: str
+
+
+class ReviewCommentCreate(BaseModel):
+    body: str = Field(min_length=1, max_length=20_000)
+
+    @field_validator("body")
+    @classmethod
+    def strip_body(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("comment body is required")
+        return value.strip()
+
+
+class ReviewComment(BaseModel):
+    id: str
+    author_id: str | None = None
+    body: str
+    created_at: str
+
+
+class ReviewDecisionCreate(BaseModel):
+    verdict: Literal["accepted", "rejected", "changes_requested", "needs_more_evidence"]
+    reason: str = Field(min_length=1, max_length=20_000)
+
+    @field_validator("reason")
+    @classmethod
+    def strip_reason(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("decision reason is required")
+        return value.strip()
+
+
+class ReviewDecision(BaseModel):
+    id: str
+    decided_by: str | None = None
+    verdict: Literal["accepted", "rejected", "changes_requested", "needs_more_evidence"]
+    reason: str
+    created_at: str
+
+
+class ReviewThreadCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=255)
+    research_run_id: str | None = None
+    claim_id: str | None = Field(default=None, max_length=128)
+    evidence_link_id: str | None = None
+    evidence_snapshot: dict | None = None
+    assigned_to: str | None = None
+
+    @model_validator(mode="after")
+    def exactly_one_anchor(self):
+        if self.claim_id is not None:
+            self.claim_id = self.claim_id.strip()
+        claim_anchor = bool(self.research_run_id and self.claim_id)
+        evidence_anchor = bool(self.evidence_link_id)
+        if claim_anchor == evidence_anchor or ((self.research_run_id is None) != (self.claim_id is None)):
+            raise ValueError("review thread requires exactly one claim or evidence link anchor")
+        self.title = self.title.strip()
+        if not self.title:
+            raise ValueError("review title is required")
+        return self
+
+
+class ReviewAssignmentUpdate(BaseModel):
+    assigned_to: str | None = None
+
+
+class ReviewThread(BaseModel):
+    id: str
+    workspace_id: str
+    created_by: str | None = None
+    title: str
+    research_run_id: str | None = None
+    claim_id: str | None = None
+    claim_artifact_id: str | None = None
+    claim_snapshot: dict | None = None
+    evidence_link_id: str | None = None
+    assigned_to: str | None = None
+    status: Literal["open", "resolved"] = "open"
+    comments: list[ReviewComment] = Field(default_factory=list)
+    decisions: list[ReviewDecision] = Field(default_factory=list)
+    created_at: str
+    updated_at: str
+
+
 class MeResponse(BaseModel):
     user: User
     personal_workspace: Workspace
@@ -410,11 +867,13 @@ class SearchRequest(BaseModel):
     # Kept for request compatibility only; authorization always uses the authenticated principal.
     user_id: str | None = None
     query: str = Field(min_length=2, max_length=4000)
-    paper_ids: list[str] = Field(default_factory=list)
+    paper_ids: list[str] = Field(default_factory=list, max_length=500)
     year_from: int | None = None
     year_to: int | None = None
     limit: int = Field(default=8, ge=1, le=20)
     conversation_id: str | None = None
+    research_run_id: str | None = None
+    interaction_mode: Literal["evidence", "synthesis", "explore", "challenge", "design", "update"] = "synthesis"
 
 
 class Citation(BaseModel):
@@ -426,6 +885,28 @@ class Citation(BaseModel):
     section: str
     excerpt: str
     score: float
+    # Existing paper citations keep the original required fields above.  The
+    # optional provenance fields let graph-backed evidence travel through the
+    # same API and AgenticRAG pipeline without breaking older clients.
+    source_kind: Literal["paper_chunk", "graph_node", "graph_edge"] = "paper_chunk"
+    source_version_id: str | None = None
+    source_span_id: str | None = None
+    evidence_role: Literal["supports", "contradicts", "context", "mentions"] | None = None
+    knowledge_node_id: str | None = None
+    knowledge_edge_id: str | None = None
+    graph_path: list[dict] = Field(default_factory=list)
+    retrieval_channels: list[str] = Field(default_factory=list)
+    fusion_score: float | None = None
+    extraction_quality: Literal["high", "medium", "low", "unknown"] | None = None
+    retrieval_reason: str | None = None
+    source_quote: str | None = None
+    retrieval_stance: Literal["positive", "negative", "neutral"] | None = None
+
+
+class SearchPreviewResponse(BaseModel):
+    """Deterministic, read-only search results that never call an embedding or chat model."""
+
+    citations: list[Citation] = Field(default_factory=list)
 
 
 class PaperMarkdownSummary(BaseModel):
@@ -444,12 +925,16 @@ class AnswerClaim(BaseModel):
     text: str
     kind: Literal["paper", "general", "hypothesis"]
     citation_ids: list[int] = Field(default_factory=list)
+    classification: Literal["evidence_backed", "inference", "general_knowledge", "hypothesis", "unverified"] = "unverified"
 
 
 class SearchResponse(BaseModel):
     answer: str
     citations: list[Citation]
     conversation_id: str | None = None
+    research_run_id: str | None = None
+    interaction_mode: Literal["evidence", "synthesis", "explore", "challenge", "design", "update"] = "synthesis"
+    draft: bool = False
     generation_mode: Literal["agentic_rag", "local_fallback"] = "local_fallback"
     model: str | None = None
     retrieval_queries: list[str] = Field(default_factory=list)
@@ -468,6 +953,17 @@ class SearchResponse(BaseModel):
         "generation_failed", "citation_validation_failed", "grounding_audit_failed", "repair_failed",
         "structured_output_invalid", "verification_skipped_timeout",
     ] | None = None
+
+
+class OperationsStatus(BaseModel):
+    ingestion_mode: Literal["inline", "celery"]
+    celery_required: bool
+    celery_configured: bool
+    retry_limit: int
+    embedding_retry_limit: int
+    backup_restore_runbook: str
+    ci017_outbox_note: str
+    warnings: list[str] = Field(default_factory=list)
 
 
 class LLMStatus(BaseModel):
@@ -547,6 +1043,12 @@ class ComparisonRow(BaseModel):
     method: str
     results: str
     limitations: str
+    evidence: list[dict] = Field(default_factory=list)
+    evidence_status: Literal["grounded", "unresolved"] = "unresolved"
+    conditions: str = ""
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    human_judgment: Literal["accepted", "held", "rejected", "unreviewed"] = "unreviewed"
+    judgment_reason: str = ""
 
 
 class ResearchGap(BaseModel):
@@ -555,6 +1057,13 @@ class ResearchGap(BaseModel):
     page: str
     gap: str
     opportunity: str
+    gap_type: Literal["author_limitation", "contradiction", "external_validity", "method", "unconnected"] = "author_limitation"
+    evidence: list[dict] = Field(default_factory=list)
+    evidence_status: Literal["grounded", "unresolved"] = "unresolved"
+    conditions: str = ""
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    human_judgment: Literal["accepted", "held", "rejected", "unreviewed"] = "unreviewed"
+    judgment_reason: str = ""
 
 
 class TagCreate(BaseModel):
@@ -604,6 +1113,10 @@ class SearchHistory(BaseModel):
 class SavedComparisonCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     paper_ids: list[str] = Field(min_length=1)
+    source_set_id: str | None = None
+    citation_snapshot: list[dict] = Field(default_factory=list)
+    human_judgment: Literal["accepted", "held", "rejected", "unreviewed"] = "unreviewed"
+    judgment_reason: str = Field(default="", max_length=10_000)
 
 
 class SavedComparison(BaseModel):
@@ -613,3 +1126,7 @@ class SavedComparison(BaseModel):
     paper_ids: list[str]
     result: list[dict]
     created_at: str
+    source_set_id: str | None = None
+    citation_snapshot: list[dict] = Field(default_factory=list)
+    human_judgment: Literal["accepted", "held", "rejected", "unreviewed"] = "unreviewed"
+    judgment_reason: str = ""

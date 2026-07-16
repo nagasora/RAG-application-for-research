@@ -1,5 +1,39 @@
 # PaperPilot backend
 
+## 個人用のローカル永続運用（既定）
+
+このCompose構成は、個人のPC上で論文・データベースを保持して使う経路を既定にしています。
+外部公開、Render、Cloudflare R2、OIDCは必要ありません。データは Docker volume
+`paperpilot-local-postgres` と、ホストの `backend/data/originals` / `backend/data/assets`
+に保存され、コンテナを再起動・更新しても残ります。
+
+```powershell
+# リポジトリ直下で実行
+docker compose -f docker-compose.local.yml up -d --build
+```
+
+これで PostgreSQL、migration/bootstrap、API が起動します。API は
+`http://localhost:8000` のみに公開され、取り込みは同期（`INGESTION_MODE=inline`）で
+処理されます。ブラウザ側は `http://localhost:3000` を使います。停止は次で行えます。
+
+```powershell
+docker compose -f docker-compose.local.yml stop
+```
+
+`docker compose -f docker-compose.local.yml down -v` は PostgreSQL volume を削除するため、データを残したい場合は
+実行しないでください。論文原本・アセットは `backend/data/` にあるため、定期的に
+このフォルダと PostgreSQL のバックアップを取ることを推奨します。
+
+```powershell
+docker compose -f docker-compose.local.yml exec -T postgres pg_dump -U paperpilot -d paperpilot > paperpilot-backup.sql
+```
+
+`PAPER_STORAGE_BACKEND=local`、`AUTH_MODE=dev` がローカル個人利用の既定です。
+R2/S3 と OIDC の設定は `.env.example` に残しており、外部環境を再び使う場合にのみ有効化します。
+詳しくは [ローカル永続利用手順](../docs/LOCAL_PERSISTENT_USE.md) を参照してください。
+
+---
+
 The backend requires an explicit PostgreSQL connection. It never silently falls back to SQLite.
 Authentication is also explicit: `AUTH_MODE` must be `dev` or `oidc`; there is no
 production `demo-user` fallback.
@@ -42,6 +76,29 @@ remains a single-root compatibility setting. The initial Alembic
 migrations create authenticated users, workspaces, memberships, `papers`, and
 `chunks`. Papers are deduplicated by `(workspace_id, content_hash)` and record their
 creator. `python -m app.init_db` remains available for disposable development databases.
+
+### Durable object storage (Cloudflare R2 / S3)
+
+The default `PAPER_STORAGE_BACKEND=local` is suitable only for development and is
+ephemeral on free web-service plans. To persist uploaded originals, extracted figures,
+and imported source snapshots, create a private Cloudflare R2 bucket and set:
+
+```text
+PAPER_STORAGE_BACKEND=r2
+R2_ACCOUNT_ID=<Cloudflare account ID>
+R2_ACCESS_KEY_ID=<R2 API token access key>
+R2_SECRET_ACCESS_KEY=<R2 API token secret>
+R2_BUCKET=paperpilot-assets
+R2_PREFIX=paperpilot
+```
+
+`R2_ENDPOINT_URL` may be supplied instead of `R2_ACCOUNT_ID`; it defaults to
+`https://<account-id>.r2.cloudflarestorage.com`. The API uses the S3 API and keeps
+only a temporary read-through cache under `PAPER_STORAGE_CACHE_DIR` (default: the
+system temporary directory). The bucket should remain private: originals and assets
+are served only through the workspace-authorized API routes. Generic `S3_*` variables
+are available for another compatible provider. The storage key includes the object
+class (`originals/...` or `assets/...`), so both kinds may safely share one bucket.
 
 Research workspace assets are introduced by revision `20260712_0003`. Search history
 stores citations by default; set `SEARCH_HISTORY_STORE_ANSWER=true` to retain full answers.

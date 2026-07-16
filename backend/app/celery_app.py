@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
-
 from celery import Celery
 
 from .ingestion import IngestionLeaseBusy, process_embedding_job, process_ingestion_job
 from .rag import embedding_config
-from .storage import LocalOriginalStorage
+from .storage import storage_from_environment
 from .store import PaperStore
 
 
@@ -39,9 +37,7 @@ def ingest_task(self, paper_id: str, job_id: str) -> None:
     """Queue payload intentionally contains identifiers only."""
     try:
         store = PaperStore(os.environ["DATABASE_URL"])
-        original_root = Path(os.getenv("PAPER_ORIGINAL_STORAGE_DIR", os.getenv("PAPER_STORAGE_DIR", "./data/originals")))
-        asset_root = Path(os.getenv("PAPER_ASSET_STORAGE_DIR", "./data/assets"))
-        process_ingestion_job(store, LocalOriginalStorage(original_root, asset_root), job_id, paper_id)
+        process_ingestion_job(store, storage_from_environment(), job_id, paper_id)
     except IngestionLeaseBusy as exc:
         raise self.retry(exc=exc, countdown=int(os.getenv("INGESTION_LEASE_SECONDS", "300")) + 1)
     except Exception as exc:

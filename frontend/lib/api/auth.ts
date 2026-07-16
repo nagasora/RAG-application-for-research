@@ -3,8 +3,11 @@ import { ApiError } from "./error";
 export type AuthMode = "dev" | "oidc";
 
 const TOKEN_KEY = "paperpilot.oidc.access-token";
-const AUTH_MODE = process.env.NEXT_PUBLIC_AUTH_MODE?.trim().toLowerCase();
-const DEV_USER = process.env.NEXT_PUBLIC_DEV_USER?.trim();
+// A local checkout should work without a frontend .env file.  The backend
+// still requires its explicit AUTH_MODE setting, so an accidentally exposed
+// frontend cannot make a remote API use development authentication.
+const AUTH_MODE = process.env.NEXT_PUBLIC_AUTH_MODE?.trim().toLowerCase() || "dev";
+const DEV_USER = process.env.NEXT_PUBLIC_DEV_USER?.trim() || "paperpilot-local-user";
 
 let memoryToken: string | null = null;
 let activeWorkspaceId: string | null = null;
@@ -43,12 +46,6 @@ export function authenticatedHeaders(initial?: HeadersInit, includeWorkspace = t
   const headers = new Headers(initial);
   const mode = authMode();
   if (mode === "dev") {
-    if (!DEV_USER) {
-      throw new ApiError("dev認証には NEXT_PUBLIC_DEV_USER が必要です", {
-        status: 503,
-        code: "auth_configuration_error",
-      });
-    }
     headers.set("X-Dev-User", DEV_USER);
   } else {
     const token = sessionToken();

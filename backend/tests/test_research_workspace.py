@@ -7,7 +7,10 @@ from sqlalchemy.orm import sessionmaker
 from app import main
 from app.agentic_rag import AgenticRAGResult
 from app.database import Base
-from app.models import Chunk, Paper, Principal, ResearchConversation, ResearchMemoryEvent, SearchRequest
+from app.models import (
+    Chunk, Paper, Principal, ResearchConversation, ResearchMemoryEvent,
+    SearchRequest, User, Workspace,
+)
 from app.storage import LocalOriginalStorage
 from app.store import PaperStore
 
@@ -376,8 +379,18 @@ def test_search_reports_safe_model_failure_code(tmp_path, monkeypatch):
 
 def test_search_stream_opens_before_running_blocking_generation():
     async def scenario():
+        context = main.WorkspaceContext(
+            user=User(
+                id="user", issuer="test", subject="stream-user",
+                created_at="2026-07-16T00:00:00+00:00",
+            ),
+            workspace=Workspace(
+                id="workspace", name="Stream", role="editor",
+                is_personal=False, created_at="2026-07-16T00:00:00+00:00",
+            ),
+        )
         response = await main.answer_stream(
-            SearchRequest(query="stream response"), object(), object()
+            SearchRequest(query="stream response"), object(), context,
         )
         iterator = response.body_iterator
         first = await anext(iterator)

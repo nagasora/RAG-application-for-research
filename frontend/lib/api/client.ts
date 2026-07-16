@@ -8,6 +8,23 @@ export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost
 
 export type Paper = components["schemas"]["PaperSummary"];
 export type Citation = components["schemas"]["Citation"];
+export type SearchPreview = { citations: Citation[] };
+export type SourceSetSummary = components["schemas"]["SourceSet"];
+export type LibraryPaperPage = components["schemas"]["PaperLibraryPage"];
+export type Idea = components["schemas"]["Idea"];
+export type IdeaCreate = components["schemas"]["IdeaCreate"];
+export type IdeaUpdate = components["schemas"]["IdeaUpdate"];
+export type HypothesisCard = components["schemas"]["HypothesisCard"];
+export type HypothesisCardStatusUpdate = components["schemas"]["HypothesisCardStatusUpdate"];
+export type ExperimentPlan = components["schemas"]["ExperimentPlan"];
+export type ExperimentPlanCreate = components["schemas"]["ExperimentPlanCreate"];
+export type ExperimentResultCreate = components["schemas"]["ExperimentResultCreate"];
+export type ExperimentPlanSnapshot = components["schemas"]["ExperimentPlanSnapshot"];
+export type ReviewThread = components["schemas"]["ReviewThread"];
+export type ReviewThreadCreate = components["schemas"]["ReviewThreadCreate"];
+export type ReviewAssignmentUpdate = components["schemas"]["ReviewAssignmentUpdate"];
+export type ReviewCommentCreate = components["schemas"]["ReviewCommentCreate"];
+export type ReviewDecisionCreate = components["schemas"]["ReviewDecisionCreate"];
 export type SearchRequest = components["schemas"]["SearchRequest"];
 export type SearchResponse = components["schemas"]["SearchResponse"];
 export type AnswerClaim = components["schemas"]["AnswerClaim"];
@@ -52,6 +69,8 @@ export type KnowledgeEdgeCreate = components["schemas"]["KnowledgeEdgeCreate"];
 export type KnowledgeEdgeStatusUpdate = components["schemas"]["KnowledgeEdgeStatusUpdate"];
 export type GraphRetrieveRequest = components["schemas"]["GraphRetrieveRequest"];
 export type GraphRetrievalHit = components["schemas"]["GraphRetrievalHit"];
+export type ForwardPropagationCreate = components["schemas"]["ForwardPropagationCreate"];
+export type ForwardPropagationResult = components["schemas"]["ForwardPropagationResult"];
 
 export type ResearchMessagePageOptions = { limit?: number; beforeOrdinal?: number | null };
 export type ResearchMemoryPageOptions = ResearchMessagePageOptions & { kind?: ResearchMemoryKind | null };
@@ -89,6 +108,143 @@ export async function getMe(signal?: AbortSignal): Promise<Me> {
 export async function getLLMStatus(signal?: AbortSignal): Promise<LLMStatus> {
   const result = await api.GET("/api/llm/status", { signal });
   return unwrap(result, "LLMの接続状態を取得できませんでした");
+}
+
+export async function previewSearch(body: SearchRequest, signal?: AbortSignal): Promise<SearchPreview> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/api/search/preview`, {
+      method: "POST",
+      headers: authenticatedHeaders({ "Content-Type": "application/json" }),
+      credentials: "include",
+      body: JSON.stringify(body),
+      signal,
+    });
+  } catch (error) {
+    throw toApiError(error, "論文内を検索できませんでした");
+  }
+  if (!response.ok) throw await errorFromFetchResponse(response, "論文内を検索できませんでした");
+  const payload: unknown = await response.json();
+  if (!payload || typeof payload !== "object" || !Array.isArray((payload as { citations?: unknown }).citations)) {
+    throw new ApiError("検索結果の形式が不正です", { code: "invalid_search_preview" });
+  }
+  return payload as SearchPreview;
+}
+
+export async function listLibraryPapers(
+  options: {
+    page?: number;
+    query?: string;
+    status?: string;
+    sourceSetId?: string;
+    decision?: "undecided" | "included" | "excluded";
+  },
+  signal?: AbortSignal,
+): Promise<LibraryPaperPage> {
+  return unwrap(await api.GET("/api/library/papers", {
+    params: {
+      query: {
+        page: options.page ?? 1,
+        page_size: 24,
+        query: options.query || undefined,
+        status: options.status || undefined,
+        source_set_id: options.sourceSetId || undefined,
+        decision: options.decision || undefined,
+      },
+    },
+    signal,
+  }), "ライブラリを取得できませんでした");
+}
+
+export async function listSourceSetSummaries(signal?: AbortSignal): Promise<SourceSetSummary[]> {
+  return unwrap(await api.GET("/api/source-sets", { signal }), "コレクションを取得できませんでした");
+}
+
+export async function listIdeas(signal?: AbortSignal): Promise<Idea[]> {
+  return unwrap(await api.GET("/api/ideas", { signal }), "アイデア受信箱を取得できませんでした");
+}
+
+export async function createIdea(body: IdeaCreate, signal?: AbortSignal): Promise<Idea> {
+  return unwrap(await api.POST("/api/ideas", { body, signal }), "アイデアを保存できませんでした");
+}
+
+export async function updateIdea(ideaId: string, body: IdeaUpdate, signal?: AbortSignal): Promise<Idea> {
+  return unwrap(await api.PATCH("/api/ideas/{idea_id}", {
+    params: { path: { idea_id:ideaId } }, body, signal,
+  }), "アイデアを更新できませんでした");
+}
+
+export async function promoteIdea(ideaId: string, signal?: AbortSignal): Promise<Idea> {
+  return unwrap(await api.POST("/api/ideas/{idea_id}/promote", {
+    params: { path: { idea_id:ideaId } }, signal,
+  }), "アイデアを仮説へ昇格できませんでした");
+}
+
+export async function listHypothesisCards(signal?: AbortSignal): Promise<HypothesisCard[]> {
+  return unwrap(await api.GET("/api/hypotheses", { signal }), "仮説カードを取得できませんでした");
+}
+
+export async function updateHypothesisCardStatus(cardId: string, body: HypothesisCardStatusUpdate, signal?: AbortSignal): Promise<HypothesisCard> {
+  return unwrap(await api.PATCH("/api/hypotheses/{card_id}/status", {
+    params: { path: { card_id:cardId } }, body, signal,
+  }), "仮説の状態を更新できませんでした");
+}
+
+export async function listExperimentPlans(signal?: AbortSignal): Promise<ExperimentPlan[]> {
+  return unwrap(await api.GET("/api/experiments", { signal }), "実験計画を取得できませんでした");
+}
+
+export async function createExperimentPlan(body: ExperimentPlanCreate, signal?: AbortSignal): Promise<ExperimentPlan> {
+  return unwrap(await api.POST("/api/experiments", { body, signal }), "実験計画を作成できませんでした");
+}
+
+export async function addExperimentResult(planId: string, body: ExperimentResultCreate, signal?: AbortSignal): Promise<ExperimentPlan> {
+  return unwrap(await api.POST("/api/experiments/{plan_id}/results", {
+    params: { path: { plan_id:planId } }, body, signal,
+  }), "実験結果を追記できませんでした");
+}
+
+export async function getExperimentPlanSnapshot(planId: string, signal?: AbortSignal): Promise<ExperimentPlanSnapshot> {
+  return unwrap(await api.GET("/api/experiments/{plan_id}/snapshot", {
+    params: { path: { plan_id:planId } }, signal,
+  }), "実験計画のsnapshotを取得できませんでした");
+}
+
+export async function listReviewThreads(signal?: AbortSignal): Promise<ReviewThread[]> {
+  return unwrap(await api.GET("/api/reviews", { signal }), "共同レビュー一覧を取得できませんでした");
+}
+
+export async function createReviewThread(body: ReviewThreadCreate, signal?: AbortSignal): Promise<ReviewThread> {
+  return unwrap(await api.POST("/api/reviews", { body, signal }), "共同レビューを作成できませんでした");
+}
+
+export async function getReviewThread(threadId: string, signal?: AbortSignal): Promise<ReviewThread> {
+  return unwrap(await api.GET("/api/reviews/{thread_id}", {
+    params: { path: { thread_id:threadId } }, signal,
+  }), "共同レビュー詳細を取得できませんでした");
+}
+
+export async function assignReviewThread(threadId: string, body: ReviewAssignmentUpdate, signal?: AbortSignal): Promise<ReviewThread> {
+  return unwrap(await api.PATCH("/api/reviews/{thread_id}/assignment", {
+    params: { path: { thread_id:threadId } }, body, signal,
+  }), "レビュー担当者を更新できませんでした");
+}
+
+export async function addReviewComment(threadId: string, body: ReviewCommentCreate, signal?: AbortSignal): Promise<ReviewThread> {
+  return unwrap(await api.POST("/api/reviews/{thread_id}/comments", {
+    params: { path: { thread_id:threadId } }, body, signal,
+  }), "レビューコメントを追加できませんでした");
+}
+
+export async function addReviewDecision(threadId: string, body: ReviewDecisionCreate, signal?: AbortSignal): Promise<ReviewThread> {
+  return unwrap(await api.POST("/api/reviews/{thread_id}/decisions", {
+    params: { path: { thread_id:threadId } }, body, signal,
+  }), "レビュー判断を追加できませんでした");
+}
+
+export async function getReviewReport(signal?: AbortSignal): Promise<{ blob: Blob; filename: string }> {
+  const blob = await fetchAuthenticatedBlob(`${API_BASE_URL}/api/reviews/report.md`, "レビューレポートを出力できませんでした", signal);
+  return { blob, filename:"paperpilot-review-report.md" };
 }
 
 export async function listWorkspaces(signal?: AbortSignal): Promise<Workspace[]> {
@@ -167,6 +323,10 @@ export async function listGraphSourceSpans(sourceVersionId: string, signal?: Abo
 
 export async function createGraphNode(body: KnowledgeNodeCreate, signal?: AbortSignal): Promise<KnowledgeNode> {
   return unwrap(await api.POST("/api/graph/nodes", { body, signal }), "知識ノードを作成できませんでした");
+}
+
+export async function forwardPropagateGraph(body: ForwardPropagationCreate, signal?: AbortSignal): Promise<ForwardPropagationResult> {
+  return unwrap(await api.POST("/api/graph/forward-propagations", { body, signal }), "根拠付き仮説を作成できませんでした");
 }
 
 export async function updateGraphNodeStatus(nodeId: string, body: KnowledgeNodeStatusUpdate, signal?: AbortSignal): Promise<KnowledgeNodeStatusResult> {
@@ -448,7 +608,9 @@ export async function listSavedComparisons(signal?: AbortSignal): Promise<SavedC
 }
 
 export async function saveComparison(name: string, paperIds: string[], signal?: AbortSignal): Promise<SavedComparison> {
-  return unwrap(await api.POST("/api/comparisons", { body: { name, paper_ids: paperIds }, signal }), "比較を保存できませんでした");
+  return unwrap(await api.POST("/api/comparisons", {
+    body: { name, paper_ids: paperIds, human_judgment:"unreviewed", judgment_reason:"" }, signal,
+  }), "比較を保存できませんでした");
 }
 
 export async function deleteSavedComparison(comparisonId: string, signal?: AbortSignal): Promise<void> {

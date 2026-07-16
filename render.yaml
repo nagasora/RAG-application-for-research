@@ -1,8 +1,7 @@
-# Render Blueprint for a disposable PaperPilot public-preview API.
+# Render Blueprint for PaperPilot's low-cost persistent API.
 #
-# This intentionally omits Celery/Redis. Inline ingestion keeps the preview to
-# one API service, but uploaded PDFs remain on its ephemeral filesystem. See
-# docs/RENDER_DEPLOYMENT.md before using this with real research data.
+# PostgreSQL lives in Neon and original files live in Cloudflare R2.  Values
+# marked sync:false are supplied in Render's Environment UI after deployment.
 services:
   - type: web
     runtime: docker
@@ -18,9 +17,7 @@ services:
     healthCheckPath: /api/health
     envVars:
       - key: DATABASE_URL
-        fromDatabase:
-          name: paperpilot-db
-          property: connectionString
+        sync: false
       - key: AUTH_MODE
         value: oidc
       - key: OIDC_ISSUER
@@ -52,10 +49,15 @@ services:
         value: /app/data/originals
       - key: PAPER_ASSET_STORAGE_DIR
         value: /app/data/assets
-
-databases:
-  - name: paperpilot-db
-    region: singapore
-    plan: free
-    databaseName: paperpilot
-    user: paperpilot
+      - key: PAPER_STORAGE_BACKEND
+        value: r2
+      - key: R2_ACCOUNT_ID
+        value: 16ca5f18c0e931a0ed51e91313211415
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET
+        value: paperpilot-data
+      - key: R2_PREFIX
+        value: paperpilot

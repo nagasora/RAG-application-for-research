@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -21,6 +22,18 @@ def dev(user: str) -> dict[str, str]:
 
 def personal_workspace(store: PaperStore, subject: str):
     return store.ensure_user(Principal(issuer="paperpilot-dev", subject=subject))[1]
+
+
+def test_cors_origins_accept_comma_separated_values_and_trailing_slashes(monkeypatch):
+    monkeypatch.setenv(
+        "FRONTEND_ORIGIN",
+        " https://paperpilot.example.com/ , https://preview.example.com ",
+    )
+
+    assert main._cors_origins_from_environment() == [
+        "https://paperpilot.example.com",
+        "https://preview.example.com",
+    ]
 
 
 def test_upload_returns_one_result_per_file_and_persists_states(tmp_path, monkeypatch):
@@ -189,5 +202,79 @@ def test_original_storage_failure_clears_file_metadata_and_marks_failed(tmp_path
         assert saved.storage_key is None
         assert saved.mime_type is None
         assert saved.byte_size is None
+    finally:
+        main.app.dependency_overrides.clear()
+
+
+def test_job_creation_failure_is_failed_not_reported_as_processing(tmp_path, monkeypatch):
+    store = make_store(tmp_path)
+    originals = LocalOriginalStorage(tmp_path / "originals")
+    main.app.dependency_overrides[main.get_store] = lambda: store
+    main.app.dependency_overrides[main.get_original_storage] = lambda: originals
+    monkeypatch.setattr(store, "create_ingestion_job", lambda *_args: (_ for _ in ()).throw(RuntimeError("db unavailable")))
+    try:
+        with TestClient(main.app) as client:
+            result = client.post(
+                "/api/papers/upload", headers=dev("u"),
+                files={"files": ("study.txt", b"content", "text/plain")},
+            ).json()[0]
+        paper = store.list(personal_workspace(store, "u").id)[0]
+        assert result["success"] is False and result["status"] == "failed"
+        assert paper.status == "failed" and "job creation failed" in paper.error_message
+        assert originals.path_for(paper.storage_key).read_bytes() == b"content"
+    finally:
+        main.app.dependency_overrides.clear()
+
+
+def test_delete_storage_failure_preserves_paper(tmp_path):
+    class FailingSecondDelete(LocalOriginalStorage):
+        def __init__(self, root):
+            super().__init__(root)
+            self.calls = 0
+
+        def delete(self, key):
+            self.calls += 1
+            if self.calls == 1:
+                raise OSError("object store unavailable")
+            return super().delete(key)
+
+    store = make_store(tmp_path)
+    originals = FailingSecondDelete(tmp_path / "originals")
+    main.app.dependency_overrides[main.get_store] = lambda: store
+    main.app.dependency_overrides[main.get_original_storage] = lambda: originals
+    try:
+        with TestClient(main.app) as client:
+            uploaded = client.post(
+                "/api/papers/upload", headers=dev("u"),
+                files={"files": ("study.txt", b"content", "text/plain")},
+            ).json()[0]["paper"]
+            paper_id = uploaded["id"]
+            key = store.get(paper_id).storage_key
+            response = client.delete(f"/api/papers/{paper_id}", headers=dev("u"))
+        assert response.status_code == 503
+        assert store.get(paper_id).id == paper_id
+        assert originals.path_for(key).read_bytes() == b"content"
+    finally:
+        main.app.dependency_overrides.clear()
+
+
+def test_source_import_db_failure_removes_newly_written_asset(tmp_path, monkeypatch):
+    store = make_store(tmp_path)
+    originals = LocalOriginalStorage(tmp_path / "originals")
+    main.app.dependency_overrides[main.get_store] = lambda: store
+    main.app.dependency_overrides[main.get_original_storage] = lambda: originals
+    monkeypatch.setattr(store, "create_source_import", lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("db rejected")))
+    content = "source evidence"
+    content_hash = __import__("hashlib").sha256(content.encode("utf-8")).hexdigest()
+    key = f"assets/sources/{content_hash}/source.txt"
+    try:
+        with TestClient(main.app) as client:
+            response = client.post("/api/graph/sources/import", headers=dev("u"), json={
+                "kind": "markdown", "locator": "note://ci017", "content": content,
+                "content_hash": content_hash,
+            })
+        assert response.status_code == 422
+        with pytest.raises(FileNotFoundError):
+            originals.path_for(key)
     finally:
         main.app.dependency_overrides.clear()

@@ -2,7 +2,7 @@
 
 import { KeyboardEvent, useId, useMemo, useState } from "react";
 
-export type GraphNodeType = "source" | "idea" | "constraint" | "hypothesis";
+export type GraphNodeType = "source" | "idea" | "constraint" | "hypothesis" | "experiment";
 export type GraphNodeStatus = "active" | "review_pending" | "review_required" | "verified" | "rejected" | "superseded" | "pruned";
 export type GraphEdgeRelation = string;
 
@@ -35,6 +35,7 @@ type GraphCanvasProps = {
   onEdgeSelect?: (edge: GraphEdge) => void;
   ariaLabel?: string;
   className?: string;
+  viewMode?: "canvas" | "network";
 };
 
 const NODE_WIDTH = 190;
@@ -49,6 +50,11 @@ const TYPE_LABEL: Record<GraphNodeType, string> = {
   idea: "Idea",
   constraint: "Constraint",
   hypothesis: "Hypothesis",
+  experiment: "Experiment",
+};
+
+const TYPE_ACCENT: Record<GraphNodeType, string> = {
+  source: "#3B82F6", idea: "#8B5CF6", hypothesis: "#10B981", constraint: "#F59E0B", experiment: "#F43F5E",
 };
 
 const STATUS_LABEL: Record<GraphNodeStatus, string> = {
@@ -115,10 +121,12 @@ export function GraphCanvas({
   onEdgeSelect,
   ariaLabel = "研究知識グラフ",
   className = "",
+  viewMode = "canvas",
 }: GraphCanvasProps) {
   const markerId = useId().replace(/[^a-zA-Z0-9_-]/g, "");
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const [focusedEdgeId, setFocusedEdgeId] = useState<string | null>(null);
+  const [zoom, setZoom] = useState(1);
   const selected = useMemo(() => new Set(selectedNodeIds), [selectedNodeIds]);
   const highlightedNodes = useMemo(() => new Set(highlightedNodeIds), [highlightedNodeIds]);
   const highlightedEdges = useMemo(() => new Set(highlightedEdgeIds), [highlightedEdgeIds]);
@@ -129,21 +137,30 @@ export function GraphCanvas({
     const largestLayer = Math.max(1, ...[...grouped.values()].map(layer => layer.length));
     const maxPositionX = Math.max(0, ...nodes.map(node => node.position?.x ?? 0));
     const maxPositionY = Math.max(0, ...nodes.map(node => node.position?.y ?? 0));
+    const networkRadiusX = Math.max(190, nodes.length * 43); const networkRadiusY = Math.max(135, nodes.length * 31);
     const calculatedWidth = Math.max(
       PADDING_X * 2 + Math.max(1, layerNumbers.length) * NODE_WIDTH + Math.max(0, layerNumbers.length - 1) * HORIZONTAL_GAP,
       maxPositionX + NODE_WIDTH + PADDING_X,
+      viewMode === "network" ? PADDING_X * 2 + networkRadiusX * 2 + NODE_WIDTH : 0,
     );
     const calculatedHeight = Math.max(
       PADDING_Y * 2 + largestLayer * NODE_HEIGHT + Math.max(0, largestLayer - 1) * VERTICAL_GAP,
       maxPositionY + NODE_HEIGHT + PADDING_Y,
+      viewMode === "network" ? PADDING_Y * 2 + networkRadiusY * 2 + NODE_HEIGHT : 0,
     );
-    const nextNodes = layerNumbers.flatMap((layer, layerIndex) => (grouped.get(layer) ?? []).map((node, nodeIndex) => ({
-      ...node,
-      x: node.position?.x ?? PADDING_X + layerIndex * (NODE_WIDTH + HORIZONTAL_GAP),
-      y: node.position?.y ?? PADDING_Y + nodeIndex * (NODE_HEIGHT + VERTICAL_GAP) + (largestLayer - (grouped.get(layer)?.length ?? 0)) * (NODE_HEIGHT + VERTICAL_GAP) / 2,
-    })));
+    const nextNodes = viewMode === "network"
+      ? nodes.map((node, index) => {
+        const angle = (Math.PI * 2 * index) / Math.max(nodes.length, 1) - Math.PI / 2;
+        const radiusX = networkRadiusX; const radiusY = networkRadiusY;
+        return { ...node, x:PADDING_X + radiusX + Math.cos(angle) * radiusX, y:PADDING_Y + radiusY + Math.sin(angle) * radiusY };
+      })
+      : layerNumbers.flatMap((layer, layerIndex) => (grouped.get(layer) ?? []).map((node, nodeIndex) => ({
+        ...node,
+        x: node.position?.x ?? PADDING_X + layerIndex * (NODE_WIDTH + HORIZONTAL_GAP),
+        y: node.position?.y ?? PADDING_Y + nodeIndex * (NODE_HEIGHT + VERTICAL_GAP) + (largestLayer - (grouped.get(layer)?.length ?? 0)) * (NODE_HEIGHT + VERTICAL_GAP) / 2,
+      })));
     return { positionedNodes:nextNodes, layers:layerNumbers, width:calculatedWidth, height:calculatedHeight };
-  }, [nodes]);
+  }, [nodes, viewMode]);
   const nodesById = useMemo(() => new Map(positionedNodes.map(node => [node.id, node])), [positionedNodes]);
 
   if (!nodes.length) {
@@ -154,16 +171,17 @@ export function GraphCanvas({
 
   return <section aria-label={ariaLabel} className={`overflow-hidden rounded-2xl border border-[#d8ded9] bg-[#f8faf7] ${className}`}>
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-[#d8ded9] bg-white/80 px-4 py-3 text-[10px] text-[#52605b]">
-      <span className="font-bold uppercase tracking-[.14em] text-[#35634f]">Graph canvas</span>
+      <span className="font-bold uppercase tracking-[.14em] text-[#35634f]">{viewMode === "canvas" ? "Infinite canvas" : "Network view"}</span>
       <span>{nodes.length} nodes</span><span>{edges.length} edges</span>
-      <span className="ml-auto hidden text-[#7a837f] sm:inline">Enter または Space でノードを選択</span>
+      <div className="ml-auto flex items-center gap-1" aria-label="キャンバスの拡大縮小"><button type="button" onClick={() => setZoom(current => Math.max(.65, current - .15))} className="grid h-6 w-6 place-items-center rounded border border-[#d8ded9] bg-white text-sm font-bold">−</button><span className="w-9 text-center font-mono">{Math.round(zoom * 100)}%</span><button type="button" onClick={() => setZoom(current => Math.min(1.5, current + .15))} className="grid h-6 w-6 place-items-center rounded border border-[#d8ded9] bg-white text-sm font-bold">+</button></div>
+      <span className="hidden text-[#7a837f] sm:inline">ドラッグでパン · Enter / Space で選択</span>
     </div>
-    <div className="overflow-auto overscroll-contain" tabIndex={0} aria-label={`${ariaLabel}。横方向と縦方向にスクロールできます。`}>
-      <svg viewBox={`0 0 ${width} ${height}`} role="group" aria-label={ariaLabel} className="block min-h-[390px] min-w-[720px] w-full" preserveAspectRatio="xMinYMin meet">
+    <div className="graph-dot-grid overflow-auto overscroll-contain" tabIndex={0} aria-label={`${ariaLabel}。スクロールしてパンできます。`}>
+      <svg viewBox={`0 0 ${width} ${height}`} role="group" aria-label={ariaLabel} style={{ width:`${zoom * 100}%`, minWidth:`${Math.max(720, 720 * zoom)}px` }} className="block min-h-[390px]" preserveAspectRatio="xMinYMin meet">
         <defs>
           <marker id={`graph-arrow-${markerId}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" /></marker>
         </defs>
-        {layers.map((layer, index) => {
+        {viewMode === "canvas" && layers.map((layer, index) => {
           const x = PADDING_X + index * (NODE_WIDTH + HORIZONTAL_GAP);
           return <g key={layer} aria-hidden="true"><text x={x} y="27" className="fill-[#7a837f] text-[11px] font-bold" letterSpacing="1.2">LAYER {layer}</text><line x1={x} x2={x + NODE_WIDTH} y1="37" y2="37" stroke="#d8ded9" /></g>;
         })}
@@ -187,15 +205,15 @@ export function GraphCanvas({
           </g>;
         })}
         {positionedNodes.map(node => {
-          const style = STATUS_STYLE[node.status]; const isSelected = selected.has(node.id); const isHighlighted = highlightedNodes.has(node.id); const isFocused = focusedNodeId === node.id; const isSuperseded = node.status === "superseded";
+          const style = STATUS_STYLE[node.status]; const isSelected = selected.has(node.id); const isHighlighted = highlightedNodes.has(node.id); const isFocused = focusedNodeId === node.id; const isSuperseded = node.status === "superseded"; const isRejected = node.status === "rejected"; const isPending = node.status === "review_pending";
           const select = () => onNodeSelect?.(node);
-          return <g key={node.id} role="button" tabIndex={0} aria-pressed={isSelected} aria-label={`${node.label}、${TYPE_LABEL[node.type]}、${STATUS_LABEL[node.status]}、Layer ${node.layer}`} className="cursor-pointer outline-none" onClick={select} onKeyDown={event => nodeKeyboardSelect(event, select)} onFocus={() => setFocusedNodeId(node.id)} onBlur={() => setFocusedNodeId(current => current === node.id ? null : current)}>
+          return <g key={node.id} role="button" tabIndex={0} aria-pressed={isSelected} aria-label={`${node.label}、${TYPE_LABEL[node.type]}、${STATUS_LABEL[node.status]}、Layer ${node.layer}`} className={isRejected ? "cursor-pointer opacity-40 outline-none" : "cursor-pointer outline-none"} onClick={select} onKeyDown={event => nodeKeyboardSelect(event, select)} onFocus={() => setFocusedNodeId(node.id)} onBlur={() => setFocusedNodeId(current => current === node.id ? null : current)}>
             <rect x={node.x - (isSelected || isHighlighted ? 4 : 0)} y={node.y - (isSelected || isHighlighted ? 4 : 0)} width={NODE_WIDTH + (isSelected || isHighlighted ? 8 : 0)} height={NODE_HEIGHT + (isSelected || isHighlighted ? 8 : 0)} rx="17" fill={isSelected ? "#dcefe3" : isHighlighted ? "#fff0d8" : "transparent"} />
-            <rect x={node.x} y={node.y} width={NODE_WIDTH} height={NODE_HEIGHT} rx="14" fill={style.fill} stroke={isSelected ? "#164f3b" : isHighlighted ? "#d68a22" : style.stroke} strokeWidth={isSelected || isHighlighted ? "3" : "1.5"} strokeDasharray={isSuperseded ? "6 4" : undefined} />
+            <rect x={node.x} y={node.y} width={NODE_WIDTH} height={NODE_HEIGHT} rx="14" fill={style.fill} stroke={isSelected ? "#164f3b" : isHighlighted ? "#d68a22" : style.stroke} strokeWidth={isSelected || isHighlighted ? "3" : "1.5"} strokeDasharray={isPending ? "5 3" : isSuperseded ? "2 5" : undefined} />
             {isFocused && <rect x={node.x - 6} y={node.y - 6} width={NODE_WIDTH + 12} height={NODE_HEIGHT + 12} rx="20" fill="none" stroke="#10231b" strokeWidth="3" strokeDasharray="7 4" pointerEvents="none" />}
-            <rect x={node.x + 12} y={node.y + 12} width="6" height="6" rx="3" fill={style.stroke} />
+            <rect x={node.x + 12} y={node.y + 12} width="6" height="6" rx="3" fill={TYPE_ACCENT[node.type]} />
             <text x={node.x + 25} y={node.y + 18} className="fill-[#68736f] text-[9px] font-bold" letterSpacing=".7">{TYPE_LABEL[node.type].toUpperCase()} · {STATUS_LABEL[node.status]}</text>
-            <text x={node.x + 12} y={node.y + 43} className="fill-[#17201d] text-[13px] font-semibold">{truncate(node.label, 23)}</text>
+            <text x={node.x + 12} y={node.y + 43} className="fill-[#17201d] text-[13px] font-semibold" textDecoration={isRejected ? "line-through" : undefined}>{truncate(node.label, 23)}</text>
             {node.summary && <text x={node.x + 12} y={node.y + 64} className="fill-[#68736f] text-[10px]">{truncate(node.summary, 31)}</text>}
             <rect x={node.x + 12} y={node.y + 75} width={isSelected ? "62" : "53"} height="13" rx="6.5" fill={style.badge} />
             <text x={node.x + 18} y={node.y + 84.5} className="fill-[#40534a] text-[8px] font-bold">{isSelected ? "SELECTED" : `LAYER ${node.layer}`}</text>

@@ -1,0 +1,85 @@
+# 個人PCだけで使うための永続ローカル構成です。
+# `docker compose -f docker-compose.local.yml up -d --build` で起動します。
+# 公開用の render.yaml、R2、OIDC 設定は参照しません。
+name: paperpilot-local
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: paperpilot
+      POSTGRES_USER: paperpilot
+      POSTGRES_PASSWORD: paperpilot
+    ports:
+      - "127.0.0.1:${PAPERPILOT_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - paperpilot-local-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U paperpilot -d paperpilot"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  # Runs database migrations and creates the restricted worker role.  It exits
+  # normally after the schema is ready; API startup waits for it.
+  bootstrap:
+    build:
+      context: ./backend
+    command: ["sh", "-c", "python -m alembic upgrade head && python -m app.bootstrap_worker_role"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://paperpilot:paperpilot@postgres:5432/paperpilot
+      OWNER_DATABASE_URL: postgresql+psycopg://paperpilot:paperpilot@postgres:5432/paperpilot
+      WORKER_DB_PASSWORD: ${WORKER_DB_PASSWORD:-paperpilot-worker-local-only}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://paperpilot:paperpilot@postgres:5432/paperpilot
+      AUTH_MODE: dev
+      DEV_AUTH_USER: ${DEV_AUTH_USER:-paperpilot-local-user}
+      # This protects local browser requests even though published ports only
+      # bind to loopback. Set it in a shell or local .env before first use.
+      DEV_AUTH_TOKEN: ${DEV_AUTH_TOKEN:-replace-with-a-long-random-local-secret}
+      FRONTEND_ORIGIN: http://localhost:${PAPERPILOT_WEB_PORT:-3000}
+      INGESTION_MODE: inline
+      PAPER_STORAGE_BACKEND: local
+      PAPER_ORIGINAL_STORAGE_DIR: /app/data/originals
+      PAPER_ASSET_STORAGE_DIR: /app/data/assets
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-local}
+      LOCAL_EMBEDDING_MODEL: ${LOCAL_EMBEDDING_MODEL:-local-hash-v1}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.4-nano}
+      OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
+      RAG_REQUEST_DEADLINE_SECONDS: ${RAG_REQUEST_DEADLINE_SECONDS:-25}
+    ports:
+      - "127.0.0.1:${PAPERPILOT_API_PORT:-8000}:8000"
+    volumes:
+      - ./backend/data/originals:/app/data/originals
+      - ./backend/data/assets:/app/data/assets
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        # Browser JavaScript needs the host-loopback URL, not Docker's `api` DNS name.
+        NEXT_PUBLIC_API_URL: http://localhost:${PAPERPILOT_API_PORT:-8000}
+        NEXT_PUBLIC_AUTH_MODE: dev
+    ports:
+      - "127.0.0.1:${PAPERPILOT_WEB_PORT:-3000}:10000"
+    depends_on:
+      api:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  paperpilot-local-postgres:

@@ -18,3 +18,4 @@ pdfplumber==0.11.7
 pytesseract==0.3.13
 pypdfium2==5.11.0
 celery[redis]==5.5.3
+boto3==1.40.41

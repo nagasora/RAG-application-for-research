@@ -33,6 +33,16 @@ PaperPilot は、論文の登録、根拠付き検索、論文比較、リサー
 - OIDC設定、worker、PostgreSQL migration、OCR外部CLIをローカルで検証していない場合は、本番確認済みと報告しない。
 - フロントエンドの依存関係は `pnpm-lock.yaml` を基準にする。package manager や lockfile の整理は専用タスクとして行う。
 
+## 継続改善ワークフロー
+
+- プロダクト改善、RAG品質、研究ワークフロー、UI/UXの実装を始める前に、`docs/CONTINUOUS_IMPROVEMENT.md` を読む。
+- 着手候補は `python scripts/improvement_backlog.py next` で確認し、対象の `CI-xxx` を作業範囲と検証結果に含める。
+- 新しい調査・ユーザーフィードバック・コードレビューで課題を発見した場合は、重複を確認してから台帳へ追加し、根拠、確認日、受入条件、依存関係を記録する。
+- 着手時は状態を `in_progress`、検証中は `validating`、受入条件・テスト・関連文書の確認後だけ `done` に更新する。作業を中断する場合も次の具体的な一手を残す。
+- データモデル、API、評価基準、外部サービス、プライバシーなどの非自明な判断は `docs/DECISIONS.md` に追記し、関連する `CI-xxx` から参照する。
+- 台帳を編集したら `python scripts/improvement_backlog.py check` を実行し、ID、状態、依存関係、日付の整合性を確認する。
+- 台帳ツール自体を変更した場合は `python -m unittest scripts.test_improvement_backlog` も実行する。
+
 ## 検証コマンド
 
 バックエンド（`backend/` で実行）:
