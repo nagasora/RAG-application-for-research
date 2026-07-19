@@ -188,6 +188,107 @@ def test_research_conversation_remembers_grounded_turns(tmp_path, monkeypatch):
         main.app.dependency_overrides.clear()
 
 
+def test_research_conversation_replays_completed_explore_response_metadata(tmp_path, monkeypatch):
+    store = setup_app(tmp_path)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    try:
+        with TestClient(main.app) as client:
+            conversation = client.post(
+                "/api/research/conversations", headers=headers("alice"),
+                json={"title": "Explore replay"},
+            ).json()
+            run = client.post(
+                "/api/research/runs", headers=headers("alice"),
+                json={"purpose": "explore replay metadata"},
+            ).json()
+            response = client.post(
+                "/api/search", headers=headers("alice"),
+                json={
+                    "query": "研究案を広げる",
+                    "conversation_id": conversation["id"],
+                    "interaction_mode": "explore",
+                    "research_run_id": run["id"],
+                },
+            )
+            messages = client.get(
+                f"/api/research/conversations/{conversation['id']}/messages",
+                headers=headers("alice"),
+            )
+
+        assert response.status_code == 200
+        live = response.json()
+        assert live["draft"] is True
+        assert "## 異なる機構の探索案" in live["answer"]
+        assert len(live["claims"]) == 3
+        assert messages.status_code == 200
+        user_message, assistant_message = messages.json()["items"]
+        assert user_message["interaction_mode"] is None
+        assert user_message["draft"] is None
+        assert user_message["claims"] == []
+        assert assistant_message["content"] == live["answer"]
+        assert assistant_message["interaction_mode"] == "explore"
+        assert assistant_message["draft"] is True
+        assert assistant_message["claims"] == live["claims"]
+        assert assistant_message["research_run_id"] == run["id"]
+        _, workspace = store.ensure_user(Principal(issuer="paperpilot-dev", subject="alice"))
+        stored = store.get_conversation(workspace.id, conversation["id"]).messages[-1]
+        assert stored.content == live["answer"]
+        assert stored.interaction_mode == "explore"
+        assert stored.draft is True
+        assert [claim.model_dump(mode="json") for claim in stored.claims] == live["claims"]
+    finally:
+        main.app.dependency_overrides.clear()
+
+
+def test_legacy_research_messages_have_unknown_response_metadata(tmp_path):
+    store = setup_app(tmp_path)
+    try:
+        user, workspace = store.ensure_user(Principal(issuer="test", subject="legacy-message"))
+        conversation = store.create_conversation(workspace.id, user.id, "Legacy metadata")
+        detail = store.add_research_exchange(
+            workspace.id, conversation.id, "旧質問", "旧回答", [],
+        )
+
+        user_message, assistant_message = detail.messages
+        assert user_message.interaction_mode is None
+        assert user_message.draft is None
+        assert user_message.claims == []
+        assert assistant_message.interaction_mode is None
+        assert assistant_message.draft is None
+        assert assistant_message.claims == []
+        assert assistant_message.research_run_id is None
+    finally:
+        main.app.dependency_overrides.clear()
+
+
+def test_embedding_reindex_is_workspace_scoped_and_runs_inline_without_exposing_a_key(tmp_path, monkeypatch):
+    store = setup_app(tmp_path)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "auto")
+    try:
+        with TestClient(main.app) as client:
+            paper = client.post(
+                "/api/papers/upload", headers=headers("alice"),
+                files={"files": ("multilingual.txt", b"English evidence about causal retrieval.", "text/plain")},
+            ).json()[0]["paper"]
+            result = client.post("/api/embeddings/reindex", headers=headers("alice"), json={})
+            _, workspace = store.ensure_user(Principal(issuer="paperpilot-dev", subject="alice"))
+            bob, _ = store.ensure_user(Principal(issuer="paperpilot-dev", subject="bob"))
+            store.add_workspace_member(workspace.id, bob.id, "viewer")
+            viewer = client.post("/api/embeddings/reindex", headers=headers("bob", workspace.id), json={})
+
+        assert result.status_code == 200
+        payload = result.json()
+        assert payload["provider"] == "local"
+        assert payload["mode"] == "inline"
+        assert payload["jobs"][0]["paper_id"] == paper["id"]
+        assert payload["jobs"][0]["status"] == "succeeded"
+        assert "OPENAI_API_KEY" not in str(payload)
+        assert viewer.status_code == 403
+    finally:
+        main.app.dependency_overrides.clear()
+
+
 def test_first_question_title_is_normalized_at_the_conversation_boundary(tmp_path):
     setup_app(tmp_path)
     try:

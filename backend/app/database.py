@@ -137,6 +137,7 @@ class IdeaRecord(Base):
         Index("ix_ideas_paper", "paper_id"),
         Index("ix_ideas_source_span", "source_span_id"),
         Index("ix_ideas_hypothesis_card", "hypothesis_card_id"),
+        UniqueConstraint("idempotency_key", name="uq_ideas_idempotency_key"),
     )
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -145,6 +146,11 @@ class IdeaRecord(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     research_run_id: Mapped[str | None] = mapped_column(ForeignKey("research_runs.id", ondelete="SET NULL"))
     claim_id: Mapped[str | None] = mapped_column(String(128))
+    claim_artifact_id: Mapped[str | None] = mapped_column(
+        ForeignKey("run_artifacts.id", ondelete="RESTRICT"), index=True
+    )
+    claim_snapshot: Mapped[dict | None] = mapped_column(JSON(none_as_null=True))
+    idempotency_key: Mapped[str | None] = mapped_column(String(64))
     paper_id: Mapped[str | None] = mapped_column(ForeignKey("papers.id", ondelete="SET NULL"))
     source_span_id: Mapped[str | None] = mapped_column(ForeignKey("source_spans.id", ondelete="SET NULL"))
     checklist: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
@@ -362,6 +368,9 @@ class ResearchMessageRecord(Base):
     role: Mapped[str] = mapped_column(String(16), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     citations: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
+    # The assistant response contract is immutable at write time.  User turns
+    # deliberately keep this empty so they cannot be mistaken for AI claims.
+    response_metadata: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 

@@ -28,7 +28,7 @@ from pypdf import PdfReader
 from .auth import get_current_principal
 from .agentic_rag import AgenticRAG
 from .models import (
-    AnalysisRequest, Chunk, ComparisonRow, ExternalPaperRequest, LLMStatus, OperationsStatus, MeResponse, Paper, PaperDetail, PaperMarkdownSummary,
+    AnalysisRequest, Chunk, ComparisonRow, EmbeddingJobStatus, EmbeddingReindexRequest, EmbeddingReindexResponse, ExternalPaperRequest, LLMStatus, OperationsStatus, MeResponse, Paper, PaperDetail, PaperMarkdownSummary,
     DocumentElement, IngestionJob, Note, NoteCreate, NoteUpdate, PaperDecision, PaperDecisionUpdate, PaperLibraryPage, PaperPage, PaperSummary, PaperTagsBulkUpdate, PaperTagsUpdate, Principal,
     Citation, ResearchGap, SavedComparison, SavedComparisonCreate, SearchHistory, SearchPreviewResponse, SearchRequest,
     SearchResponse, Tag, TagCreate, UploadResult, User, Workspace, WorkspaceCreate,
@@ -45,7 +45,7 @@ from .models import (
     HypothesisCard, HypothesisCardCreate, HypothesisCardStatusUpdate,
     DiscoveryItem, DiscoveryItemCreate, DiscoveryReviewUpdate,
     BeliefEvent, BeliefEventCreate, ExperimentPlan, ExperimentPlanCreate, ExperimentPlanSnapshot, ExperimentResultCreate, Idea, IdeaCreate, IdeaUpdate,
-    ReviewAssignmentUpdate, ReviewCommentCreate, ReviewDecisionCreate, ReviewThread, ReviewThreadCreate,
+    ConversationGraphExportCreate, GraphIdeaCandidate, ReviewAssignmentUpdate, ReviewCandidate, ReviewCommentCreate, ReviewDecisionCreate, ReviewThread, ReviewThreadCreate,
 )
 from .graph_rag import GraphEdge as RetrievalGraphEdge, PrunedTwoHopConfig, RetrievalSeed, pruned_two_hop_retrieve
 from .source_parsers import SourceParseLimitError, parse_source
@@ -53,7 +53,7 @@ from .rag import (
     ANSWER_MODEL, chunk_pages, citations_from, compare_papers, embed_texts, embedding_config, embedding_model, extractive_answer,
     hybrid_search, reciprocal_rank_fusion, research_gaps, search,
 )
-from .ingestion import process_ingestion_job
+from .ingestion import process_embedding_job, process_ingestion_job
 from .storage import ImmutableObjectExists, LocalOriginalStorage, OriginalStorage, storage_from_environment
 from .store import (
     DuplicatePaperError, PaperNotFoundError, PaperStore, ResourceConflictError,
@@ -410,6 +410,52 @@ def llm_status(current: CurrentUser = Depends(get_current_user)) -> LLMStatus:
     )
 
 
+def _embedding_status(job) -> EmbeddingJobStatus:
+    return EmbeddingJobStatus(
+        id=job.id, paper_id=job.paper_id, provider=job.provider, model=job.model,
+        status=job.status, progress=job.progress, attempts=job.attempts,
+        total_chunks=job.total_chunks, completed_chunks=job.completed_chunks,
+        error_code=job.error_code, created_at=job.created_at, updated_at=job.updated_at,
+    )
+
+
+@app.post("/api/embeddings/reindex", response_model=EmbeddingReindexResponse)
+def reindex_embeddings(
+    body: EmbeddingReindexRequest,
+    store: PaperStore = Depends(get_store),
+    context: WorkspaceContext = Depends(get_workspace_context),
+) -> EmbeddingReindexResponse:
+    """Rebuild active-workspace vectors without exposing provider credentials."""
+    require_workspace_write(context)
+    provider, model = embedding_config()
+    try:
+        jobs = store.reindex_embedding_jobs(context.workspace.id, provider, model, body.paper_ids)
+    except PaperNotFoundError as exc:
+        # Keep the workspace boundary opaque: an ID in another workspace is
+        # indistinguishable from an absent or non-ready paper.
+        raise HTTPException(status_code=404, detail="ready paper not found") from exc
+    except ResourceConflictError as exc:
+        raise HTTPException(status_code=409, detail="embedding is already running; retry after it completes") from exc
+    mode = os.getenv("INGESTION_MODE", "inline").strip().lower()
+    if mode == "celery":
+        from .celery_app import enqueue_embedding
+        for job in jobs:
+            if job.status == "queued":
+                enqueue_embedding(job.id)
+    else:
+        # Local Compose has no worker.  Process the durable jobs in this request
+        # so the user can switch embedding providers and ask in the next turn.
+        for job in jobs:
+            if job.status == "queued":
+                try:
+                    process_embedding_job(store, job.id)
+                except Exception:
+                    logger.warning("Embedding reindex failed: job_id=%s", job.id)
+        jobs = [store.get_embedding_job(job.id) for job in jobs]
+        mode = "inline"
+    return EmbeddingReindexResponse(provider=provider, model=model, mode=mode, jobs=[_embedding_status(job) for job in jobs])
+
+
 @app.get("/api/workspaces", response_model=list[Workspace])
 def list_workspaces(
     current: CurrentUser = Depends(get_current_user),
@@ -682,6 +728,39 @@ def promote_idea(idea_id: str, store: PaperStore = Depends(get_store), context: 
 @app.get("/api/reviews", response_model=list[ReviewThread])
 def list_review_threads(store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
     return store.list_review_threads(context.workspace.id)
+
+
+@app.get("/api/reviews/candidates", response_model=list[ReviewCandidate])
+def list_review_candidates(store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    """Claims persisted by Ask that may be chosen as review anchors."""
+    return store.list_review_candidates(context.workspace.id)
+
+
+@app.get("/api/research/conversations/{conversation_id}/messages/{message_id}/graph-candidates", response_model=list[GraphIdeaCandidate])
+def list_graph_idea_candidates(
+    conversation_id: str, message_id: str, store: PaperStore = Depends(get_store),
+    context: WorkspaceContext = Depends(get_workspace_context),
+):
+    try:
+        return store.list_graph_idea_candidates(context.workspace.id, conversation_id, message_id)
+    except PaperNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="research conversation or assistant message not found") from exc
+
+
+@app.post("/api/research/conversations/{conversation_id}/messages/{message_id}/graph-drafts", response_model=list[KnowledgeNode], status_code=201)
+def export_conversation_graph_drafts(
+    conversation_id: str, message_id: str, body: ConversationGraphExportCreate,
+    store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context),
+):
+    require_workspace_write(context)
+    try:
+        return store.export_conversation_graph_drafts(
+            context.workspace.id, context.user.id, conversation_id, message_id, body,
+        )
+    except PaperNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="research conversation, message, or source span not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.post("/api/reviews", response_model=ReviewThread, status_code=201)
@@ -1751,6 +1830,18 @@ def _claim_classification(claim: dict) -> str:
     return "inference" if claim.get("citation_ids") else "unverified"
 
 
+def _research_message_response_metadata(response: SearchResponse) -> dict:
+    """Persist only the typed, replay-relevant part of an assistant response."""
+    metadata = {
+        "interaction_mode": response.interaction_mode,
+        "draft": response.draft,
+        "claims": [claim.model_dump(mode="json") for claim in response.claims],
+    }
+    if response.research_run_id:
+        metadata["research_run_id"] = response.research_run_id
+    return metadata
+
+
 def _mode_claims(body: SearchRequest, citations: list, claims: list[dict]) -> tuple[str, list[dict], bool]:
     """Apply the explicit research interaction contract without weakening citations.
 
@@ -1969,15 +2060,10 @@ def _answer(
         citations = retrieve(body.query, body.limit)
         generated = extractive_answer(body.query, citations)
 
-    emit("saving")
-    if conversation:
-        store.record_research_exchange(
-            context.workspace.id, conversation.id, body.query, generated, citations,
-            memory_delta=memory_delta,
-        )
     mode_appendix, classified_claims, mode_draft = _mode_claims(body, citations, claims)
     response = SearchResponse(
         answer=generated, citations=citations, conversation_id=body.conversation_id,
+        research_run_id=body.research_run_id,
         interaction_mode=body.interaction_mode, draft=mode_draft or (body.interaction_mode == "synthesis" and not grounded),
         generation_mode=generation_mode, model=model_name if llm_succeeded else None,
         retrieval_queries=retrieval_queries, grounded=grounded,
@@ -1987,6 +2073,15 @@ def _answer(
     )
     if mode_appendix:
         response.answer += mode_appendix
+    # Write the completed response, including its mode appendix and replay
+    # metadata, so a conversation reload is identical to the live answer.
+    emit("saving")
+    if conversation:
+        store.record_research_exchange(
+            context.workspace.id, conversation.id, body.query, response.answer, citations,
+            memory_delta=memory_delta,
+            response_metadata=_research_message_response_metadata(response),
+        )
     result_summary = _search_result_summary(response)
     _persist_search_history_best_effort(store, context, body, response, result_summary)
     return response

@@ -142,6 +142,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/embeddings/reindex": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reindex Embeddings
+         * @description Rebuild active-workspace vectors without exposing provider credentials.
+         */
+        post: operations["reindex_embeddings_api_embeddings_reindex_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/experiments": {
         parameters: {
             query?: never;
@@ -1014,6 +1034,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/research/conversations/{conversation_id}/messages/{message_id}/graph-candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Graph Idea Candidates */
+        get: operations["list_graph_idea_candidates_api_research_conversations__conversation_id__messages__message_id__graph_candidates_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/research/conversations/{conversation_id}/messages/{message_id}/graph-drafts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Export Conversation Graph Drafts */
+        post: operations["export_conversation_graph_drafts_api_research_conversations__conversation_id__messages__message_id__graph_drafts_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/research/questions": {
         parameters: {
             query?: never;
@@ -1132,6 +1186,26 @@ export interface paths {
         put?: never;
         /** Create Review Thread */
         post: operations["create_review_thread_api_reviews_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reviews/candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Review Candidates
+         * @description Claims persisted by Ask that may be chosen as review anchors.
+         */
+        get: operations["list_review_candidates_api_reviews_candidates_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1721,6 +1795,33 @@ export interface components {
             /** Title */
             title: string;
         };
+        /**
+         * ConversationGraphDraftCreate
+         * @description One selected or researcher-authored draft in an atomic graph export.
+         */
+        ConversationGraphDraftCreate: {
+            /** Candidate Id */
+            candidate_id: string;
+            /** Content */
+            content: string;
+            /**
+             * Derived From Memory
+             * @default false
+             */
+            derived_from_memory: boolean;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "hypothesis" | "assumption" | "unresolved_question" | "planned_test" | "manual";
+        };
+        /** ConversationGraphExportCreate */
+        ConversationGraphExportCreate: {
+            /** Drafts */
+            drafts: components["schemas"]["ConversationGraphDraftCreate"][];
+            /** Source Span Id */
+            source_span_id: string;
+        };
         /** DiscoveryItem */
         DiscoveryItem: {
             /**
@@ -1865,6 +1966,70 @@ export interface components {
              * @default
              */
             text: string;
+        };
+        /**
+         * EmbeddingJobStatus
+         * @description A provider-safe view of one document embedding job.
+         */
+        EmbeddingJobStatus: {
+            /** Attempts */
+            attempts: number;
+            /** Completed Chunks */
+            completed_chunks: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Error Code */
+            error_code?: string | null;
+            /** Id */
+            id: string;
+            /** Model */
+            model: string;
+            /** Paper Id */
+            paper_id: string;
+            /** Progress */
+            progress: number;
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "openai" | "local";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "queued" | "running" | "succeeded" | "failed";
+            /** Total Chunks */
+            total_chunks: number;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** EmbeddingReindexRequest */
+        EmbeddingReindexRequest: {
+            /** Paper Ids */
+            paper_ids?: string[];
+        };
+        /** EmbeddingReindexResponse */
+        EmbeddingReindexResponse: {
+            /** Jobs */
+            jobs?: components["schemas"]["EmbeddingJobStatus"][];
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "inline" | "celery";
+            /** Model */
+            model: string;
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "openai" | "local";
         };
         /**
          * EvidenceLinkCreate
@@ -2117,6 +2282,36 @@ export interface components {
             edges?: components["schemas"]["KnowledgeEdge"][];
             hypothesis: components["schemas"]["KnowledgeNode"];
             reasoning_run: components["schemas"]["ReasoningRun"];
+        };
+        /**
+         * GraphIdeaCandidate
+         * @description A selectable, explicitly unverified draft derived from an Ask turn.
+         */
+        GraphIdeaCandidate: {
+            /** Citation Count */
+            citation_count: number;
+            /**
+             * Classification
+             * @default unverified
+             * @constant
+             */
+            classification: "unverified";
+            /** Content */
+            content: string;
+            /**
+             * Derived From Memory
+             * @default false
+             */
+            derived_from_memory: boolean;
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "hypothesis" | "assumption" | "unresolved_question" | "planned_test";
+            /** Source Message Id */
+            source_message_id: string;
         };
         /** GraphRetrievalHit */
         GraphRetrievalHit: {
@@ -3118,16 +3313,24 @@ export interface components {
         ResearchMessage: {
             /** Citations */
             citations?: components["schemas"]["Citation"][];
+            /** Claims */
+            claims?: components["schemas"]["AnswerClaim"][];
             /** Content */
             content: string;
             /** Conversation Id */
             conversation_id: string;
             /** Created At */
             created_at: string;
+            /** Draft */
+            draft?: boolean | null;
             /** Id */
             id: string;
+            /** Interaction Mode */
+            interaction_mode?: ("evidence" | "synthesis" | "explore" | "challenge" | "design" | "update") | null;
             /** Ordinal */
             ordinal: number;
+            /** Research Run Id */
+            research_run_id?: string | null;
             /**
              * Role
              * @enum {string}
@@ -3252,9 +3455,7 @@ export interface components {
              */
             model: string;
             /** Plan */
-            plan?: {
-                [key: string]: unknown;
-            } | unknown[];
+            plan?: components["schemas"]["ResearchRunPlan"] | unknown[];
             /**
              * Prompt Version
              * @default
@@ -3277,10 +3478,54 @@ export interface components {
              */
             success_criteria: string;
         };
+        /** ResearchRunGraphSeed */
+        ResearchRunGraphSeed: {
+            /**
+             * Content
+             * @default
+             */
+            content: string;
+            /**
+             * Intent
+             * @enum {string}
+             */
+            intent: "explore" | "challenge" | "design";
+            /** Node Id */
+            node_id: string;
+        };
+        /**
+         * ResearchRunPlan
+         * @description Free-form run plan with an optional, governed graph seed.
+         */
+        ResearchRunPlan: {
+            graph_seed?: components["schemas"]["ResearchRunGraphSeed"] | null;
+        } & {
+            [key: string]: unknown;
+        };
         /** ReviewAssignmentUpdate */
         ReviewAssignmentUpdate: {
             /** Assigned To */
             assigned_to?: string | null;
+        };
+        /**
+         * ReviewCandidate
+         * @description A persisted Ask claim that can safely anchor a review thread.
+         */
+        ReviewCandidate: {
+            /** Citation Ids */
+            citation_ids?: number[];
+            /** Claim Artifact Id */
+            claim_artifact_id: string;
+            /** Claim Id */
+            claim_id: string;
+            /** Classification */
+            classification?: string | null;
+            /** Created At */
+            created_at: string;
+            /** Research Run Id */
+            research_run_id: string;
+            /** Text */
+            text: string;
         };
         /** ReviewComment */
         ReviewComment: {
@@ -3692,6 +3937,8 @@ export interface components {
             content_hash: string;
             /** Created At */
             created_at: string;
+            /** Display Name */
+            display_name?: string | null;
             /** Id */
             id: string;
             /** Kind */
@@ -3704,6 +3951,8 @@ export interface components {
             };
             /** Paper Id */
             paper_id?: string | null;
+            /** Paper Title */
+            paper_title?: string | null;
             /** Workspace Id */
             workspace_id: string;
         };
@@ -4157,6 +4406,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DiscoveryItem"][];
+                };
+            };
+        };
+    };
+    reindex_embeddings_api_embeddings_reindex_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmbeddingReindexRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmbeddingReindexResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -6034,6 +6316,74 @@ export interface operations {
             };
         };
     };
+    list_graph_idea_candidates_api_research_conversations__conversation_id__messages__message_id__graph_candidates_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+                message_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphIdeaCandidate"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_conversation_graph_drafts_api_research_conversations__conversation_id__messages__message_id__graph_drafts_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+                message_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConversationGraphExportCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeNode"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_research_questions_api_research_questions_get: {
         parameters: {
             query?: never;
@@ -6381,6 +6731,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_review_candidates_api_reviews_candidates_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewCandidate"][];
                 };
             };
         };

@@ -48,7 +48,7 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.4-nano}
       OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
-      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-openai}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-auto}
       LOCAL_EMBEDDING_MODEL: ${LOCAL_EMBEDDING_MODEL:-local-hash-v1}
       RAG_REQUEST_DEADLINE_SECONDS: ${RAG_REQUEST_DEADLINE_SECONDS:-25}
       AUTH_MODE: ${AUTH_MODE:-dev}
@@ -86,6 +86,9 @@ services:
     command: celery -A app.celery_app:celery_app worker --loglevel=info
     environment:
       DATABASE_URL: ${WORKER_DATABASE_URL:-postgresql+psycopg://paperpilot_worker:${WORKER_DB_PASSWORD:-paperpilot-worker-dev-password}@postgres:5432/paperpilot}
+      # The ingestion worker persists the selected embedding identity.  It
+      # needs the same auto-selection input as API/embedding workers.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
       PAPER_ORIGINAL_STORAGE_DIR: /app/data/originals
@@ -107,7 +110,7 @@ services:
       OCR_FAILURE_POLICY: ${OCR_FAILURE_POLICY:-native}
       CELERY_TASK_SOFT_TIME_LIMIT: ${CELERY_TASK_SOFT_TIME_LIMIT:-300}
       CELERY_TASK_TIME_LIMIT: ${CELERY_TASK_TIME_LIMIT:-330}
-      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-openai}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-auto}
       OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
       LOCAL_EMBEDDING_MODEL: ${LOCAL_EMBEDDING_MODEL:-local-hash-v1}
     depends_on:
@@ -137,7 +140,7 @@ services:
     environment:
       DATABASE_URL: ${WORKER_DATABASE_URL:-postgresql+psycopg://paperpilot_worker:${WORKER_DB_PASSWORD:-paperpilot-worker-dev-password}@postgres:5432/paperpilot}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-openai}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-auto}
       OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
       LOCAL_EMBEDDING_MODEL: ${LOCAL_EMBEDDING_MODEL:-local-hash-v1}
       CELERY_BROKER_URL: redis://redis:6379/0
@@ -171,12 +174,14 @@ services:
     command: celery -A app.celery_app:celery_app beat --loglevel=info --schedule=/tmp/celerybeat-schedule
     environment:
       DATABASE_URL: ${WORKER_DATABASE_URL:-postgresql+psycopg://paperpilot_worker:${WORKER_DB_PASSWORD:-paperpilot-worker-dev-password}@postgres:5432/paperpilot}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
       INGESTION_MAX_ATTEMPTS: ${INGESTION_MAX_ATTEMPTS:-3}
       INGESTION_LEASE_SECONDS: ${INGESTION_LEASE_SECONDS:-300}
       INGESTION_REAPER_INTERVAL_SECONDS: ${INGESTION_REAPER_INTERVAL_SECONDS:-60}
       EMBEDDING_TASK_QUEUE: ${EMBEDDING_TASK_QUEUE:-embedding}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-auto}
       EMBEDDING_MAX_ATTEMPTS: ${EMBEDDING_MAX_ATTEMPTS:-3}
       EMBEDDING_LEASE_SECONDS: ${EMBEDDING_LEASE_SECONDS:-300}
       EMBEDDING_DISPATCH_INTERVAL_SECONDS: ${EMBEDDING_DISPATCH_INTERVAL_SECONDS:-10}

@@ -356,6 +356,8 @@ def test_paper_ingestion_seeds_immutable_page_anchors(tmp_path):
             sources = client.get("/api/graph/sources", headers=_headers("alice"))
             assert sources.status_code == 200
             paper_source = next(item for item in sources.json() if item["kind"] == "paper")
+            assert paper_source["paper_title"] == uploaded.json()[0]["paper"]["title"]
+            assert paper_source["display_name"] == uploaded.json()[0]["paper"]["title"]
             spans = client.get(f"/api/graph/sources/{paper_source['id']}/spans", headers=_headers("alice"))
             span_id = spans.json()[0]["id"]
             grounded = client.post("/api/graph/nodes", headers=_headers("alice"), json={

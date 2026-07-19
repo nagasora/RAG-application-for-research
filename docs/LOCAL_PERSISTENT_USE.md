@@ -13,7 +13,8 @@ docker compose -f docker-compose.local.yml up -d --build
 ```
 
 設定ファイルは不要です。OpenAIを使いたい場合など、任意の設定だけをリポジトリ直下の
-`.env` に置けます（Git管理されません）。`AUTH_MODE=dev`、`PAPER_STORAGE_BACKEND=local`、
+`.env` または `backend/.env` に置けます（Git管理されません）。ローカルComposeは両方を
+読み込み、同名の値は `backend/.env` を優先します。`AUTH_MODE=dev`、`PAPER_STORAGE_BACKEND=local`、
 `INGESTION_MODE=inline` はCompose側で固定されます。
 
 この一つのComposeが PostgreSQL、API、フロントエンドを起動します。`http://localhost:3000` を開きます。API は `http://localhost:8000` にだけ待ち受けるため、
@@ -51,9 +52,16 @@ docker compose -f docker-compose.local.yml exec -T postgres pg_dump -U paperpilo
 
 ## 外部送信を避ける設定
 
-このローカルComposeは既定で `EMBEDDING_PROVIDER=local` であり、OpenAIキーを渡さない限り
-OpenAI APIを使用しません。キーを設定すると、回答生成や埋め込みのため選択された本文抜粋が
-OpenAI APIへ送信されます。
+このローカルComposeは既定で `EMBEDDING_PROVIDER=auto` です。OpenAIキーを渡さない場合は
+OpenAI APIを使用せず、ローカル埋め込みへフォールバックします。`OPENAI_API_KEY` を設定した
+場合は、多言語対応の `text-embedding-3-small` を使うため、日本語の質問から英語・日本語論文を
+意味検索できます。回答生成や埋め込みのため選択された本文抜粋は OpenAI APIへ送信されます。
+
+キーを後から設定した場合、既存論文は自動では再埋め込みされません。APIを再起動後、owner/editor
+として `POST /api/embeddings/reindex` に `{}` を送信してください。現在のworkspace内のready論文を
+再埋め込みします。特定論文だけなら `{"paper_ids":["<paper-id>"]}` を指定できます。レスポンスの
+各jobが `succeeded` になってからAskを利用してください。`EMBEDDING_PROVIDER=local` を明示すれば、
+APIキーがあっても外部への埋め込み送信を無効にできます。
 
 ## これまでの公開デプロイを停止する
 

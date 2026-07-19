@@ -12,6 +12,8 @@ test("knowledge graph snapshot remains typed and grounded endpoints stay public 
   const edge = spec.paths["/api/graph/edges"]?.post;
   const edgeStatus = spec.paths["/api/graph/edges/{edge_id}/status"]?.patch;
   const retrieve = spec.paths["/api/graph/retrieve"]?.post;
+  const candidates = spec.paths["/api/research/conversations/{conversation_id}/messages/{message_id}/graph-candidates"]?.get;
+  const draftExport = spec.paths["/api/research/conversations/{conversation_id}/messages/{message_id}/graph-drafts"]?.post;
   assert.equal(snapshot.responses["200"].content["application/json"].schema.$ref, "#/components/schemas/GraphSnapshot");
   assert.equal(source.requestBody.content["application/json"].schema.$ref, "#/components/schemas/SourceVersionCreate");
   assert.equal(sourceImport.requestBody.content["application/json"].schema.$ref, "#/components/schemas/SourceImportCreate");
@@ -25,4 +27,8 @@ test("knowledge graph snapshot remains typed and grounded endpoints stay public 
   assert.equal(edgeStatus.requestBody.content["application/json"].schema.$ref, "#/components/schemas/KnowledgeEdgeStatusUpdate");
   assert.equal(spec.components.schemas.KnowledgeEdgeCreate.properties.relation.enum.length, 8);
   assert.equal(retrieve.requestBody.content["application/json"].schema.$ref, "#/components/schemas/GraphRetrieveRequest");
+  assert.equal(candidates.responses["200"].content["application/json"].schema.items.$ref, "#/components/schemas/GraphIdeaCandidate");
+  assert.equal(spec.components.schemas.GraphIdeaCandidate.properties.derived_from_memory.type, "boolean");
+  assert.equal(draftExport.requestBody.content["application/json"].schema.$ref, "#/components/schemas/ConversationGraphExportCreate");
+  assert.equal(spec.components.schemas.ConversationGraphDraftCreate.properties.kind.enum.at(-1), "manual");
 });

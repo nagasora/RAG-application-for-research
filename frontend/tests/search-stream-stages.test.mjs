@@ -53,6 +53,34 @@ test("legacy token/done events remain compatible and a top-level stage is accept
   assert.equal(received[2].type, "done");
 });
 
+test("run metadata is decoded before token, citations, meta, and done events", async () => {
+  const api = await loadSearchStreamModule();
+  const meta = {
+    generation_mode:"agentic_rag", model:"gpt-5.4-nano", retrieval_queries:["query"], grounded:true,
+    llm_attempted:true, llm_succeeded:true, grounding_status:"verified", fallback_reason:null,
+    research_run_id:"run-1", interaction_mode:"synthesis", draft:false,
+    claims:[], memory_delta:{}, model_calls:1,
+  };
+  const frames = [
+    { type:"run", run_id:"run-1" }, { type:"token", value:"回答" }, { type:"citations", value:[] },
+    { type:"meta", value:meta }, { type:"done" },
+  ].map(event => `data: ${JSON.stringify(event)}\n\n`).join("");
+  const received = [];
+  for await (const event of api.parseEventStream(eventStream(frames))) received.push(event);
+  assert.deepEqual(received.map(event => event.type), ["run", "token", "citations", "meta", "done"]);
+  assert.equal(received[0].run_id, "run-1");
+  assert.equal(received[3].value.research_run_id, "run-1");
+});
+
+test("run and cancelled events reject missing or blank run ids", async () => {
+  const api = await loadSearchStreamModule();
+  for (const event of [{ type:"run" }, { type:"run", run_id:"  " }, { type:"cancelled", run_id:"" }]) {
+    await assert.rejects(async () => {
+      for await (const _event of api.parseEventStream(eventStream(`data: ${JSON.stringify(event)}\n\n`))) { /* consume */ }
+    }, error => error?.code === "invalid_sse_event");
+  }
+});
+
 const paperCitation = {
   index:1, paper_id:"paper-1", paper_title:"Paper", chunk_id:"chunk-1",
   page:2, section:"Results", excerpt:"Paper evidence", score:0.8,
@@ -120,13 +148,38 @@ test("structured RAG metadata is preserved", async () => {
   const value = {
     generation_mode:"agentic_rag", model:"gpt-5.4-nano", retrieval_queries:["query"],
     grounded:true, llm_attempted:true, llm_succeeded:true, grounding_status:"verified",
-    fallback_reason:null, claims:[{ claim_id:"c1", text:"claim", kind:"paper", citation_ids:[1] }],
+    fallback_reason:null, research_run_id:"run-1", interaction_mode:"challenge", draft:true,
+    claims:[{ claim_id:"c1", text:"claim", kind:"paper", citation_ids:[1], classification:"evidence_backed" }],
     memory_delta:{ hypotheses:["H1"] }, model_calls:2,
   };
   const received = [];
   for await (const event of api.parseEventStream(eventStream(`data: ${JSON.stringify({type:"meta",value})}\n\n`))) received.push(event);
   assert.equal(received[0].value.model_calls, 2);
   assert.equal(received[0].value.claims[0].claim_id, "c1");
+  assert.equal(received[0].value.interaction_mode, "challenge");
+  assert.equal(received[0].value.draft, true);
+  assert.equal(received[0].value.research_run_id, "run-1");
+});
+
+test("metadata rejects unknown claim classifications and interaction modes", async () => {
+  const api = await loadSearchStreamModule();
+  const base = {
+    generation_mode:"agentic_rag", model:"gpt-5.4-nano", retrieval_queries:["query"],
+    grounded:true, llm_attempted:true, llm_succeeded:true, grounding_status:"verified", fallback_reason:null,
+    research_run_id:null, interaction_mode:"synthesis", draft:false,
+    claims:[{ claim_id:"c1", text:"claim", kind:"paper", citation_ids:[1], classification:"evidence_backed" }],
+    memory_delta:{}, model_calls:1,
+  };
+  for (const value of [
+    { ...base, interaction_mode:"unsupported" },
+    { ...base, claims:[{ ...base.claims[0], classification:"unsupported" }] },
+    { ...base, draft:"false" },
+    { ...base, research_run_id:42 },
+  ]) {
+    await assert.rejects(async () => {
+      for await (const _event of api.parseEventStream(eventStream(`data: ${JSON.stringify({type:"meta",value})}\n\n`))) { /* consume */ }
+    }, error => error?.code === "invalid_sse_event");
+  }
 });
 
 test("incomplete RAG metadata is rejected", async () => {
@@ -134,6 +187,7 @@ test("incomplete RAG metadata is rejected", async () => {
   const value = {
     generation_mode:"agentic_rag", model:"gpt-5.4-nano", retrieval_queries:[], grounded:true,
     llm_attempted:true, llm_succeeded:true, grounding_status:"verified", fallback_reason:null,
+    research_run_id:null, interaction_mode:"synthesis", draft:false,
   };
   await assert.rejects(async () => {
     for await (const _event of api.parseEventStream(eventStream(`data: ${JSON.stringify({type:"meta",value})}\n\n`))) { /* consume */ }
@@ -162,4 +216,16 @@ test("streamSearch accepts a stream terminated by done", async () => {
   const received = [];
   for await (const event of api.streamSearch({ query:"質問", paper_ids:[], limit:10 })) received.push(event.type);
   assert.deepEqual(received, ["token", "done"]);
+});
+
+test("streamSearch treats cancelled as a successful terminal event", async () => {
+  const frames = [
+    { type:"run", run_id:"run-1" }, { type:"cancelled", run_id:"run-1" },
+  ].map(event => `data: ${JSON.stringify(event)}\n\n`).join("");
+  const api = await loadSearchStreamModule(async () => new Response(eventStream(frames), {
+    status:200, headers:{ "content-type":"text/event-stream" },
+  }));
+  const received = [];
+  for await (const event of api.streamSearch({ query:"質問", paper_ids:[], limit:10 })) received.push(event.type);
+  assert.deepEqual(received, ["run", "cancelled"]);
 });

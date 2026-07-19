@@ -70,9 +70,15 @@ def search(papers: list[Paper], query: str, limit: int = 8) -> list[tuple[Paper,
 
 def embedding_config() -> tuple[str, str]:
     """Return the provider/model identity shared by ingestion and retrieval."""
-    provider = os.getenv("EMBEDDING_PROVIDER", "openai").strip().lower()
+    # ``auto`` makes a personal installation useful without configuration while
+    # still selecting OpenAI's multilingual embedding model as soon as a key is
+    # supplied.  An explicit provider always wins, which keeps offline and
+    # production deployments predictable.
+    provider = os.getenv("EMBEDDING_PROVIDER", "auto").strip().lower()
+    if provider == "auto":
+        provider = "openai" if os.getenv("OPENAI_API_KEY") else "local"
     if provider not in {"openai", "local"}:
-        provider = "openai"
+        provider = "openai" if os.getenv("OPENAI_API_KEY") else "local"
     model = (
         os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
         if provider == "openai"

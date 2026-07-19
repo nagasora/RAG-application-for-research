@@ -87,10 +87,17 @@ def test_inline_job_page_assets_and_job_idor(tmp_path):
             job = client.get(f"/api/jobs/{job_id}", headers={"X-Dev-User": "alice"})
             page = client.get(f"/api/papers/{paper_id}/pages/1", headers={"X-Dev-User": "alice"})
             assets = client.get(f"/api/papers/{paper_id}/assets", headers={"X-Dev-User": "alice"})
+            sources = client.get("/api/graph/sources?kind=paper", headers={"X-Dev-User": "alice"})
+            source = next(item for item in sources.json() if item["paper_id"] == paper_id)
+            spans = client.get(
+                f"/api/graph/sources/{source['id']}/spans", headers={"X-Dev-User": "alice"},
+            )
             idor = client.get(f"/api/jobs/{job_id}", headers={"X-Dev-User": "bob"})
         assert job.json()["status"] == "succeeded" and job.json()["progress"] == 100
         assert page.json()["text_source"] == "native" and page.json()["elements"][0]["kind"] == "text"
         assert assets.json()[0]["paper_id"] == paper_id
+        assert sources.status_code == 200 and source["kind"] == "paper"
+        assert spans.status_code == 200 and spans.json()[0]["text"] == "native evidence text"
         assert idor.status_code == 404
     finally:
         main.app.dependency_overrides.clear()

@@ -11,6 +11,14 @@ def test_local_embedding_provider_stays_local_even_when_openai_key_exists(monkey
     assert len(vectors) == 1 and len(vectors[0]) == 384
 
 
+def test_auto_embedding_provider_uses_multilingual_openai_only_when_a_key_exists(monkeypatch):
+    monkeypatch.delenv("EMBEDDING_PROVIDER", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    assert embedding_config() == ("local", "local-hash-v1")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    assert embedding_config() == ("openai", "text-embedding-3-small")
+
+
 def test_search_returns_grounded_chunk():
     paper = Paper(user_id="u", workspace_id="w", created_by="u-id", title="Transformer Study")
     paper.chunks = chunk_pages([(3, "Transformer models improve document retrieval accuracy.")], paper.id)

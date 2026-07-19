@@ -11,8 +11,9 @@ test("interruption sync compares the authoritative message count", () => {
 });
 
 test("an incomplete stream cannot clear the retry query after loop exit", () => {
-  const loopEnd = source.indexOf('setQuery(""); setPhase("syncing")');
+  const loopEnd = source.search(/setQuery\(""\);(?: setGraphSeed\(null\);)? setPhase\("syncing"\)/);
   assert.ok(loopEnd >= 0);
   assert.match(source, /streamEvent\.type === "done"\) streamCompleted = true/);
-  assert.equal(source.match(/streamCompleted\s*=\s*true/g)?.length, 1);
+  assert.match(source, /streamEvent\.type === "cancelled"\)[^{]*\{ streamCompleted = true/);
+  assert.equal(source.match(/streamCompleted\s*=\s*true/g)?.length, 2);
 });

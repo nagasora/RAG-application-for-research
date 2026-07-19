@@ -52,7 +52,12 @@ export type ResearchMessagePage = components["schemas"]["ResearchMessagePage"];
 export type ResearchMemoryEvent = components["schemas"]["ResearchMemoryEvent"];
 export type ResearchMemoryPage = components["schemas"]["ResearchMemoryPage"];
 export type ResearchMemoryKind = ResearchMemoryEvent["kind"];
+export type ResearchRun = components["schemas"]["ResearchRun"];
+export type ResearchRunCreate = components["schemas"]["ResearchRunCreate"];
 export type LLMStatus = components["schemas"]["LLMStatus"];
+export type EmbeddingJobStatus = components["schemas"]["EmbeddingJobStatus"];
+export type EmbeddingReindexRequest = components["schemas"]["EmbeddingReindexRequest"];
+export type EmbeddingReindexResponse = components["schemas"]["EmbeddingReindexResponse"];
 export type PaperMarkdownSummary = components["schemas"]["PaperMarkdownSummary"];
 export type GraphSnapshot = components["schemas"]["GraphSnapshot"];
 export type SourceVersion = components["schemas"]["SourceVersion"];
@@ -69,6 +74,8 @@ export type KnowledgeEdgeCreate = components["schemas"]["KnowledgeEdgeCreate"];
 export type KnowledgeEdgeStatusUpdate = components["schemas"]["KnowledgeEdgeStatusUpdate"];
 export type GraphRetrieveRequest = components["schemas"]["GraphRetrieveRequest"];
 export type GraphRetrievalHit = components["schemas"]["GraphRetrievalHit"];
+export type GraphIdeaCandidate = components["schemas"]["GraphIdeaCandidate"];
+export type ConversationGraphExportCreate = components["schemas"]["ConversationGraphExportCreate"];
 export type ForwardPropagationCreate = components["schemas"]["ForwardPropagationCreate"];
 export type ForwardPropagationResult = components["schemas"]["ForwardPropagationResult"];
 
@@ -108,6 +115,10 @@ export async function getMe(signal?: AbortSignal): Promise<Me> {
 export async function getLLMStatus(signal?: AbortSignal): Promise<LLMStatus> {
   const result = await api.GET("/api/llm/status", { signal });
   return unwrap(result, "LLMの接続状態を取得できませんでした");
+}
+
+export async function reindexEmbeddings(body: EmbeddingReindexRequest = {}, signal?: AbortSignal): Promise<EmbeddingReindexResponse> {
+  return unwrap(await api.POST("/api/embeddings/reindex", { body, signal }), "埋め込みの再作成を開始できませんでした");
 }
 
 export async function previewSearch(body: SearchRequest, signal?: AbortSignal): Promise<SearchPreview> {
@@ -565,8 +576,30 @@ export async function listResearchConversations(signal?: AbortSignal): Promise<R
   return unwrap(await api.GET("/api/research/conversations", { signal }), "研究対話の一覧を取得できませんでした");
 }
 
+export async function listGraphIdeaCandidates(conversationId: string, messageId: string, signal?: AbortSignal): Promise<GraphIdeaCandidate[]> {
+  return unwrap(await api.GET("/api/research/conversations/{conversation_id}/messages/{message_id}/graph-candidates", {
+    params: { path: { conversation_id:conversationId, message_id:messageId } }, signal,
+  }), "グラフのレビュー候補を取得できませんでした");
+}
+
+export async function exportConversationGraphDrafts(conversationId: string, messageId: string, body: ConversationGraphExportCreate, signal?: AbortSignal): Promise<KnowledgeNode[]> {
+  return unwrap(await api.POST("/api/research/conversations/{conversation_id}/messages/{message_id}/graph-drafts", {
+    params: { path: { conversation_id:conversationId, message_id:messageId } }, body, signal,
+  }), "レビュー候補を知識グラフへ保存できませんでした");
+}
+
 export async function createResearchConversation(title: string, signal?: AbortSignal): Promise<ResearchConversation> {
   return unwrap(await api.POST("/api/research/conversations", { body: { title }, signal }), "研究対話を作成できませんでした");
+}
+
+export async function createResearchRun(body: ResearchRunCreate, signal?: AbortSignal): Promise<ResearchRun> {
+  return unwrap(await api.POST("/api/research/runs", { body, signal }), "研究実行を記録できませんでした");
+}
+
+export async function cancelResearchRun(runId: string, signal?: AbortSignal): Promise<ResearchRun> {
+  return unwrap(await api.POST("/api/research/runs/{run_id}/cancel", {
+    params: { path: { run_id:runId } }, signal,
+  }), "研究実行を中止できませんでした");
 }
 
 export async function getResearchConversation(conversationId: string, signal?: AbortSignal): Promise<ResearchConversationDetail> {

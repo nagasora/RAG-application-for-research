@@ -39,6 +39,14 @@ services:
   api:
     build:
       context: ./backend
+    # Accept local secrets from either the compose-level `.env` documented for
+    # personal installs or the backend `.env` used by the direct API workflow.
+    # Explicit values below still own database, auth, and storage settings.
+    env_file:
+      - path: ./.env
+        required: false
+      - path: ./backend/.env
+        required: false
     environment:
       DATABASE_URL: postgresql+psycopg://paperpilot:paperpilot@postgres:5432/paperpilot
       AUTH_MODE: dev
@@ -51,9 +59,10 @@ services:
       PAPER_STORAGE_BACKEND: local
       PAPER_ORIGINAL_STORAGE_DIR: /app/data/originals
       PAPER_ASSET_STORAGE_DIR: /app/data/assets
-      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-local}
+      # auto selects OpenAI's multilingual embedding model when OPENAI_API_KEY
+      # is present, and deterministic local embeddings otherwise.
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-auto}
       LOCAL_EMBEDDING_MODEL: ${LOCAL_EMBEDDING_MODEL:-local-hash-v1}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.4-nano}
       OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
       RAG_REQUEST_DEADLINE_SECONDS: ${RAG_REQUEST_DEADLINE_SECONDS:-25}
