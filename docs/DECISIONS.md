@@ -24,7 +24,7 @@
 ## D-20260716-02 根拠・推論・仮説を別の研究資産として扱う
 
 - Status: accepted
-- Linked items: CI-001, CI-004, CI-005, CI-008
+- Linked items: CI-001, CI-004, CI-005, CI-008, CI-023
 - Context: RAG制約だけでは新規アイデアが既存研究に引かれすぎる一方、自由生成を論文由来の事実と混在させると研究判断を誤る。
 - Decision: Evidence、Inference、Hypothesisを明示的に分類し、自由発想は許可するがHypothesis Inboxと人間レビューを経て昇格させる。
 - Alternatives: 全回答をsource限定にする、全回答でLLM一般知識を無区別に利用する。
@@ -34,7 +34,7 @@
 ## D-20260716-03 AI Scientistは人間参加の閉ループとして段階実装する
 
 - Status: accepted
-- Linked items: CI-004, CI-005, CI-009, CI-010
+- Linked items: CI-004, CI-005, CI-009, CI-010, CI-023
 - Context: 長期像は仮説・実験・結果による知識更新だが、現段階の引用・仮説・実験schemaでは完全自律の科学的妥当性を保証できない。
 - Decision: AIは候補生成、反証探索、実験案作成を担当し、採用・棄却・実証済み状態への遷移は人間の理由付き判断を必須とする。
 - Alternatives: 単発RAGに留める、完全自律エージェントを先に作る。
@@ -90,6 +90,26 @@
 - Alternatives: 直ちにpgvectorを必須化する、workspace全chunkをPythonで走査し続ける、RRF scoreを引用の関連度scoreとして上書きする。
 - Consequences: ORMへhydrateする行とgraph traversal/material IDにはhard boundを設けられるが、LIKEのDB scan/sort量とsemantic-only vector recallはまだ保証しない。CI-019はvalidatingに留め、CI-014でquery plan・Recall@k・p95を実測する。将来FTS/pgvectorを追加しても候補APIの契約とscore分離は維持する。
 - Date: 2026-07-16
+
+## D-20260716-09 APIキーがあるローカル環境では多言語embeddingを既定にする
+
+- Status: accepted
+- Linked items: CI-021
+- Context: ローカルComposeが`local-hash-v1`を固定していたため、日本語の質問と英語論文本文の語彙が一致せず、APIキーを設定しても意味検索が働かなかった。既存embeddingを切り替える間は古いjobが新しいベクトルを上書きしてはならない。
+- Decision: provider未指定時はAPIキーの有無で`auto`選択し、キーありではOpenAIの`text-embedding-3-small`、なしではローカルhashを使う。再embeddingはworkspaceとowner/editorに限定し、論文ごとにPaper→jobの順で排他する。running jobは409、queued旧jobはsupersedeする。
+- Alternatives: local embeddingを固定する、利用者に環境変数を毎回手設定させる、provider切替時に並列jobを許す。
+- Consequences: APIキー利用時はembeddingコストと外部送信が発生するが、日本語・英語間の意味検索を可能にする。既存論文は一度再embeddingが必要になる。
+- Date: 2026-07-16
+
+## D-20260719-10 AI壁打ち回答の区分を会話メッセージへ不変保存する
+
+- Status: accepted
+- Linked items: CI-023
+- Context: SSE中はinteraction mode、draft、claim classificationを確認できても、会話履歴へ本文と引用だけを保存すると、再読時にAI生成案と論文根拠の区別が失われる。またmode別appendix生成前に保存していたため、ライブ回答と履歴本文も一致しなかった。
+- Decision: assistant messageへ完成後の回答本文と、mode・draft・分類済みclaims・ResearchRun IDの型付きsnapshotを不変保存する。既存messageとuser messageは値を推測せず区分不明として扱う。AskはResearchRun作成後だけLLM streamを開始する。Idea Inbox保存時は、run IDとclaim IDが同一workspaceの一意な不変validation artifactに実在することをサーバーで検証し、artifact IDとclaim snapshotを保存する。同じworkspace・run・claimの保存はサーバー側で冗等にする。Graph起点の派生対話はnode IDとintentを受け取り、サーバーがworkspace内の正規ノードからcontentを再生成してResearchRun planへ保存する。
+- Alternatives: UI選択状態だけを表示する、既存履歴をsynthesis/non-draftとしてbackfillする、claimをanchorなしで保存する。
+- Consequences: migration 0025・0026とmessage API項目が増える。監査metadataを持つ環境では情報を失うdowngradeを拒否する一方、ライブ回答・履歴・Ideaの出所を一貫して追跡でき、通信再送で重複Ideaを作らない。
+- Date: 2026-07-19
 
 ## 追記テンプレート
 

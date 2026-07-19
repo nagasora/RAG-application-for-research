@@ -3,7 +3,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 from app import main
-from app.database import Base, HypothesisCardRecord
+from app.database import Base, HypothesisCardRecord, IdeaRecord
 from app.models import Principal
 from app.storage import LocalOriginalStorage
 from app.store import PaperStore
@@ -65,6 +65,13 @@ def test_idea_patch_promotion_snapshot_and_deleted_anchors(tmp_path):
                 "/api/research/runs", headers=_headers("alice"),
                 json={"purpose": "capture idea provenance"},
             ).json()
+            validation = client.post(
+                f"/api/research/runs/{run['id']}/artifacts", headers=_headers("alice"),
+                json={"kind": "validation", "payload": {"claims": [{
+                    "claim_id": "claim-1", "text": "Anchored claim",
+                    "classification": "evidence_backed", "citation_ids": [1],
+                }]}},
+            )
             created = client.post(
                 "/api/ideas", headers=_headers("alice"), json={
                     "kind": "observation", "content": "Initial anchored observation",
@@ -114,6 +121,7 @@ def test_idea_patch_promotion_snapshot_and_deleted_anchors(tmp_path):
             )
 
         assert created.status_code == 201
+        assert validation.status_code == 201
         assert incomplete.status_code == 422
         assert invalid_anchor.status_code == 404
         assert unchanged["content"] == "Initial anchored observation"
@@ -142,6 +150,84 @@ def test_idea_patch_promotion_snapshot_and_deleted_anchors(tmp_path):
         assert retained["source"]["span"]["page"] == 1
         assert retained["source"]["span"]["verbatim_quote"] == "anchored evidence"
         assert retained["research_run"]["purpose"] == "capture idea provenance"
+    finally:
+        main.app.dependency_overrides.clear()
+
+
+def test_claim_anchored_ideas_require_one_validation_claim_and_are_idempotent(tmp_path):
+    store = _setup(tmp_path)
+    try:
+        with TestClient(main.app) as client:
+            run = client.post(
+                "/api/research/runs", headers=_headers("alice"),
+                json={"purpose": "claim anchor"},
+            ).json()
+            artifact = client.post(
+                f"/api/research/runs/{run['id']}/artifacts", headers=_headers("alice"),
+                json={"kind": "validation", "payload": {"claims": [{
+                    "claim_id": "claim-anchored", "text": "Validated idea anchor",
+                    "classification": "hypothesis", "citation_ids": [],
+                }]}},
+            )
+            payload = {
+                "content": "Capture validated claim", "research_run_id": run["id"],
+                "claim_id": "claim-anchored", "checklist": {"evidence": True},
+            }
+            created = client.post("/api/ideas", headers=_headers("alice"), json=payload)
+            retried = client.post("/api/ideas", headers=_headers("alice"), json={
+                **payload, "content": "A retry must not create a second Idea",
+            })
+            unknown = client.post("/api/ideas", headers=_headers("alice"), json={
+                **payload, "claim_id": "missing-claim",
+            })
+            no_run = client.post("/api/ideas", headers=_headers("alice"), json={
+                "content": "Missing run", "claim_id": "claim-anchored",
+            })
+            other_run = client.post(
+                "/api/research/runs", headers=_headers("alice"), json={"purpose": "other run"},
+            ).json()
+            wrong_run = client.post("/api/ideas", headers=_headers("alice"), json={
+                **payload, "research_run_id": other_run["id"],
+            })
+            foreign_run = client.post(
+                "/api/research/runs", headers=_headers("bob"), json={"purpose": "foreign run"},
+            ).json()
+            foreign_anchor = client.post("/api/ideas", headers=_headers("alice"), json={
+                **payload, "research_run_id": foreign_run["id"],
+            })
+            duplicate_artifact = client.post(
+                f"/api/research/runs/{run['id']}/artifacts", headers=_headers("alice"),
+                json={"kind": "validation", "payload": {"claims": [{
+                    "claim_id": "claim-anchored", "text": "Ambiguous duplicate",
+                    "classification": "unverified", "citation_ids": [],
+                }]}},
+            )
+            ambiguous = client.post("/api/ideas", headers=_headers("alice"), json=payload)
+            free_first = client.post("/api/ideas", headers=_headers("alice"), json={"content": "free"})
+            free_second = client.post("/api/ideas", headers=_headers("alice"), json={"content": "free"})
+            patch_missing_run = client.patch(
+                f"/api/ideas/{free_first.json()['id']}", headers=_headers("alice"),
+                json={"claim_id": "claim-anchored"},
+            )
+
+        assert artifact.status_code == 201
+        assert created.status_code == 201 and retried.status_code == 201
+        assert created.json()["id"] == retried.json()["id"]
+        assert created.json()["content"] == "Capture validated claim"
+        assert unknown.status_code == 422 and no_run.status_code == 422 and wrong_run.status_code == 422
+        assert foreign_anchor.status_code == 422
+        assert duplicate_artifact.status_code == 201 and ambiguous.status_code == 422
+        assert free_first.status_code == 201 and free_second.status_code == 201
+        assert free_first.json()["id"] != free_second.json()["id"]
+        assert patch_missing_run.status_code == 422
+        with store.session_factory() as session:
+            record = session.get(IdeaRecord, created.json()["id"])
+            assert record.claim_artifact_id == artifact.json()["id"]
+            assert record.claim_snapshot == {
+                "claim_id": "claim-anchored", "text": "Validated idea anchor",
+                "classification": "hypothesis", "citation_ids": [],
+            }
+            assert record.idempotency_key
     finally:
         main.app.dependency_overrides.clear()
 

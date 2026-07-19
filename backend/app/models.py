@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 def utc_now() -> str:
@@ -135,6 +135,10 @@ class SourceVersion(BaseModel):
     content_hash: str
     metadata: dict = Field(default_factory=dict)
     created_at: str
+    # The locator is an immutable storage/audit identity.  Keep it, but give
+    # source pickers a human-readable label when the source is a paper.
+    paper_title: str | None = None
+    display_name: str | None = None
 
 
 class SourceSpan(BaseModel):
@@ -527,6 +531,35 @@ class IngestionJob(BaseModel):
     updated_at: str
 
 
+class EmbeddingJobStatus(BaseModel):
+    """A provider-safe view of one document embedding job."""
+    id: str
+    paper_id: str
+    provider: Literal["openai", "local"]
+    model: str
+    status: Literal["queued", "running", "succeeded", "failed"]
+    progress: int = Field(ge=0, le=100)
+    attempts: int = Field(ge=0)
+    total_chunks: int = Field(ge=0)
+    completed_chunks: int = Field(ge=0)
+    error_code: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class EmbeddingReindexRequest(BaseModel):
+    # Empty means every ready paper in the active workspace.  IDs are checked
+    # against that workspace before a job can be created.
+    paper_ids: list[str] = Field(default_factory=list, max_length=500)
+
+
+class EmbeddingReindexResponse(BaseModel):
+    provider: Literal["openai", "local"]
+    model: str
+    mode: Literal["inline", "celery"]
+    jobs: list[EmbeddingJobStatus] = Field(default_factory=list)
+
+
 class UploadResult(BaseModel):
     filename: str
     success: bool
@@ -717,6 +750,29 @@ class ResearchRun(BaseModel):
     artifacts: list[RunArtifact] = Field(default_factory=list)
 
 
+class ResearchRunGraphSeed(BaseModel):
+    intent: Literal["explore", "challenge", "design"]
+    node_id: str = Field(min_length=1, max_length=128)
+    # Accepted for rolling client compatibility, but replaced from the
+    # workspace-scoped KnowledgeNode at persistence time.
+    content: str = ""
+
+    @field_validator("node_id")
+    @classmethod
+    def normalize_node_id(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("graph_seed node_id is required")
+        return value
+
+
+class ResearchRunPlan(BaseModel):
+    """Free-form run plan with an optional, governed graph seed."""
+
+    model_config = ConfigDict(extra="allow")
+    graph_seed: ResearchRunGraphSeed | None = None
+
+
 class ResearchRunCreate(BaseModel):
     research_question_id: str | None = None
     source_set_id: str | None = None
@@ -724,7 +780,7 @@ class ResearchRunCreate(BaseModel):
     excluded_paper_ids: list[str] = Field(default_factory=list, max_length=1_000)
     purpose: str = Field(default="", max_length=20_000)
     success_criteria: str = Field(default="", max_length=20_000)
-    plan: dict | list = Field(default_factory=dict)
+    plan: ResearchRunPlan | list = Field(default_factory=ResearchRunPlan)
     model: str = Field(default="", max_length=255)
     prompt_version: str = Field(default="", max_length=255)
 
@@ -740,6 +796,22 @@ class IdeaCreate(BaseModel):
         if not isinstance(value, str) or not value.strip():
             raise ValueError("idea content is required")
         return value.strip()
+
+    @field_validator("claim_id")
+    @classmethod
+    def normalize_claim_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("claim_id cannot be blank")
+        return value
+
+    @model_validator(mode="after")
+    def claim_requires_research_run(self):
+        if self.claim_id and not self.research_run_id:
+            raise ValueError("claim_id requires research_run_id")
+        return self
 
 
 class IdeaUpdate(BaseModel):
@@ -761,6 +833,26 @@ class IdeaUpdate(BaseModel):
         if not isinstance(value, str) or not value.strip():
             raise ValueError("idea content is required")
         return value.strip()
+
+    @field_validator("claim_id")
+    @classmethod
+    def normalize_claim_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("claim_id cannot be blank")
+        return value
+
+    @model_validator(mode="after")
+    def claim_requires_research_run(self):
+        # Claim anchors are explicit and self-contained. The store separately
+        # validates an existing claim when another PATCH changes its run.
+        if self.claim_id and (
+            "research_run_id" not in self.model_fields_set or not self.research_run_id
+        ):
+            raise ValueError("claim_id requires research_run_id")
+        return self
 class Idea(BaseModel):
     id: str; workspace_id: str; kind: str; content: str; research_run_id: str | None = None; claim_id: str | None = None; paper_id: str | None = None; source_span_id: str | None = None
     checklist: dict = Field(default_factory=dict); status: Literal["unverified", "promoted"] = "unverified"; hypothesis_card_id: str | None = None; created_at: str
@@ -846,6 +938,56 @@ class ReviewThread(BaseModel):
     decisions: list[ReviewDecision] = Field(default_factory=list)
     created_at: str
     updated_at: str
+
+
+class ReviewCandidate(BaseModel):
+    """A persisted Ask claim that can safely anchor a review thread."""
+    research_run_id: str
+    claim_id: str
+    claim_artifact_id: str
+    text: str
+    classification: str | None = None
+    citation_ids: list[int] = Field(default_factory=list)
+    created_at: str
+
+
+class GraphIdeaCandidate(BaseModel):
+    """A selectable, explicitly unverified draft derived from an Ask turn."""
+    id: str
+    content: str
+    kind: Literal["hypothesis", "assumption", "unresolved_question", "planned_test"]
+    source_message_id: str
+    citation_count: int = Field(ge=0)
+    derived_from_memory: bool = False
+    classification: Literal["unverified"] = "unverified"
+
+
+class ConversationGraphDraftCreate(BaseModel):
+    """One selected or researcher-authored draft in an atomic graph export."""
+    candidate_id: str = Field(min_length=1, max_length=512)
+    content: str = Field(min_length=1, max_length=100_000)
+    kind: Literal["hypothesis", "assumption", "unresolved_question", "planned_test", "manual"]
+    derived_from_memory: bool = False
+
+    @field_validator("candidate_id", "content")
+    @classmethod
+    def strip_required(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("draft identity and content are required")
+        return value
+
+
+class ConversationGraphExportCreate(BaseModel):
+    source_span_id: str
+    drafts: list[ConversationGraphDraftCreate] = Field(min_length=1, max_length=32)
+
+    @model_validator(mode="after")
+    def unique_draft_identities(self):
+        ids = [item.candidate_id for item in self.drafts]
+        if len(ids) != len(set(ids)):
+            raise ValueError("draft candidate_id values must be unique")
+        return self
 
 
 class MeResponse(BaseModel):
@@ -1003,6 +1145,13 @@ class ResearchMessage(BaseModel):
     role: Literal["user", "assistant"]
     content: str
     citations: list[Citation] = Field(default_factory=list)
+    # These fields are populated only for assistant turns written after CI-023.
+    # None is intentional: it preserves the unknown status of legacy turns and
+    # prevents user messages from being interpreted as synthesized content.
+    interaction_mode: Literal["evidence", "synthesis", "explore", "challenge", "design", "update"] | None = None
+    draft: bool | None = None
+    claims: list[AnswerClaim] = Field(default_factory=list)
+    research_run_id: str | None = None
     created_at: str
 
 

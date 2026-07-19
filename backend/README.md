@@ -32,6 +32,15 @@ docker compose -f docker-compose.local.yml exec -T postgres pg_dump -U paperpilo
 R2/S3 と OIDC の設定は `.env.example` に残しており、外部環境を再び使う場合にのみ有効化します。
 詳しくは [ローカル永続利用手順](../docs/LOCAL_PERSISTENT_USE.md) を参照してください。
 
+`EMBEDDING_PROVIDER=auto`（既定）は、`OPENAI_API_KEY` が設定されていれば
+`text-embedding-3-small` を使います。このモデルは日本語の質問と英語・日本語論文の
+意味検索に対応します。キーがない場合はネットワークへ送信せず、ローカル検索へ
+フォールバックします。すでに登録済みの論文は、キーを設定してAPIを再起動した後に
+`POST /api/embeddings/reindex`（本文 `{}`、owner/editorのみ）を一度呼び出して
+再埋め込みしてください。空の `paper_ids` は現在のworkspaceの全ready論文、指定時は
+その論文だけを対象にします。レスポンスのjob statusが `succeeded` になってからAskを
+実行してください。APIキーはこのAPIやjob statusのレスポンスには含まれません。
+
 ---
 
 The backend requires an explicit PostgreSQL connection. It never silently falls back to SQLite.

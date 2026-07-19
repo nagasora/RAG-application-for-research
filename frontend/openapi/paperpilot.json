@@ -709,6 +709,69 @@
         "title": "ComparisonRow",
         "type": "object"
       },
+      "ConversationGraphDraftCreate": {
+        "description": "One selected or researcher-authored draft in an atomic graph export.",
+        "properties": {
+          "candidate_id": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "content": {
+            "maxLength": 100000,
+            "minLength": 1,
+            "title": "Content",
+            "type": "string"
+          },
+          "derived_from_memory": {
+            "default": false,
+            "title": "Derived From Memory",
+            "type": "boolean"
+          },
+          "kind": {
+            "enum": [
+              "hypothesis",
+              "assumption",
+              "unresolved_question",
+              "planned_test",
+              "manual"
+            ],
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "candidate_id",
+          "content",
+          "kind"
+        ],
+        "title": "ConversationGraphDraftCreate",
+        "type": "object"
+      },
+      "ConversationGraphExportCreate": {
+        "properties": {
+          "drafts": {
+            "items": {
+              "$ref": "#/components/schemas/ConversationGraphDraftCreate"
+            },
+            "maxItems": 32,
+            "minItems": 1,
+            "title": "Drafts",
+            "type": "array"
+          },
+          "source_span_id": {
+            "title": "Source Span Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_span_id",
+          "drafts"
+        ],
+        "title": "ConversationGraphExportCreate",
+        "type": "object"
+      },
       "DiscoveryItem": {
         "properties": {
           "abstract": {
@@ -985,6 +1048,150 @@
           "kind"
         ],
         "title": "DocumentElement",
+        "type": "object"
+      },
+      "EmbeddingJobStatus": {
+        "description": "A provider-safe view of one document embedding job.",
+        "properties": {
+          "attempts": {
+            "minimum": 0.0,
+            "title": "Attempts",
+            "type": "integer"
+          },
+          "completed_chunks": {
+            "minimum": 0.0,
+            "title": "Completed Chunks",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "paper_id": {
+            "title": "Paper Id",
+            "type": "string"
+          },
+          "progress": {
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Progress",
+            "type": "integer"
+          },
+          "provider": {
+            "enum": [
+              "openai",
+              "local"
+            ],
+            "title": "Provider",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "succeeded",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "total_chunks": {
+            "minimum": 0.0,
+            "title": "Total Chunks",
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "paper_id",
+          "provider",
+          "model",
+          "status",
+          "progress",
+          "attempts",
+          "total_chunks",
+          "completed_chunks",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "EmbeddingJobStatus",
+        "type": "object"
+      },
+      "EmbeddingReindexRequest": {
+        "properties": {
+          "paper_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 500,
+            "title": "Paper Ids",
+            "type": "array"
+          }
+        },
+        "title": "EmbeddingReindexRequest",
+        "type": "object"
+      },
+      "EmbeddingReindexResponse": {
+        "properties": {
+          "jobs": {
+            "items": {
+              "$ref": "#/components/schemas/EmbeddingJobStatus"
+            },
+            "title": "Jobs",
+            "type": "array"
+          },
+          "mode": {
+            "enum": [
+              "inline",
+              "celery"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "provider": {
+            "enum": [
+              "openai",
+              "local"
+            ],
+            "title": "Provider",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "model",
+          "mode"
+        ],
+        "title": "EmbeddingReindexResponse",
         "type": "object"
       },
       "EvidenceLinkCreate": {
@@ -1614,6 +1821,58 @@
           "reasoning_run"
         ],
         "title": "ForwardPropagationResult",
+        "type": "object"
+      },
+      "GraphIdeaCandidate": {
+        "description": "A selectable, explicitly unverified draft derived from an Ask turn.",
+        "properties": {
+          "citation_count": {
+            "minimum": 0.0,
+            "title": "Citation Count",
+            "type": "integer"
+          },
+          "classification": {
+            "const": "unverified",
+            "default": "unverified",
+            "title": "Classification",
+            "type": "string"
+          },
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "derived_from_memory": {
+            "default": false,
+            "title": "Derived From Memory",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "hypothesis",
+              "assumption",
+              "unresolved_question",
+              "planned_test"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "source_message_id": {
+            "title": "Source Message Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "content",
+          "kind",
+          "source_message_id",
+          "citation_count"
+        ],
+        "title": "GraphIdeaCandidate",
         "type": "object"
       },
       "GraphRetrievalHit": {
@@ -4174,6 +4433,13 @@
             "title": "Citations",
             "type": "array"
           },
+          "claims": {
+            "items": {
+              "$ref": "#/components/schemas/AnswerClaim"
+            },
+            "title": "Claims",
+            "type": "array"
+          },
           "content": {
             "title": "Content",
             "type": "string"
@@ -4186,13 +4452,54 @@
             "title": "Created At",
             "type": "string"
           },
+          "draft": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Draft"
+          },
           "id": {
             "title": "Id",
             "type": "string"
           },
+          "interaction_mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "evidence",
+                  "synthesis",
+                  "explore",
+                  "challenge",
+                  "design",
+                  "update"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interaction Mode"
+          },
           "ordinal": {
             "title": "Ordinal",
             "type": "integer"
+          },
+          "research_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Research Run Id"
           },
           "role": {
             "enum": [
@@ -4512,8 +4819,7 @@
           "plan": {
             "anyOf": [
               {
-                "additionalProperties": true,
-                "type": "object"
+                "$ref": "#/components/schemas/ResearchRunPlan"
               },
               {
                 "items": {},
@@ -4574,6 +4880,54 @@
         "title": "ResearchRunCreate",
         "type": "object"
       },
+      "ResearchRunGraphSeed": {
+        "properties": {
+          "content": {
+            "default": "",
+            "title": "Content",
+            "type": "string"
+          },
+          "intent": {
+            "enum": [
+              "explore",
+              "challenge",
+              "design"
+            ],
+            "title": "Intent",
+            "type": "string"
+          },
+          "node_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Node Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "intent",
+          "node_id"
+        ],
+        "title": "ResearchRunGraphSeed",
+        "type": "object"
+      },
+      "ResearchRunPlan": {
+        "additionalProperties": true,
+        "description": "Free-form run plan with an optional, governed graph seed.",
+        "properties": {
+          "graph_seed": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResearchRunGraphSeed"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "ResearchRunPlan",
+        "type": "object"
+      },
       "ReviewAssignmentUpdate": {
         "properties": {
           "assigned_to": {
@@ -4589,6 +4943,58 @@
           }
         },
         "title": "ReviewAssignmentUpdate",
+        "type": "object"
+      },
+      "ReviewCandidate": {
+        "description": "A persisted Ask claim that can safely anchor a review thread.",
+        "properties": {
+          "citation_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Citation Ids",
+            "type": "array"
+          },
+          "claim_artifact_id": {
+            "title": "Claim Artifact Id",
+            "type": "string"
+          },
+          "claim_id": {
+            "title": "Claim Id",
+            "type": "string"
+          },
+          "classification": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Classification"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "research_run_id": {
+            "title": "Research Run Id",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "research_run_id",
+          "claim_id",
+          "claim_artifact_id",
+          "text",
+          "created_at"
+        ],
+        "title": "ReviewCandidate",
         "type": "object"
       },
       "ReviewComment": {
@@ -5785,6 +6191,17 @@
             "title": "Created At",
             "type": "string"
           },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -5812,6 +6229,17 @@
               }
             ],
             "title": "Paper Id"
+          },
+          "paper_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paper Title"
           },
           "workspace_id": {
             "title": "Workspace Id",
@@ -6600,6 +7028,45 @@
           }
         },
         "summary": "List Discovery Review Queue"
+      }
+    },
+    "/api/embeddings/reindex": {
+      "post": {
+        "description": "Rebuild active-workspace vectors without exposing provider credentials.",
+        "operationId": "reindex_embeddings_api_embeddings_reindex_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmbeddingReindexRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmbeddingReindexResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reindex Embeddings"
       }
     },
     "/api/experiments": {
@@ -9249,6 +9716,120 @@
         "summary": "Get Research Messages Page"
       }
     },
+    "/api/research/conversations/{conversation_id}/messages/{message_id}/graph-candidates": {
+      "get": {
+        "operationId": "list_graph_idea_candidates_api_research_conversations__conversation_id__messages__message_id__graph_candidates_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "message_id",
+            "required": true,
+            "schema": {
+              "title": "Message Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/GraphIdeaCandidate"
+                  },
+                  "title": "Response List Graph Idea Candidates Api Research Conversations  Conversation Id  Messages  Message Id  Graph Candidates Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Graph Idea Candidates"
+      }
+    },
+    "/api/research/conversations/{conversation_id}/messages/{message_id}/graph-drafts": {
+      "post": {
+        "operationId": "export_conversation_graph_drafts_api_research_conversations__conversation_id__messages__message_id__graph_drafts_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "message_id",
+            "required": true,
+            "schema": {
+              "title": "Message Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConversationGraphExportCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/KnowledgeNode"
+                  },
+                  "title": "Response Export Conversation Graph Drafts Api Research Conversations  Conversation Id  Messages  Message Id  Graph Drafts Post",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Export Conversation Graph Drafts"
+      }
+    },
     "/api/research/questions": {
       "get": {
         "operationId": "list_research_questions_api_research_questions_get",
@@ -9664,6 +10245,29 @@
           }
         },
         "summary": "Create Review Thread"
+      }
+    },
+    "/api/reviews/candidates": {
+      "get": {
+        "description": "Claims persisted by Ask that may be chosen as review anchors.",
+        "operationId": "list_review_candidates_api_reviews_candidates_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ReviewCandidate"
+                  },
+                  "title": "Response List Review Candidates Api Reviews Candidates Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Review Candidates"
       }
     },
     "/api/reviews/report.md": {

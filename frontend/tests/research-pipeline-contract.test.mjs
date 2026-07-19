@@ -6,6 +6,7 @@ const capture = await readFile(new URL("../components/idea-capture.tsx", import.
 const pipeline = await readFile(new URL("../components/research-pipeline.tsx", import.meta.url), "utf8");
 const reviews = await readFile(new URL("../components/collaborative-reviews.tsx", import.meta.url), "utf8");
 const workspace = await readFile(new URL("../components/research-workspace.tsx", import.meta.url), "utf8");
+const ask = await readFile(new URL("../components/ask-workspace.tsx", import.meta.url), "utf8");
 
 test("IdeaCapture writes to the dedicated inbox instead of the knowledge graph", () => {
   assert.match(capture, /await createIdea\(/);
@@ -22,6 +23,14 @@ test("research pipeline keeps promotion gates and experiment audit actions visib
   assert.match(pipeline, /await addExperimentResult\(/);
   assert.match(pipeline, /await getExperimentPlanSnapshot\(/);
   assert.match(pipeline, /experiment-\$\{experiment\.id\}-v1\.json/);
+});
+
+test("Ask can produce graph candidates even when durable memory is empty", () => {
+  assert.match(ask, /await listGraphIdeaCandidates\(/);
+  assert.match(ask, /await exportConversationGraphDrafts\(/);
+  assert.match(ask, /自分でレビュー候補を追加/);
+  assert.match(ask, /kind:"manual"/);
+  assert.match(ask, /論文根拠・検証済み知識・引用の支持を意味しません/);
 });
 
 test("Research workspace exposes the complete collaborative review workflow", () => {

@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -15,6 +16,12 @@ from .models import Chunk, Citation
 
 
 logger = logging.getLogger("paperpilot.rag")
+
+# PaperPilot uses LangChain's pure-Python character splitter, not its optional
+# TensorFlow integrations.  Prevent the text-splitters package from importing a
+# host TensorFlow/Keras stack merely while discovering optional splitters; that
+# can otherwise make plain TXT ingestion fail on machines with Keras 3.
+os.environ.setdefault("USE_TF", "0")
 
 
 class TextModel(Protocol):

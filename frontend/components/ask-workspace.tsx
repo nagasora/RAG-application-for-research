@@ -12,34 +12,64 @@ import remarkMath from "remark-math";
 
 import type { EvidenceTarget } from "@/components/evidence-viewer";
 import {
-  createGraphNode, createResearchConversation, getLLMStatus, getResearchConversation, getResearchMemoryPage, importGraphSource, listResearchConversations, previewSearch,
-  type Citation, type LLMStatus, type Paper, type ResearchConversation, type ResearchConversationDetail, type ResearchMemoryEvent, type ResearchMessage,
+  cancelResearchRun, createIdea, createResearchConversation, createResearchRun, exportConversationGraphDrafts, getLLMStatus, getResearchConversation, importGraphSource, listGraphIdeaCandidates, listResearchConversations, previewSearch,
+  type AnswerClaim, type Citation, type GraphIdeaCandidate, type LLMStatus, type Paper, type ResearchConversation, type ResearchConversationDetail, type ResearchMessage, type SearchRequest,
 } from "@/lib/api/client";
 import { apiErrorMessage, toApiError } from "@/lib/api/error";
 import { normalizeResearchMarkdown } from "@/lib/markdown";
 import { SEARCH_STAGES, streamSearch, type SearchStage, type SearchStreamMeta } from "@/lib/api/search-stream";
 import { remarkCitationLinks } from "@/lib/remark-citations.mjs";
 
-type Replay = { query: string; paperIds: string[]; revision: number } | null;
+type Replay = { query: string; paperIds: string[]; revision: number; graphSeed?: { nodeId: string; content: string; intent: "explore" | "challenge" | "design" } } | null;
 type Phase = "idle" | "planning" | "answering" | "syncing";
+type EditorInteractionMode = Exclude<SearchRequest["interaction_mode"], "evidence">;
+type ClaimClassification = "evidence_backed" | "inference" | "general_knowledge" | "hypothesis" | "unverified";
 const SOURCE_STORAGE_PREFIX = "paperpilot.project-sources.";
 const DRAWER_FOCUSABLE = "button:not([disabled]), a[href], input:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex='-1'])";
+
+const EDITOR_INTERACTION_MODES: ReadonlyArray<{
+  id: EditorInteractionMode;
+  label: string;
+  description: string;
+  example: string;
+}> = [
+  { id:"synthesis", label:"統合する", description:"論文の結果・条件差・限界をつないで整理します。", example:"例: 3本の論文で一致する結果と条件差をまとめて" },
+  { id:"explore", label:"発想を広げる", description:"異なるメカニズムや次の問いの候補を発散します。", example:"例: この知見から異なるメカニズムの研究仮説を3案出して" },
+  { id:"challenge", label:"反証を探す", description:"競合理論と、仮説を崩しうる根拠を探します。", example:"例: この仮説が誤りだと示す競合理論と最強の反証を挙げて" },
+  { id:"design", label:"検証を設計する", description:"競合する説明を区別できる実験案を組み立てます。", example:"例: 競合仮説を区別する次の実験を設計して" },
+  { id:"update", label:"判断を更新する", description:"新しい根拠で、現在の仮説や判断を見直します。", example:"例: 新しい論文を踏まえて、現在の仮説を支持・反証・保留に更新して" },
+];
+
+const INTERACTION_MODE_LABEL: Record<SearchRequest["interaction_mode"], string> = {
+  evidence:"根拠のみ", synthesis:"統合", explore:"発想", challenge:"反証", design:"実験設計", update:"判断更新",
+};
+const CLAIM_CLASSIFICATION_LABEL: Record<ClaimClassification, string> = {
+  evidence_backed:"根拠あり", inference:"推論", general_knowledge:"一般知識", hypothesis:"仮説", unverified:"未検証",
+};
+const CLAIM_CLASSIFICATIONS: readonly ClaimClassification[] = ["evidence_backed", "inference", "general_knowledge", "hypothesis", "unverified"];
+
+function isClaimClassification(value: unknown): value is ClaimClassification {
+  return typeof value === "string" && (CLAIM_CLASSIFICATIONS as readonly string[]).includes(value);
+}
+
+function isIdeaCandidateClaim(claim: AnswerClaim) {
+  return claim.classification === "hypothesis" || claim.classification === "unverified" || claim.classification === "inference";
+}
+
+function ideaKindForClaim(claim: AnswerClaim) {
+  return claim.classification === "inference" ? "interpretation" as const : "hypothesis" as const;
+}
+
+function ideaClaimKey(messageId: string, claimId: string) {
+  return `${messageId}:${claimId}`;
+}
 
 async function sha256Hex(value: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function graphNodeShape(memory: ResearchMemoryEvent) {
-  switch (memory.kind) {
-    case "hypothesis": return { node_type:"hypothesis" as const, phase:"conversation_hypothesis" };
-    case "assumption": return { node_type:"idea" as const, phase:"assumption" };
-    case "unresolved_question": return { node_type:"idea" as const, phase:"unresolved_question" };
-    case "planned_test": return { node_type:"idea" as const, phase:"planned_test" };
-  }
-}
-
-const MEMORY_KIND_LABEL: Record<ResearchMemoryEvent["kind"], string> = {
+const MEMORY_KIND_LABEL: Record<GraphIdeaCandidate["kind"], string> = {
   hypothesis:"仮説", assumption:"前提", unresolved_question:"未解決点", planned_test:"検証案",
 };
 const STAGE_LABELS: Record<SearchStage, string> = {
@@ -181,10 +211,46 @@ function AnswerWithCitations({ text, citations, openEvidence }: { text: string; 
   </div>;
 }
 
-function AssistantResponse({ text, citations, openEvidence, loading = false }: {
-  text: string; citations: Citation[]; openEvidence: (target: EvidenceTarget) => void; loading?: boolean;
+function AnswerClassificationBadges({ interactionMode, draft, claims }: {
+  interactionMode?: SearchRequest["interaction_mode"] | null; draft?: boolean | null; claims?: AnswerClaim[];
 }) {
-  return <div className="grid grid-cols-[32px_minmax(0,1fr)] gap-3"><div className="grid h-8 w-8 place-items-center rounded-full bg-[#164f3b] text-white"><SparklesIcon className={`h-4 w-4 ${loading ? "animate-pulse" : ""}`}/></div>{text ? <AnswerWithCitations text={text} citations={citations} openEvidence={openEvidence}/> : <div className="space-y-3 pt-2"><div className="h-3 w-10/12 animate-pulse rounded bg-[#dfe3dd]"/><div className="h-3 w-full animate-pulse rounded bg-[#dfe3dd]"/><div className="h-3 w-7/12 animate-pulse rounded bg-[#dfe3dd]"/></div>}</div>;
+  const counts = CLAIM_CLASSIFICATIONS.map(classification => ({
+    classification,
+    count: claims?.filter(claim => isClaimClassification(claim.classification) && claim.classification === classification).length ?? 0,
+  })).filter(item => item.count > 0);
+  const summary = counts.map(item => `${CLAIM_CLASSIFICATION_LABEL[item.classification]} ${item.count}件`).join("、");
+  if (!interactionMode && !draft && !counts.length) return null;
+  return <div className="mb-3 flex flex-wrap items-center gap-1.5" aria-label={`回答の主張区分${summary ? `: ${summary}` : ""}`}>
+    {interactionMode && <span className="rounded-full bg-[#e7f0eb] px-2 py-1 text-[10px] font-bold text-[#35634f]">{INTERACTION_MODE_LABEL[interactionMode]}</span>}
+    {draft && <span className="rounded-full bg-amber-100 px-2 py-1 text-[10px] font-bold text-amber-950">下書き・要確認</span>}
+    {counts.map(item => <span key={item.classification} className="rounded-full bg-[#eef1ef] px-2 py-1 text-[10px] font-semibold text-[#52605b]">{CLAIM_CLASSIFICATION_LABEL[item.classification]} {item.count}件</span>)}
+    {draft && <p className="basis-full text-[10px] leading-4 text-amber-900">提案は未検証です。原文・引用を確認し、人間が採否を判断してください。</p>}
+  </div>;
+}
+
+function AssistantResponse({ text, citations, openEvidence, interactionMode, draft, claims, loading = false }: {
+  text: string; citations: Citation[]; openEvidence: (target: EvidenceTarget) => void;
+  interactionMode?: SearchRequest["interaction_mode"] | null; draft?: boolean | null; claims?: AnswerClaim[]; loading?: boolean;
+}) {
+  return <div className="grid grid-cols-[32px_minmax(0,1fr)] gap-3"><div className="grid h-8 w-8 place-items-center rounded-full bg-[#164f3b] text-white"><SparklesIcon className={`h-4 w-4 ${loading ? "animate-pulse" : ""}`}/></div><div className="min-w-0"><AnswerClassificationBadges interactionMode={interactionMode} draft={draft} claims={claims}/>{text ? <AnswerWithCitations text={text} citations={citations} openEvidence={openEvidence}/> : <div className="space-y-3 pt-2"><div className="h-3 w-10/12 animate-pulse rounded bg-[#dfe3dd]"/><div className="h-3 w-full animate-pulse rounded bg-[#dfe3dd]"/><div className="h-3 w-7/12 animate-pulse rounded bg-[#dfe3dd]"/></div>}</div></div>;
+}
+
+function IdeaInboxActions({ message, canWrite, saveStates, saveErrors, saveClaim }: {
+  message: ResearchMessage; canWrite: boolean; saveStates: Record<string, "saving" | "saved" | "error">; saveErrors: Record<string, string>;
+  saveClaim: (message: ResearchMessage, claim: AnswerClaim) => Promise<void>;
+}) {
+  if (!canWrite || !message.research_run_id) return null;
+  const candidates = (message.claims ?? []).filter(isIdeaCandidateClaim);
+  if (!candidates.length) return null;
+  return <section className="ml-11 mt-3 rounded-2xl border border-[#d9e5dd] bg-[#f7faf7] p-3" aria-label="Idea Inbox候補">
+    <p className="text-[11px] font-bold text-[#35634f]">未検証の主張を Idea Inbox へ</p>
+    <p className="mt-1 text-[10px] leading-4 text-[#68736f]">候補は未検証のまま保存されます。根拠・反証・検証方法を確認してから昇格してください。</p>
+    <div className="mt-2 space-y-2">{candidates.map(claim => {
+      const key = ideaClaimKey(message.id, claim.claim_id);
+      const state = saveStates[key];
+      return <div key={claim.claim_id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-white px-3 py-2"><p className="min-w-0 flex-1 text-[11px] leading-5 text-[#40534a]">{claim.text}</p><div className="shrink-0"><button type="button" disabled={state === "saving" || state === "saved"} onClick={() => void saveClaim(message, claim)} className="rounded-full border border-[#9ab7a7] px-3 py-1.5 text-[10px] font-bold text-[#24523e] hover:bg-[#edf5f0] disabled:cursor-not-allowed disabled:opacity-55">{state === "saving" ? "保存中…" : state === "saved" ? "Inboxへ保存済み" : "Idea Inboxへ"}</button>{state === "error" && <p role="alert" className="mt-1 max-w-44 text-[10px] leading-4 text-red-700">{saveErrors[key] || "保存に失敗しました。再試行できます。"}</p>}{state === "saved" && <p role="status" className="mt-1 text-[10px] text-[#35634f]">Idea Inboxへ保存しました。</p>}</div></div>;
+    })}</div>
+  </section>;
 }
 
 function relativeDate(value: string) {
@@ -216,14 +282,16 @@ function AnswerEvidenceList({ citations, openEvidence }: { citations: Citation[]
   </section>;
 }
 
-export function AskWorkspace({ workspaceId, papers, selected, setSelected, openEvidence, replay, canWrite }: {
+export function AskWorkspace({ workspaceId, papers, selected, setSelected, openEvidence, replay, onReplayConsumed, canWrite }: {
   workspaceId: string;
   papers: Paper[]; selected: string[]; setSelected: (ids: string[]) => void;
-  openEvidence: (target: EvidenceTarget) => void; replay: Replay; canWrite: boolean;
+  openEvidence: (target: EvidenceTarget) => void; replay: Replay; onReplayConsumed?: () => void; canWrite: boolean;
 }) {
   const readyPapers = useMemo(() => papers.filter(paper => paper.status === "ready"), [papers]);
   const readyIds = useMemo(() => new Set(readyPapers.map(paper => paper.id)), [readyPapers]);
   const [query, setQuery] = useState("");
+  const [graphSeed, setGraphSeed] = useState<NonNullable<Replay>["graphSeed"] | null>(null);
+  const [interactionMode, setInteractionMode] = useState<EditorInteractionMode>("synthesis");
   const [conversations, setConversations] = useState<ResearchConversation[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const activeIdRef = useRef<string | null>(null);
@@ -241,12 +309,18 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
   const [syncNotice, setSyncNotice] = useState("");
   const [historyOpen, setHistoryOpen] = useState(false);
   const [graphMessage, setGraphMessage] = useState<ResearchMessage | null>(null);
-  const [graphCandidates, setGraphCandidates] = useState<ResearchMemoryEvent[]>([]);
+  const [graphCandidates, setGraphCandidates] = useState<GraphIdeaCandidate[]>([]);
   const [selectedGraphCandidateIds, setSelectedGraphCandidateIds] = useState<string[]>([]);
+  const [graphDraft, setGraphDraft] = useState("");
+  // This is a writing aid only. Manually authored text is always exported as
+  // `manual` and classified as unverified by the server.
+  const [graphDraftKind, setGraphDraftKind] = useState<"idea" | "hypothesis" | "constraint" | "experiment">("idea");
   const [graphCandidatesLoading, setGraphCandidatesLoading] = useState(false);
   const [graphSaving, setGraphSaving] = useState(false);
   const [graphError, setGraphError] = useState("");
   const [graphNotice, setGraphNotice] = useState("");
+  const [ideaSaveStates, setIdeaSaveStates] = useState<Record<string, "saving" | "saved" | "error">>({});
+  const [ideaSaveErrors, setIdeaSaveErrors] = useState<Record<string, string>>({});
   const sourceSelectionRestoredRef = useRef(false);
   const streamAbortRef = useRef<AbortController | null>(null);
   const interruptionAbortRef = useRef<AbortController | null>(null);
@@ -258,11 +332,17 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
   const graphSavedMemoryRef = useRef(new Set<string>());
   const busy = phase !== "idle" || interruptionSyncing || detailLoading;
 
+  const replaceQuery = (nextQuery: string) => {
+    setQuery(nextQuery);
+    setGraphSeed(null);
+  };
+
   const selectConversation = (conversationId: string) => {
     if (busy || conversationId === activeIdRef.current) return;
     activeIdRef.current = conversationId;
     setActiveId(conversationId);
     setLastMeta(null);
+    setGraphSeed(null);
     setLiveQuestion(""); setLiveAnswer(""); setLiveCitations([]);
     setHistoryOpen(false); setError(""); setSyncNotice("");
   };
@@ -350,7 +430,7 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
       (previouslyFocused ?? historyButtonRef.current)?.focus();
     };
   }, [historyOpen]);
-  useEffect(() => { if (replay) setQuery(replay.query); }, [replay?.revision]);
+  useEffect(() => { if (replay) { setQuery(replay.query); setGraphSeed(replay.graphSeed ?? null); if (replay.graphSeed) setInteractionMode(replay.graphSeed.intent); onReplayConsumed?.(); } }, [onReplayConsumed, replay?.revision]);
   useEffect(() => { messageEndRef.current?.scrollIntoView({ block:"end", behavior:"smooth" }); }, [detail?.messages?.length, liveAnswer, liveQuestion]);
 
   const startNew = () => {
@@ -360,7 +440,7 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
     // useful title from the actual research topic.
     detailAbortRef.current?.abort();
     activeIdRef.current = null;
-    setActiveId(null); setDetail(null); setQuery(""); setLastMeta(null);
+    setActiveId(null); setDetail(null); setQuery(""); setGraphSeed(null); setLastMeta(null);
     setLiveQuestion(""); setLiveAnswer(""); setLiveCitations([]);
     setError(""); setSyncNotice(""); setHistoryOpen(false);
   };
@@ -390,21 +470,40 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
     setLiveQuestion(prompt); setLiveAnswer(""); setLiveCitations([]); setLastMeta(null);
     const controller = new AbortController(); streamAbortRef.current = controller;
     let conversationId = activeIdRef.current;
+    let researchRunId: string | null = null;
     let streamCompleted = false;
+    let streamCancelled = false;
+    const runGraphSeed = graphSeed;
     try {
+      const researchRun = await createResearchRun({
+        source_paper_ids:selected.length ? selected : readyPapers.map(paper => paper.id),
+        purpose:prompt,
+        success_criteria:"質問に対する根拠付き回答を記録する",
+        plan:{ origin:"ask_workspace", interaction_mode:interactionMode, ...(runGraphSeed ? { graph_seed:{ node_id:runGraphSeed.nodeId, content:runGraphSeed.content, intent:runGraphSeed.intent } } : {}) },
+        model:llmStatus?.model ?? "",
+        prompt_version:"ask-workspace-v1",
+      }, controller.signal);
+      researchRunId = researchRun.id;
       if (!conversationId) {
-        const created = await createResearchConversation(prompt.slice(0, 80), controller.signal);
-        conversationId = created.id; activeIdRef.current = created.id; setActiveId(created.id);
-        setConversations(current => [created, ...current]);
+        try {
+          const created = await createResearchConversation(prompt.slice(0, 80), controller.signal);
+          conversationId = created.id; activeIdRef.current = created.id; setActiveId(created.id);
+          setConversations(current => [created, ...current]);
+        } catch (conversationError) {
+          void cancelResearchRun(researchRun.id).catch(() => { /* best-effort cleanup preserves the conversation error */ });
+          throw conversationError;
+        }
       }
-      for await (const streamEvent of streamSearch({ query:prompt, paper_ids:selected, limit:10, conversation_id:conversationId, interaction_mode:"synthesis" }, controller.signal)) {
+      for await (const streamEvent of streamSearch({ query:prompt, paper_ids:selected, limit:10, conversation_id:conversationId, research_run_id:researchRun.id, interaction_mode:interactionMode }, controller.signal)) {
         if (streamEvent.type === "token") { setPhase("answering"); setLiveAnswer(current => current + streamEvent.value); }
         if (streamEvent.type === "citations") setLiveCitations(streamEvent.value);
         if (streamEvent.type === "stage") setSearchStage(streamEvent.value);
         if (streamEvent.type === "meta") setLastMeta(streamEvent.value);
         if (streamEvent.type === "done") streamCompleted = true;
+        if (streamEvent.type === "cancelled") { streamCompleted = true; streamCancelled = true; }
       }
-      setQuery(""); setPhase("syncing"); setSearchStage("saving");
+      if (streamCancelled) setSyncNotice("回答表示を中断しました。保存済みの会話を同期しています。");
+      setQuery(""); setGraphSeed(null); setPhase("syncing"); setSearchStage("saving");
       try {
         detailAbortRef.current?.abort();
         const refreshed = await getResearchConversation(conversationId, controller.signal);
@@ -417,6 +516,9 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
         if (normalized.code !== "aborted") setSyncNotice("回答は完了しましたが、会話履歴との同期に失敗しました。画面を切り替えると再取得できます。");
       }
     } catch (requestError) {
+      if (!streamCompleted && researchRunId) {
+        void cancelResearchRun(researchRunId).catch(() => { /* best-effort cleanup preserves the original request error */ });
+      }
       const normalized = toApiError(requestError, "回答を生成できませんでした");
       if (normalized.code === "aborted") {
         setSyncNotice("回答表示を中断しました。現在のAPIではサーバー側で完了した回答が履歴に保存される場合があります。");
@@ -468,11 +570,10 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
 
   const openGraphCandidates = async (message: ResearchMessage) => {
     if (!canWrite || !activeIdRef.current || graphCandidatesLoading || graphSaving) return;
-    setGraphMessage(message); setGraphCandidates([]); setSelectedGraphCandidateIds([]); setGraphError(""); setGraphNotice(""); setGraphCandidatesLoading(true);
+    setGraphMessage(message); setGraphCandidates([]); setSelectedGraphCandidateIds([]); setGraphDraft(""); setGraphError(""); setGraphNotice(""); setGraphCandidatesLoading(true);
     const controller = new AbortController();
     try {
-      const page = await getResearchMemoryPage(activeIdRef.current, { limit:200 }, controller.signal);
-      const candidates = (page.items ?? []).filter(item => item.source_message_id === message.id);
+      const candidates = await listGraphIdeaCandidates(activeIdRef.current, message.id, controller.signal);
       setGraphCandidates(candidates);
       setSelectedGraphCandidateIds(candidates.filter(item => !graphSavedMemoryRef.current.has(item.id)).map(item => item.id));
     } catch (requestError) {
@@ -482,14 +583,34 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
 
   const closeGraphCandidates = () => {
     if (graphSaving) return;
-    setGraphMessage(null); setGraphCandidates([]); setSelectedGraphCandidateIds([]); setGraphError(""); setGraphNotice("");
+    setGraphMessage(null); setGraphCandidates([]); setSelectedGraphCandidateIds([]); setGraphDraft(""); setGraphError(""); setGraphNotice("");
+  };
+
+  const saveClaimToIdeaInbox = async (message: ResearchMessage, claim: AnswerClaim) => {
+    const researchRunId = message.research_run_id;
+    const key = ideaClaimKey(message.id, claim.claim_id);
+    if (!canWrite || !researchRunId || !isIdeaCandidateClaim(claim) || ideaSaveStates[key] === "saving" || ideaSaveStates[key] === "saved") return;
+    setIdeaSaveStates(current => ({ ...current, [key]:"saving" }));
+    setIdeaSaveErrors(current => { const { [key]: _removed, ...next } = current; return next; });
+    try {
+      const created = await createIdea({
+        kind:ideaKindForClaim(claim), content:claim.text, research_run_id:researchRunId, claim_id:claim.claim_id,
+        checklist:{ evidence:false, falsifier:false, test:false, captured_from:"ask_workspace" },
+      });
+      setIdeaSaveStates(current => ({ ...current, [key]:"saved" }));
+      window.dispatchEvent(new CustomEvent("paperpilot:idea-created", { detail:{ ideaId:created.id } }));
+    } catch (requestError) {
+      setIdeaSaveStates(current => ({ ...current, [key]:"error" }));
+      setIdeaSaveErrors(current => ({ ...current, [key]:apiErrorMessage(requestError, "アイデアを保存できませんでした") }));
+    }
   };
 
   const saveGraphCandidates = async () => {
     const conversationId = activeIdRef.current;
     if (!canWrite || !graphMessage || !conversationId || graphSaving || graphExportingRef.current) return;
     const candidates = graphCandidates.filter(item => selectedGraphCandidateIds.includes(item.id) && !graphSavedMemoryRef.current.has(item.id));
-    if (!candidates.length) return;
+    const draft = graphDraft.trim();
+    if (!candidates.length && !draft) return;
     graphExportingRef.current = true; setGraphSaving(true); setGraphError(""); setGraphNotice("");
     try {
       // Preserve the assistant turn as an immutable chat Source. It is provenance for
@@ -502,20 +623,15 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
       });
       const evidenceSpan = imported.spans?.[0];
       if (!evidenceSpan) throw new Error("会話の根拠Spanを作成できませんでした");
-      for (const candidate of candidates) {
-        const shape = graphNodeShape(candidate);
-        await createGraphNode({
-          node_type:shape.node_type, content:candidate.content, layer:1, status:"review_pending", phase:shape.phase,
-          confidence:null, evidence_span_ids:[evidenceSpan.id], evidence_excerpt:candidate.content,
-          metadata:{
-            origin:"research_conversation", conversation_id:conversationId, message_id:graphMessage.id,
-            memory_event_id:candidate.id, memory_kind:candidate.kind, citation_count:graphMessage.citations?.length ?? 0,
-          },
-        });
-        graphSavedMemoryRef.current.add(candidate.id);
-      }
+      const drafts = [
+        ...candidates.map(candidate => ({ candidate_id:candidate.id, content:candidate.content, kind:candidate.kind, derived_from_memory:candidate.derived_from_memory })),
+        ...(draft ? [{ candidate_id:`manual:${await sha256Hex(draft)}`, content:draft, kind:"manual" as const, derived_from_memory:false }] : []),
+      ];
+      await exportConversationGraphDrafts(conversationId, graphMessage.id, { source_span_id:evidenceSpan.id, drafts });
+      candidates.forEach(candidate => graphSavedMemoryRef.current.add(candidate.id));
       setSelectedGraphCandidateIds([]);
-      setGraphNotice(`${candidates.length}件をレビュー待ちとして知識グラフへ保存しました。論文事実としては扱われません。`);
+      setGraphDraft("");
+      setGraphNotice(`${candidates.length + (draft ? 1 : 0)}件をレビュー待ちとして知識グラフへ保存しました。会話由来の未検証メモであり、論文事実としては扱われません。`);
     } catch (requestError) {
       setGraphError(apiErrorMessage(requestError, "知識グラフへ保存できませんでした"));
     } finally { graphExportingRef.current = false; setGraphSaving(false); }
@@ -584,9 +700,9 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
               <div className="mx-auto max-w-3xl space-y-7">
                 {!messages.length && !liveQuestion && !detailLoading && <div className="grid min-h-[42vh] place-items-center text-center"><div><div className="mx-auto grid h-12 w-12 place-items-center rounded-2xl bg-[#e1eee7] text-[#164f3b]"><SparklesIcon className="h-6 w-6"/></div><h1 className="serif mt-5 text-3xl font-semibold">何を一緒に考えますか？</h1><p className="mx-auto mt-3 max-w-xl text-sm leading-7 text-[#68736f]">論文を横断して詳しくまとめ、LLMの知識で補足します。根拠にした原文は引用番号から直接確認できます。</p></div></div>}
                 {detailLoading && <div role="status" className="py-20 text-center text-sm text-[#68736f]">会話履歴を読み込んでいます…</div>}
-                {messages.map(message => <article key={message.id} aria-label={message.role === "user" ? "あなた" : "PaperPilot"} className={message.role === "user" ? "ml-auto max-w-[88%] rounded-3xl rounded-br-md bg-[#e6e8e3] px-5 py-3 text-sm leading-7 text-[#26312c]" : "max-w-full"}>{message.role === "assistant" ? <><AssistantResponse text={message.content} citations={message.citations ?? []} openEvidence={openEvidence}/><AnswerEvidenceList citations={message.citations ?? []} openEvidence={openEvidence}/><div className="ml-11 mt-3"><button type="button" disabled={!canWrite || busy || graphSaving} onClick={() => void openGraphCandidates(message)} className="rounded-full border border-[#9ab7a7] px-3 py-1.5 text-[11px] font-semibold text-[#24523e] hover:bg-[#edf5f0] disabled:cursor-not-allowed disabled:opacity-45">研究アイデアをグラフへ</button></div></> : <p className="whitespace-pre-wrap">{message.content}</p>}</article>)}
+                {messages.map(message => <article key={message.id} aria-label={message.role === "user" ? "あなた" : "PaperPilot"} className={message.role === "user" ? "ml-auto max-w-[88%] rounded-3xl rounded-br-md bg-[#e6e8e3] px-5 py-3 text-sm leading-7 text-[#26312c]" : "max-w-full"}>{message.role === "assistant" ? <><AssistantResponse text={message.content} citations={message.citations ?? []} openEvidence={openEvidence} interactionMode={message.interaction_mode} draft={message.draft} claims={message.claims}/><IdeaInboxActions message={message} canWrite={canWrite} saveStates={ideaSaveStates} saveErrors={ideaSaveErrors} saveClaim={saveClaimToIdeaInbox}/><AnswerEvidenceList citations={message.citations ?? []} openEvidence={openEvidence}/><div className="ml-11 mt-3"><button type="button" disabled={!canWrite || busy || graphSaving} onClick={() => void openGraphCandidates(message)} className="rounded-full border border-[#9ab7a7] px-3 py-1.5 text-[11px] font-semibold text-[#24523e] hover:bg-[#edf5f0] disabled:cursor-not-allowed disabled:opacity-45">研究アイデアをグラフへ</button></div></> : <p className="whitespace-pre-wrap">{message.content}</p>}</article>)}
                 {liveQuestion && <article aria-label="あなた" className="ml-auto max-w-[88%] rounded-3xl rounded-br-md bg-[#e6e8e3] px-5 py-3 text-sm leading-7 text-[#26312c]"><p className="whitespace-pre-wrap">{liveQuestion}</p></article>}
-                {(liveAnswer || busy) && <article aria-label="PaperPilotの回答"><AssistantResponse text={liveAnswer} citations={liveCitations} openEvidence={openEvidence} loading={!liveAnswer}/></article>}
+                {(liveAnswer || busy) && <article aria-label="PaperPilotの回答"><AssistantResponse text={liveAnswer} citations={liveCitations} openEvidence={openEvidence} interactionMode={lastMeta?.interaction_mode ?? interactionMode} draft={lastMeta?.draft} claims={lastMeta?.claims} loading={!liveAnswer}/></article>}
                 <div ref={messageEndRef}/>
               </div>
             </div>
@@ -596,8 +712,25 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
               {error && <div role="alert" className="mb-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{error}</div>}
               {syncNotice && <div role="status" className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-900">{syncNotice}</div>}
               {fallbackNotice && <div role="status" className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-medium leading-5 text-amber-950"><span className="font-bold">{lastMeta?.generation_mode === "agentic_rag" ? "根拠監査の注意:" : "LLMフォールバック:"}</span> {fallbackNotice}</div>}
-              <form onSubmit={ask} className="rounded-3xl border border-[#bfc9c2] bg-white p-2 shadow-[0_16px_50px_rgba(28,45,37,.13)]"><textarea aria-label="研究について質問" disabled={busy} maxLength={4000} value={query} onChange={event => setQuery(event.target.value)} rows={3} placeholder={canWrite ? "論文をまとめる、仮説を反証する、次の実験を設計する…" : "論文の原文根拠を検索…（LLM回答は編集者のみ）"} className="min-h-20 w-full resize-none rounded-2xl bg-transparent px-4 py-3 text-base outline-none placeholder:text-[#9ba19e]"/><div className="flex items-center justify-between gap-3 px-2 pb-1"><span className="flex min-w-0 items-center gap-1.5 truncate text-[11px] font-medium text-[#52605b]"><CircleStackIcon className="h-3.5 w-3.5 shrink-0 text-[#35634f]"/><span className="truncate">プロジェクト共通 · {sourceScopeLabel}</span></span>{busy ? <button type="button" onClick={stopDisplay} className="inline-flex shrink-0 items-center gap-2 rounded-full border border-[#b8bfba] px-4 py-2 text-xs font-semibold"><StopIcon className="h-4 w-4"/>表示を中断</button> : <button disabled={Array.from(query.trim()).length < 2} className="shrink-0 rounded-full bg-[#164f3b] px-5 py-2.5 text-xs font-semibold text-white disabled:opacity-40">{canWrite ? "質問する" : "原文を検索"}</button>}</div></form>
-              <div className="mt-3 flex gap-2 overflow-x-auto pb-1">{["論文全体から詳しくまとめて", "前提の弱い部分を反証して", "次の検証実験を設計して"].map(text => <button type="button" key={text} disabled={busy || !canWrite} onClick={() => setQuery(text)} className="shrink-0 rounded-full border border-[#d5d8d2] bg-white/70 px-3 py-1.5 text-xs text-[#52605b] disabled:opacity-40">{text}</button>)}</div>
+              {graphSeed && <div role="status" className="mb-3 rounded-xl border border-[#b9d4c5] bg-[#edf7f1] px-4 py-3 text-xs leading-5 text-[#23513e]">グラフの選択ノードから派生した質問です。ノード内容は Research Run に記録され、回答は原文・引用で確認してください。</div>}
+              <form onSubmit={ask} className="rounded-3xl border border-[#bfc9c2] bg-white p-2 shadow-[0_16px_50px_rgba(28,45,37,.13)]">
+                {canWrite && <fieldset disabled={busy} className="mb-2 rounded-2xl bg-[#f5f8f5] p-3">
+                  <legend className="px-1 text-xs font-bold text-[#294638]">今回の目的</legend>
+                  <p className="mt-1 px-1 text-[11px] leading-5 text-[#52605b]">目的を選ぶと、検索結果に追加する検討フレームを切り替えます。</p>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                    {EDITOR_INTERACTION_MODES.map(mode => <label key={mode.id} className={`cursor-pointer rounded-xl border p-3 transition has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-[#164f3b] ${interactionMode === mode.id ? "border-[#4f8a6d] bg-[#e9f4ed]" : "border-[#d5ded8] bg-white hover:border-[#8db49f]"}`}>
+                      <input type="radio" name="interaction-mode" value={mode.id} checked={interactionMode === mode.id} onChange={() => setInteractionMode(mode.id)} className="sr-only"/>
+                      <span className="block text-xs font-bold text-[#26342e]">{mode.label}</span>
+                      <span className="mt-1 block text-[11px] leading-5 text-[#52605b]">{mode.description}</span>
+                      <span className="mt-2 block border-t border-[#d9e6de] pt-2 text-[10px] leading-4 text-[#35634f]">{mode.example}</span>
+                    </label>)}
+                  </div>
+                  {interactionMode !== "synthesis" && <p role="status" className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-5 text-amber-950">発想・反証・実験設計・判断更新の出力は draft / unverified です。論文原文と引用を確認し、人間が採否を判断してください。</p>}
+                </fieldset>}
+                <textarea aria-label="研究について質問" disabled={busy} maxLength={4000} value={query} onChange={event => replaceQuery(event.target.value)} rows={3} placeholder={canWrite ? "論文をまとめる、仮説を反証する、次の実験を設計する…" : "論文の原文根拠を検索…（LLM回答は編集者のみ）"} className="min-h-20 w-full resize-none rounded-2xl bg-transparent px-4 py-3 text-base outline-none placeholder:text-[#9ba19e]"/>
+                <div className="flex items-center justify-between gap-3 px-2 pb-1"><span className="flex min-w-0 items-center gap-1.5 truncate text-[11px] font-medium text-[#52605b]"><CircleStackIcon className="h-3.5 w-3.5 shrink-0 text-[#35634f]"/><span className="truncate">プロジェクト共通 · {sourceScopeLabel}</span></span>{busy ? <button type="button" onClick={stopDisplay} className="inline-flex shrink-0 items-center gap-2 rounded-full border border-[#b8bfba] px-4 py-2 text-xs font-semibold"><StopIcon className="h-4 w-4"/>表示を中断</button> : <button disabled={Array.from(query.trim()).length < 2} className="shrink-0 rounded-full bg-[#164f3b] px-5 py-2.5 text-xs font-semibold text-white disabled:opacity-40">{canWrite ? "質問する" : "原文を検索"}</button>}</div>
+              </form>
+              <div className="mt-3 flex gap-2 overflow-x-auto pb-1">{["論文全体から詳しくまとめて", "前提の弱い部分を反証して", "次の検証実験を設計して"].map(text => <button type="button" key={text} disabled={busy || !canWrite} onClick={() => replaceQuery(text)} className="shrink-0 rounded-full border border-[#d5d8d2] bg-white/70 px-3 py-1.5 text-xs text-[#52605b] disabled:opacity-40">{text}</button>)}</div>
             </div></div>
           </div>
 
@@ -606,10 +739,10 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
       </div>
       {graphMessage && <div role="dialog" aria-modal="true" aria-labelledby="graph-candidates-title" className="fixed inset-0 z-[100] flex items-end justify-center bg-[#07110d]/65 p-3 backdrop-blur-sm sm:items-center sm:p-6">
         <div className="max-h-[min(44rem,calc(100dvh-1.5rem))] w-full max-w-xl overflow-y-auto rounded-3xl border border-[#cbd8d0] bg-[#fffefa] p-5 shadow-2xl sm:p-6">
-          <div className="flex items-start justify-between gap-4"><div><p className="text-[10px] font-bold uppercase tracking-[.16em] text-[#35634f]">Research memory → graph</p><h2 id="graph-candidates-title" className="serif mt-1 text-2xl font-semibold">レビュー候補を選ぶ</h2><p className="mt-2 text-xs leading-5 text-[#68736f]">会話から抽出された候補を、会話由来の根拠付きで保存します。論文の事実や検証済み知識にはなりません。</p></div><button type="button" onClick={closeGraphCandidates} disabled={graphSaving} aria-label="候補選択を閉じる" className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-[#d5d8d2] text-[#52605b] disabled:opacity-40"><XMarkIcon className="h-4 w-4"/></button></div>
-          {graphCandidatesLoading ? <p role="status" className="py-10 text-center text-sm text-[#68736f]">研究メモリ候補を読み込んでいます…</p> : <div className="mt-5 space-y-3">{graphCandidates.map(candidate => { const saved = graphSavedMemoryRef.current.has(candidate.id); const checked = selectedGraphCandidateIds.includes(candidate.id); return <label key={candidate.id} className={`block rounded-2xl border p-4 ${saved ? "border-[#b8d6c4] bg-[#edf6f0]" : checked ? "border-[#5d9878] bg-[#f1f8f4]" : "border-[#deddd5] bg-white"}`}><div className="flex items-start gap-3"><input type="checkbox" checked={checked} disabled={saved || graphSaving} onChange={() => toggleGraphCandidate(candidate.id)} className="mt-1 h-4 w-4 accent-[#164f3b]"/><div className="min-w-0 flex-1"><div className="flex items-center justify-between gap-2"><span className="rounded-full bg-[#e7f0eb] px-2 py-0.5 text-[10px] font-bold text-[#35634f]">{MEMORY_KIND_LABEL[candidate.kind]}</span>{saved && <span className="text-[10px] font-semibold text-[#35634f]">この画面で保存済み</span>}</div><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-[#26342e]">{candidate.content}</p></div></div></label>; })}{!graphCandidates.length && <p className="rounded-2xl border border-dashed border-[#cbd3cc] p-5 text-center text-sm leading-6 text-[#68736f]">この回答には保存済みの研究メモリ候補がありません。仮説、前提、未解決点、次の検証を明示して質問すると候補が作られます。</p>}</div>}
+          <div className="flex items-start justify-between gap-4"><div><p className="text-[10px] font-bold uppercase tracking-[.16em] text-[#35634f]">Research memory → graph</p><h2 id="graph-candidates-title" className="serif mt-1 text-2xl font-semibold">レビュー候補を選ぶ</h2><p className="mt-2 text-xs leading-5 text-[#68736f]">候補は回答から作った<span className="font-bold text-[#a06a28]">未検証の研究案</span>です。会話の保存先は残しますが、論文根拠・検証済み知識・引用の支持を意味しません。</p></div><button type="button" onClick={closeGraphCandidates} disabled={graphSaving} aria-label="候補選択を閉じる" className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-[#d5d8d2] text-[#52605b] disabled:opacity-40"><XMarkIcon className="h-4 w-4"/></button></div>
+          {graphCandidatesLoading ? <p role="status" className="py-10 text-center text-sm text-[#68736f]">研究メモリ候補を読み込んでいます…</p> : <div className="mt-5 space-y-3">{graphCandidates.map(candidate => { const saved = graphSavedMemoryRef.current.has(candidate.id); const checked = selectedGraphCandidateIds.includes(candidate.id); return <label key={candidate.id} className={`block rounded-2xl border p-4 ${saved ? "border-[#b8d6c4] bg-[#edf6f0]" : checked ? "border-[#5d9878] bg-[#f1f8f4]" : "border-[#deddd5] bg-white"}`}><div className="flex items-start gap-3"><input type="checkbox" checked={checked} disabled={saved || graphSaving} onChange={() => toggleGraphCandidate(candidate.id)} className="mt-1 h-4 w-4 accent-[#164f3b]"/><div className="min-w-0 flex-1"><div className="flex items-center justify-between gap-2"><span className="rounded-full bg-[#e7f0eb] px-2 py-0.5 text-[10px] font-bold text-[#35634f]">{MEMORY_KIND_LABEL[candidate.kind]}</span>{saved && <span className="text-[10px] font-semibold text-[#35634f]">この画面で保存済み</span>}</div><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-[#26342e]">{candidate.content}</p></div></div></label>; })}{!graphCandidates.length && <p className="rounded-2xl border border-dashed border-[#cbd3cc] p-4 text-center text-sm leading-6 text-[#68736f]">自動候補はありません。下に、回答から検討したい仮説・未解決点を自分で記述して保存できます。</p>}<section className="rounded-2xl border border-[#c9ddd0] bg-[#f4faf6] p-4"><div className="flex flex-wrap items-center justify-between gap-2"><label htmlFor="graph-draft" className="text-xs font-bold text-[#294638]">自分でレビュー候補を追加</label><select aria-label="グラフ候補の種別" value={graphDraftKind} disabled={graphSaving} onChange={event => setGraphDraftKind(event.target.value as typeof graphDraftKind)} className="rounded-lg border border-[#d5d8d2] bg-white px-2 py-1 text-[11px]"><option value="idea">アイデア</option><option value="hypothesis">仮説</option><option value="constraint">制約・反証</option><option value="experiment">実験案</option></select></div><textarea id="graph-draft" value={graphDraft} disabled={graphSaving} onChange={event => setGraphDraft(event.target.value)} maxLength={100000} rows={3} placeholder="例: この効果は対象集団Aに限られる可能性がある。Bとの比較実験で反証する。" className="mt-2 w-full resize-y rounded-xl border border-[#d5d8d2] bg-white px-3 py-2 text-sm leading-5 disabled:opacity-50"/><p className="mt-2 text-[10px] leading-4 text-[#526b5d]">回答と引用情報を会話由来の根拠として残します。論文の事実・検証済み知識にはなりません。</p></section></div>}
           {graphError && <p role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs leading-5 text-red-800">{graphError}</p>}{graphNotice && <p role="status" className="mt-4 rounded-xl border border-[#b8d6c4] bg-[#edf6f0] p-3 text-xs leading-5 text-[#24523e]">{graphNotice}</p>}
-          <div className="mt-6 flex justify-end gap-2"><button type="button" onClick={closeGraphCandidates} disabled={graphSaving} className="rounded-full px-4 py-2 text-xs font-semibold text-[#52605b] disabled:opacity-40">閉じる</button><button type="button" onClick={() => void saveGraphCandidates()} disabled={graphCandidatesLoading || graphSaving || !selectedGraphCandidateIds.length} className="rounded-full bg-[#164f3b] px-4 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">{graphSaving ? "保存中…" : `レビュー待ちで${selectedGraphCandidateIds.length}件を保存`}</button></div>
+          <div className="mt-6 flex justify-end gap-2"><button type="button" onClick={closeGraphCandidates} disabled={graphSaving} className="rounded-full px-4 py-2 text-xs font-semibold text-[#52605b] disabled:opacity-40">閉じる</button><button type="button" onClick={() => void saveGraphCandidates()} disabled={graphCandidatesLoading || graphSaving || (!selectedGraphCandidateIds.length && !graphDraft.trim())} className="rounded-full bg-[#164f3b] px-4 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">{graphSaving ? "保存中…" : `レビュー待ちで${selectedGraphCandidateIds.length + (graphDraft.trim() ? 1 : 0)}件を保存`}</button></div>
         </div>
       </div>}
     </div>

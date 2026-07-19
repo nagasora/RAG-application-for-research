@@ -41,7 +41,12 @@ export function IdeaCapture({ canWrite, context }: IdeaCaptureProps) {
       }
     };
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    const openCapture = () => { if (canWrite) setOpen(true); };
+    window.addEventListener("paperpilot:open-idea-capture", openCapture);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("paperpilot:open-idea-capture", openCapture);
+    };
   }, [canWrite]);
 
   const save = async (event: FormEvent) => {
@@ -73,7 +78,7 @@ export function IdeaCapture({ canWrite, context }: IdeaCaptureProps) {
         <div className="flex items-start justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-[.16em] text-[#a06a28]">Research inbox</p><h2 id="idea-capture-title" className="serif mt-1 text-2xl font-semibold">いまの考えを残す</h2><p className="mt-2 text-xs leading-5 text-[#68736f]">まず受信箱へ保存します。根拠や関係は後から確認してつなげます。</p></div><button type="button" onClick={() => setOpen(false)} disabled={saving} aria-label="閉じる" className="rounded-full p-2 text-[#68736f] hover:bg-[#edf0eb]"><XMarkIcon className="h-5 w-5" /></button></div>
         <label className="mt-5 block text-xs font-semibold text-[#52605b]" htmlFor="idea-kind">種別</label>
         <select id="idea-kind" value={category} onChange={event => setCategory(event.target.value as IdeaKind)} disabled={saving} className="mt-1 w-full rounded-xl border border-[#d5d8d2] bg-white px-3 py-2 text-sm"><option value="observation">観察</option><option value="interpretation">解釈</option><option value="hypothesis">仮説</option><option value="falsifier">反証候補</option><option value="todo">TODO</option></select>
-        <label className="mt-4 block text-xs font-semibold text-[#52605b]" htmlFor="idea-anchor">アンカー（任意）</label><input id="idea-anchor" value={anchor} onChange={event => setAnchor(event.target.value)} maxLength={500} placeholder="paper:ID / span:ID / claim:ID / run:ID" className="mt-1 w-full rounded-xl border border-[#d5d8d2] bg-white px-3 py-2 text-sm"/>
+        <label className="mt-4 block text-xs font-semibold text-[#52605b]" htmlFor="idea-anchor">根拠へのリンク（任意）</label><input id="idea-anchor" value={anchor} onChange={event => setAnchor(event.target.value)} maxLength={500} placeholder="通常は空欄で保存。IDを使う場合: paper:ID / span:ID / claim:ID / run:ID" className="mt-1 w-full rounded-xl border border-[#d5d8d2] bg-white px-3 py-2 text-sm"/>
         <label className="mt-4 block text-xs font-semibold text-[#52605b]" htmlFor="idea-content">内容</label>
         <textarea id="idea-content" autoFocus value={content} onChange={event => setContent(event.target.value)} maxLength={100000} rows={6} placeholder="気づき、仮説、反証したい点、次の実験案など…" className="mt-1 w-full resize-y rounded-xl border border-[#d5d8d2] bg-white px-3 py-3 text-sm leading-6" />
         <p className="mt-2 text-[11px] text-[#7a837f]">未検証として保存します。根拠接続・反証検索・実験化・研究者確認を完了してから仮説へ昇格してください。保存元: {context}</p>

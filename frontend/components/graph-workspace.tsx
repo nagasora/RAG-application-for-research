@@ -4,7 +4,7 @@ import { ArrowPathIcon, BoltIcon, LinkIcon, PlusIcon, ScissorsIcon } from "@hero
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
 import { GraphCanvas, type GraphEdge, type GraphNode, type GraphNodeStatus, type GraphNodeType } from "@/components/graph-canvas";
-import { createGraphEdge, createGraphNode, forwardPropagateGraph, getGraphSnapshot, importGraphSource, listGraphSourceSpans, listGraphSources, retrieveGraph, updateGraphEdgeStatus, updateGraphNodeStatus, type GraphRetrievalHit, type KnowledgeEdge as ApiKnowledgeEdge, type KnowledgeEdgeStatusUpdate, type KnowledgeNode as ApiKnowledgeNode, type KnowledgeNodeCreate, type KnowledgeNodeStatusUpdate, type SourceSpan, type SourceVersion } from "@/lib/api/client";
+import { createGraphEdge, createGraphNode, forwardPropagateGraph, getGraphSnapshot, importGraphSource, listGraphSourceSpans, listGraphSources, retrieveGraph, updateGraphEdgeStatus, updateGraphNodeStatus, type GraphRetrievalHit, type KnowledgeEdge as ApiKnowledgeEdge, type KnowledgeEdgeStatusUpdate, type KnowledgeNode as ApiKnowledgeNode, type KnowledgeNodeCreate, type KnowledgeNodeStatusUpdate, type Paper, type SourceSpan, type SourceVersion } from "@/lib/api/client";
 import { apiErrorMessage } from "@/lib/api/error";
 
 type EvidenceRef = { source_span_id: string };
@@ -12,10 +12,14 @@ type KnowledgeNode = ApiKnowledgeNode & { evidence?: EvidenceRef[] };
 type KnowledgeEdge = ApiKnowledgeEdge;
 type CanvasLayout = { knowledge_node_id: string; x: number; y: number };
 type Snapshot = { nodes: KnowledgeNode[]; edges: KnowledgeEdge[]; layouts: CanvasLayout[] };
+export type GraphAskIntent = "explore" | "challenge" | "design";
+export type GraphAskSeed = { nodeId: string; content: string; intent: GraphAskIntent };
 
 type GraphWorkspaceProps = {
   canWrite: boolean;
   onOpenPaper: (paperId: string) => void;
+  onAskFromNode: (seed: GraphAskSeed) => void;
+  papers: Paper[];
 };
 
 const SOURCE_KINDS = ["latex", "python", "notebook", "csv", "chat", "markdown"] as const;
@@ -59,7 +63,7 @@ function toCanvasEdge(edge: KnowledgeEdge): GraphEdge {
   };
 }
 
-export function GraphWorkspace({ canWrite, onOpenPaper }: GraphWorkspaceProps) {
+export function GraphWorkspace({ canWrite, onOpenPaper, onAskFromNode, papers }: GraphWorkspaceProps) {
   const [snapshot, setSnapshot] = useState<Snapshot>({ nodes:[], edges:[], layouts:[] });
   const [sources, setSources] = useState<SourceVersion[]>([]);
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
@@ -106,7 +110,13 @@ export function GraphWorkspace({ canWrite, onOpenPaper }: GraphWorkspaceProps) {
       const nextSnapshot: Snapshot = {
         nodes:rawSnapshot.nodes ?? [], edges:rawSnapshot.edges ?? [], layouts:rawSnapshot.layouts ?? [],
       };
-      setSnapshot(nextSnapshot); setSources(nextSources);
+      setSnapshot(nextSnapshot);
+      // Paper-backed sources are already created during ingestion. Researchers should
+      // see a paper title here, not an opaque storage locator.
+      setSources(nextSources.map(source => source.paper_id
+        ? { ...source, locator:papers.find(paper => paper.id === source.paper_id)?.title ?? source.locator }
+        : source,
+      ));
       setSelectedNodeIds(current => current.filter(id => nextSnapshot.nodes.some(node => node.id === id)));
       setSelectedEdgeId(current => nextSnapshot.edges.some(edge => edge.id === current) ? current : "");
       setEdgeSourceId(current => nextSnapshot.nodes.some(node => node.id === current) ? current : "");
@@ -293,6 +303,11 @@ export function GraphWorkspace({ canWrite, onOpenPaper }: GraphWorkspaceProps) {
     finally { setCreating(false); }
   };
 
+  const askFromSelectedNode = (intent: GraphAskIntent) => {
+    if (!canWrite || !selected || !snapshot.nodes.some(node => node.id === selected.id)) return;
+    onAskFromNode({ nodeId:selected.id, content:selected.content, intent });
+  };
+
   const pruneSelected = async () => {
     if (!canWrite || !selectedNodeIds.length || nodeStatusUpdating) return;
     setNodeStatusUpdating(true); setError(""); setToolbarNotice("");
@@ -317,6 +332,7 @@ export function GraphWorkspace({ canWrite, onOpenPaper }: GraphWorkspaceProps) {
           <aside className="paper-card rounded-3xl p-5">
             <h2 className="serif text-xl font-semibold">Node Inspector</h2>
             {selected ? <div className="mt-4 space-y-4"><div><p className="text-[10px] font-bold uppercase tracking-wider text-[#7a837f]">{selected.node_type} · {selected.status}</p><p className="mt-2 text-sm leading-6 text-[#26342e]">{selected.content}</p></div><dl className="space-y-2 text-xs"><div><dt className="text-[#7a837f]">Phase</dt><dd>{selected.phase}</dd></div><div><dt className="text-[#7a837f]">Confidence</dt><dd>{selected.confidence ?? "未評価"}</dd></div><div><dt className="text-[#7a837f]">Evidence anchors</dt><dd>{(selected.evidence ?? []).length ? (selected.evidence ?? []).map(item => <p key={item.source_span_id} className="mt-1 break-all font-mono text-[10px] text-[#52605b]">span:{item.source_span_id}</p>) : <span className="text-[#a06a28]">生成物・メモ（原典根拠は未接続）</span>}</dd></div></dl>
+              <section className="border-t border-[#deddd5] pt-4" aria-labelledby="node-ask-title"><h3 id="node-ask-title" className="text-sm font-semibold text-[#26342e]">このノードから考える</h3><p className="mt-1 text-[10px] leading-4 text-[#68736f]">選択ノードを起点に Ask の下書きを作ります。提案は未検証として確認してください。</p>{!canWrite && <p className="mt-2 rounded-lg bg-amber-50 p-2 text-[10px] leading-4 text-amber-800">viewer権限では派生質問を開始できません。</p>}<div className="mt-3 flex flex-wrap gap-2"><button type="button" disabled={!canWrite} onClick={() => askFromSelectedNode("explore")} className="rounded-full border border-[#9db9aa] px-3 py-1.5 text-[10px] font-semibold text-[#164f3b] disabled:opacity-40">広げる</button><button type="button" disabled={!canWrite} onClick={() => askFromSelectedNode("challenge")} className="rounded-full border border-[#d9b9a7] px-3 py-1.5 text-[10px] font-semibold text-[#8a4b28] disabled:opacity-40">対立仮説</button><button type="button" disabled={!canWrite} onClick={() => askFromSelectedNode("design")} className="rounded-full border border-[#9db9aa] px-3 py-1.5 text-[10px] font-semibold text-[#164f3b] disabled:opacity-40">検証案</button></div></section>
               <section className="border-t border-[#deddd5] pt-4" aria-labelledby="node-status-title"><h3 id="node-status-title" className="text-sm font-semibold text-[#26342e]">ノードの状態</h3>{!canWrite && <p className="mt-2 rounded-lg bg-amber-50 p-2 text-[10px] leading-4 text-amber-800">viewer権限ではノードの状態を変更できません。</p>}<form onSubmit={updateNodeStatus} className="mt-3 space-y-3"><label htmlFor="node-status" className="block text-[10px] font-bold text-[#52605b]">新しい状態</label><select id="node-status" value={nodeStatus} disabled={!canWrite || nodeStatusUpdating} onChange={event => setNodeStatus(event.target.value as KnowledgeNodeStatusUpdate["status"])} className="w-full rounded-xl border border-[#d5d8d2] bg-white px-3 py-2 text-xs disabled:opacity-50">{NODE_STATUSES.map(status => <option key={status} value={status}>{status}</option>)}</select><button disabled={!canWrite || nodeStatusUpdating || nodeStatus === selected.status} className="rounded-full bg-[#164f3b] px-3 py-2 text-xs font-semibold text-white disabled:opacity-40">{nodeStatusUpdating ? "更新中…" : "ノード状態を更新"}</button>{nodeStatusNotice && <p role="status" className="text-[10px] leading-4 text-[#35634f]">{nodeStatusNotice}</p>}</form></section>
               <section className="border-t border-[#deddd5] pt-4" aria-labelledby="node-expansion-title"><div className="flex items-center justify-between gap-2"><h3 id="node-expansion-title" className="text-sm font-semibold text-[#26342e]">根拠の順伝播</h3><button type="button" onClick={() => void expandNode(selected)} disabled={expanding} className="rounded-full border border-[#164f3b] px-3 py-1.5 text-[10px] font-semibold text-[#164f3b] disabled:opacity-40">{expanding ? "展開中…" : "再展開"}</button></div><p className="mt-1 text-[10px] leading-4 text-[#68736f]">有効・検証済みの関係だけを、最大2 hopまで表示します。候補はグラフを変更しません。</p>{expansionNotice && <p role="status" className="mt-2 text-[10px] leading-4 text-[#35634f]">{expansionNotice}</p>}{expansion.length > 1 && <ol className="mt-3 space-y-2">{expansion.filter(hit => hit.node.id !== selected.id).map(hit => <li key={hit.node.id} className="rounded-lg border border-[#ead9b8] bg-[#fffaf1] p-2 text-[10px] leading-4"><p className="font-semibold text-[#26342e]">{label(hit.node.content)}</p><p className="mt-1 text-[#68736f]">{hit.hop_count} hop · {hit.retrieval_reason.replace(/^selected_node; ?/, "")} · score {hit.score.toFixed(2)}</p></li>)}</ol>}</section>
             </div> : <p className="mt-4 text-sm text-[#68736f]">ノードを選ぶと、型・状態・根拠アンカーを確認できます。</p>}

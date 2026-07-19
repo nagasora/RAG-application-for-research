@@ -3,19 +3,23 @@ import { authenticatedHeaders } from "./auth";
 import { ApiError, errorFromFetchResponse, toApiError } from "./error";
 
 export type SearchStreamEvent =
+  | { type: "run"; run_id: string }
   | { type: "token"; value: string }
   | { type: "citations"; value: Citation[] }
   | { type: "stage"; value: SearchStage }
   | { type: "meta"; value: SearchStreamMeta }
   | { type: "done" }
+  | { type: "cancelled"; run_id: string }
   | { type: "error"; message: string };
 
 export type SearchStreamMeta = Required<Pick<SearchResponse,
   "generation_mode" | "model" | "retrieval_queries" | "grounded" | "llm_attempted"
   | "llm_succeeded" | "grounding_status" | "fallback_reason" | "claims" | "memory_delta" | "model_calls"
+  | "research_run_id" | "interaction_mode" | "draft"
 >> & {
   model: string | null;
   fallback_reason: string | null;
+  research_run_id: string | null;
 };
 
 export const SEARCH_STAGES = [
@@ -79,7 +83,8 @@ function isAnswerClaim(value: unknown): value is AnswerClaim {
   return typeof claim.claim_id === "string"
     && typeof claim.text === "string"
     && ["paper", "general", "hypothesis"].includes(claim.kind ?? "")
-    && Array.isArray(claim.citation_ids) && claim.citation_ids.every(item => typeof item === "number");
+    && Array.isArray(claim.citation_ids) && claim.citation_ids.every(item => typeof item === "number")
+    && ["evidence_backed", "inference", "general_knowledge", "hypothesis", "unverified"].includes(claim.classification ?? "");
 }
 
 function isMemoryDelta(value: unknown): value is Record<string, unknown> {
@@ -102,7 +107,10 @@ function decodeEvent(dataLines: string[]): SearchStreamEvent | null {
   if (!parsed || typeof parsed !== "object" || typeof (parsed as { type?: unknown }).type !== "string") {
     throw new ApiError("SSEイベントの形式が不正です", { code: "invalid_sse_event", details: parsed });
   }
-  const event = parsed as { type: string; value?: unknown; stage?: unknown; message?: unknown };
+  const event = parsed as { type: string; value?: unknown; stage?: unknown; message?: unknown; run_id?: unknown };
+  if ((event.type === "run" || event.type === "cancelled") && typeof event.run_id === "string" && event.run_id.trim()) {
+    return { type:event.type, run_id:event.run_id };
+  }
   if (event.type === "token" && typeof event.value === "string") return { type: "token", value: event.value };
   if (event.type === "citations" && Array.isArray(event.value) && event.value.every(isCitation)) {
     return { type: "citations", value: event.value };
@@ -114,6 +122,9 @@ function decodeEvent(dataLines: string[]): SearchStreamEvent | null {
   if (event.type === "meta" && event.value && typeof event.value === "object") {
     const meta = event.value as Partial<SearchStreamMeta>;
     if ((meta.generation_mode === "agentic_rag" || meta.generation_mode === "local_fallback")
+      && (typeof meta.research_run_id === "string" || meta.research_run_id === null)
+      && ["evidence", "synthesis", "explore", "challenge", "design", "update"].includes(meta.interaction_mode ?? "")
+      && typeof meta.draft === "boolean"
       && (typeof meta.model === "string" || meta.model === null)
       && Array.isArray(meta.retrieval_queries) && meta.retrieval_queries.every(item => typeof item === "string")
       && typeof meta.grounded === "boolean"
@@ -197,7 +208,7 @@ export async function* streamSearch(request: SearchRequest, signal?: AbortSignal
   let completed = false;
   for await (const event of parseEventStream(response.body)) {
     if (event.type === "error") throw new ApiError(event.message, { code: "stream_error" });
-    if (event.type === "done") completed = true;
+    if (event.type === "done" || event.type === "cancelled") completed = true;
     yield event;
   }
   if (!completed) {

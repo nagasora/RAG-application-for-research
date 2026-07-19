@@ -71,3 +71,47 @@ def test_research_run_is_workspace_scoped_and_viewers_cannot_write(tmp_path):
         assert blocked.status_code == 403 and hidden.status_code == 404
     finally:
         main.app.dependency_overrides.clear()
+
+
+def test_research_run_graph_seed_is_workspace_scoped_and_canonicalized(tmp_path):
+    _setup(tmp_path)
+    try:
+        with TestClient(main.app) as client:
+            node = client.post("/api/graph/nodes", headers=_headers("alice"), json={
+                "node_type": "idea", "content": "  Canonical\n graph   seed  " + "x" * 1_250,
+            }).json()
+            created = client.post("/api/research/runs", headers=_headers("alice"), json={
+                "purpose": "graph seeded", "plan": {
+                    "steps": ["retrieve"],
+                    "graph_seed": {
+                        "intent": "explore", "node_id": node["id"], "content": "forged client content",
+                    },
+                },
+            })
+            invalid_intent = client.post("/api/research/runs", headers=_headers("alice"), json={
+                "plan": {"graph_seed": {"intent": "update", "node_id": node["id"]}},
+            })
+            missing = client.post("/api/research/runs", headers=_headers("alice"), json={
+                "plan": {"graph_seed": {"intent": "design", "node_id": "missing-node"}},
+            })
+            foreign_node = client.post("/api/graph/nodes", headers=_headers("bob"), json={
+                "node_type": "idea", "content": "Bob node",
+            }).json()
+            foreign = client.post("/api/research/runs", headers=_headers("alice"), json={
+                "plan": {"graph_seed": {"intent": "challenge", "node_id": foreign_node["id"]}},
+            })
+            legacy_plan = client.post("/api/research/runs", headers=_headers("alice"), json={
+                "plan": {"unrelated": {"free_form": True}},
+            })
+
+        assert created.status_code == 201
+        seed = created.json()["plan"]["graph_seed"]
+        assert seed["intent"] == "explore" and seed["node_id"] == node["id"]
+        assert seed["content"] == ("Canonical graph seed " + "x" * 1_250)[:1200]
+        assert created.json()["plan"]["steps"] == ["retrieve"]
+        assert invalid_intent.status_code == 422
+        assert missing.status_code == 422 and foreign.status_code == 422
+        assert legacy_plan.status_code == 201
+        assert legacy_plan.json()["plan"] == {"unrelated": {"free_form": True}}
+    finally:
+        main.app.dependency_overrides.clear()

@@ -27,11 +27,11 @@ from .database import (
     create_database_engine, create_session_factory,
 )
 from .models import (
-    BeliefEvent, BeliefEventCreate, CanvasLayout, Chunk, Citation, DiscoveryItem, DiscoveryItemCreate, DocumentElement, EvidenceLinkCreate, EvidenceRef, ExperimentPlan, ExperimentPlanCreate, ExperimentPlanSnapshot, HypothesisCard, HypothesisCardCreate, IngestionJob,
-    ForwardPropagationResult, KnowledgeEdge, KnowledgeNode, NodeFeedback, Note, Paper, PaperDecision, PaperLibraryFacets, PaperLibraryItem, PaperLibraryPage, PaperPage, Principal,
+    AnswerClaim, BeliefEvent, BeliefEventCreate, CanvasLayout, Chunk, Citation, DiscoveryItem, DiscoveryItemCreate, DocumentElement, EvidenceLinkCreate, EvidenceRef, ExperimentPlan, ExperimentPlanCreate, ExperimentPlanSnapshot, HypothesisCard, HypothesisCardCreate, IngestionJob,
+    ForwardPropagationResult, KnowledgeEdge, KnowledgeNode, NodeFeedback, Note, Paper, PaperDecision, PaperLibraryFacets, PaperLibraryItem, PaperLibraryPage, PaperPage, Principal, ResearchRunGraphSeed,
     ReasoningRun, ReasoningRunLink, ResearchConversation, ResearchConversationDetail,
     ResearchMemoryEvent, ResearchMemoryPage, ResearchMessage, ResearchMessagePage,
-    Idea, IdeaCreate, IdeaUpdate, ResearchQuestion, ResearchRun, ReviewComment, ReviewDecision, ReviewThread, ReviewThreadCreate, RunArtifact, SourceSet,
+    ConversationGraphExportCreate, GraphIdeaCandidate, Idea, IdeaCreate, IdeaUpdate, ResearchQuestion, ResearchRun, ReviewCandidate, ReviewComment, ReviewDecision, ReviewThread, ReviewThreadCreate, RunArtifact, SourceSet,
     SavedComparison, SearchHistory, SourceSpan, SourceVersion, Tag, User, Workspace,
     WorkspaceMember,
 )
@@ -281,11 +281,15 @@ def _workspace_member_model(record: WorkspaceMemberRecord, user: UserRecord) -> 
     )
 
 
-def _source_version_model(record: SourceVersionRecord) -> SourceVersion:
+def _source_version_model(record: SourceVersionRecord, paper_title: str | None = None) -> SourceVersion:
+    metadata = dict(record.metadata_json or {})
+    paper_title = paper_title or (metadata.get("title") if isinstance(metadata.get("title"), str) else None)
+    display_name = paper_title or (metadata.get("display_name") if isinstance(metadata.get("display_name"), str) else None) or record.locator
     return SourceVersion(
         id=record.id, workspace_id=record.workspace_id, paper_id=record.paper_id,
         kind=record.kind, locator=record.locator, content_hash=record.content_hash,
-        metadata=dict(record.metadata_json or {}), created_at=record.created_at.isoformat(),
+        metadata=metadata, created_at=record.created_at.isoformat(),
+        paper_title=paper_title, display_name=display_name,
     )
 
 
@@ -1090,18 +1094,50 @@ class PaperStore:
             excluded_ids = self._validate_workspace_paper_ids(session, workspace_id, excluded_paper_ids or [])
             if set(selected_ids) & set(excluded_ids):
                 raise ValueError("a source paper cannot also be excluded")
+            normalized_plan = self._normalize_research_run_plan(session, workspace_id, plan)
             now = datetime.now(timezone.utc)
             record = ResearchRunRecord(
                 id=str(uuid4()), workspace_id=workspace_id, created_by=created_by,
                 research_question_id=research_question_id, source_set_id=source_set_id,
                 research_question=question, source_paper_ids=selected_ids,
                 excluded_paper_ids=excluded_ids, purpose=purpose.strip(),
-                success_criteria=success_criteria.strip(), plan=plan if plan is not None else {},
+                success_criteria=success_criteria.strip(), plan=normalized_plan,
                 model=model.strip(), prompt_version=prompt_version.strip(), status="queued",
                 cancel_requested=False, created_at=now,
             )
             session.add(record)
             return _research_run_model(record, [])
+
+    @staticmethod
+    def _normalize_research_run_plan(
+        session: Session, workspace_id: str, plan: dict | list | None,
+    ) -> dict | list:
+        """Canonicalize optional graph provenance without constraining older plans."""
+        if plan is None:
+            return {}
+        if not isinstance(plan, dict):
+            return list(plan) if isinstance(plan, list) else plan
+        normalized = dict(plan)
+        if "graph_seed" not in normalized or normalized["graph_seed"] is None:
+            # ResearchRunPlan supplies graph_seed=None by default. Do not let
+            # that typed-input detail alter the persisted legacy plan shape.
+            normalized.pop("graph_seed", None)
+            return normalized
+        seed = ResearchRunGraphSeed.model_validate(normalized["graph_seed"])
+        node = session.scalar(select(KnowledgeNodeRecord).where(
+            KnowledgeNodeRecord.id == seed.node_id,
+            KnowledgeNodeRecord.workspace_id == workspace_id,
+        ))
+        if node is None:
+            # A graph seed is user input, so do not turn a foreign ID into a
+            # workspace-existence oracle. It is simply an invalid plan (422).
+            raise ValueError("graph_seed node_id must reference a node in this workspace")
+        normalized["graph_seed"] = {
+            "intent": seed.intent,
+            "node_id": node.id,
+            "content": " ".join(node.content.split())[:1200],
+        }
+        return normalized
 
     def list_research_runs(self, workspace_id: str) -> list[ResearchRun]:
         with self.session_factory() as session:
@@ -1170,11 +1206,59 @@ class PaperStore:
             self._require_workspace(s, workspace_id)
             return [_idea_model(x) for x in s.scalars(select(IdeaRecord).where(IdeaRecord.workspace_id == workspace_id).order_by(IdeaRecord.created_at.desc())).all()]
 
+    @staticmethod
+    def _resolve_validation_claim(
+        session: Session, workspace_id: str, research_run_id: str, claim_id: str,
+    ) -> tuple[RunArtifactRecord, dict]:
+        """Resolve one claim from one workspace-scoped immutable validation artifact."""
+        run = PaperStore._scoped_research_run(session, workspace_id, research_run_id)
+        matches: list[tuple[RunArtifactRecord, dict]] = []
+        for artifact in PaperStore._run_artifacts(session, run.id):
+            if artifact.kind != "validation" or not isinstance(artifact.payload, dict):
+                continue
+            claims = artifact.payload.get("claims")
+            if not isinstance(claims, list):
+                continue
+            for claim in claims:
+                if (
+                    isinstance(claim, dict)
+                    and claim.get("claim_id") == claim_id
+                    and isinstance(claim.get("text"), str)
+                    and claim["text"].strip()
+                ):
+                    matches.append((artifact, dict(claim)))
+        if len(matches) != 1:
+            raise ValueError("claim_id must resolve to exactly one immutable validation artifact")
+        return matches[0]
+
+    @staticmethod
+    def _idea_claim_idempotency_key(
+        workspace_id: str, research_run_id: str | None, claim_id: str | None,
+    ) -> str | None:
+        if not research_run_id or not claim_id:
+            return None
+        return hashlib.sha256(
+            f"paperpilot.idea-claim.v1\x1f{workspace_id}\x1f{research_run_id}\x1f{claim_id}".encode("utf-8")
+        ).hexdigest()
+
     def _validate_idea_anchors(
         self, session: Session, workspace_id: str, *, research_run_id: str | None,
-        paper_id: str | None, source_span_id: str | None,
-    ) -> None:
-        if research_run_id:
+        claim_id: str | None, paper_id: str | None, source_span_id: str | None,
+    ) -> tuple[RunArtifactRecord | None, dict | None]:
+        claim_artifact: RunArtifactRecord | None = None
+        claim_snapshot: dict | None = None
+        if claim_id and not research_run_id:
+            raise ValueError("claim_id requires research_run_id")
+        if claim_id:
+            try:
+                claim_artifact, claim_snapshot = self._resolve_validation_claim(
+                    session, workspace_id, research_run_id or "", claim_id,
+                )
+            except PaperNotFoundError as exc:
+                # A run outside this workspace is no more a usable claim anchor
+                # than an absent/ambiguous claim. Keep that boundary opaque.
+                raise ValueError("claim_id must resolve to an immutable validation artifact in this workspace") from exc
+        elif research_run_id:
             self._scoped_research_run(session, workspace_id, research_run_id)
         if paper_id and not session.scalar(select(PaperRecord.id).where(
             PaperRecord.id == paper_id, PaperRecord.workspace_id == workspace_id,
@@ -1189,24 +1273,48 @@ class PaperStore:
                 ))
                 if source_paper_id != paper_id:
                     raise ValueError("idea paper_id and source_span_id must reference the same paper")
+        return claim_artifact, claim_snapshot
 
     def create_idea(self, workspace_id: str, user_id: str, body: IdeaCreate) -> Idea:
         with self.session_factory.begin() as s:
             self._require_workspace(s, workspace_id)
-            self._validate_idea_anchors(
+            claim_artifact, claim_snapshot = self._validate_idea_anchors(
                 s, workspace_id, research_run_id=body.research_run_id,
+                claim_id=body.claim_id,
                 paper_id=body.paper_id, source_span_id=body.source_span_id,
             )
+            idempotency_key = self._idea_claim_idempotency_key(
+                workspace_id, body.research_run_id, body.claim_id,
+            )
+            if idempotency_key:
+                existing = s.scalar(select(IdeaRecord).where(
+                    IdeaRecord.idempotency_key == idempotency_key,
+                ))
+                if existing is not None:
+                    return _idea_model(existing)
             x = IdeaRecord(
                 id=str(uuid4()), workspace_id=workspace_id, created_by=user_id,
                 kind=body.kind, content=body.content.strip(),
                 research_run_id=body.research_run_id, claim_id=body.claim_id,
+                claim_artifact_id=claim_artifact.id if claim_artifact else None,
+                claim_snapshot=claim_snapshot, idempotency_key=idempotency_key,
                 paper_id=body.paper_id, source_span_id=body.source_span_id,
                 checklist=dict(body.checklist), status="unverified",
                 created_at=datetime.now(timezone.utc),
             )
-            s.add(x)
-            s.flush()
+            try:
+                with s.begin_nested():
+                    s.add(x)
+                    s.flush()
+            except IntegrityError:
+                if not idempotency_key:
+                    raise
+                existing = s.scalar(select(IdeaRecord).where(
+                    IdeaRecord.idempotency_key == idempotency_key,
+                ))
+                if existing is None:
+                    raise
+                return _idea_model(existing)
             return _idea_model(x)
 
     def update_idea(self, workspace_id: str, idea_id: str, body: IdeaUpdate) -> Idea:
@@ -1220,12 +1328,22 @@ class PaperStore:
                 raise ValueError("promoted ideas are immutable")
             fields = body.model_fields_set
             run_id = body.research_run_id if "research_run_id" in fields else idea.research_run_id
+            claim_id = body.claim_id if "claim_id" in fields else idea.claim_id
             paper_id = body.paper_id if "paper_id" in fields else idea.paper_id
             span_id = body.source_span_id if "source_span_id" in fields else idea.source_span_id
-            self._validate_idea_anchors(
+            claim_artifact, claim_snapshot = self._validate_idea_anchors(
                 session, workspace_id, research_run_id=run_id,
+                claim_id=claim_id,
                 paper_id=paper_id, source_span_id=span_id,
             )
+            idempotency_key = self._idea_claim_idempotency_key(workspace_id, run_id, claim_id)
+            if idempotency_key and idempotency_key != idea.idempotency_key:
+                duplicate = session.scalar(select(IdeaRecord.id).where(
+                    IdeaRecord.idempotency_key == idempotency_key,
+                    IdeaRecord.id != idea.id,
+                ))
+                if duplicate is not None:
+                    raise ValueError("claim anchor already has an idea")
             if "kind" in fields and body.kind is not None:
                 idea.kind = body.kind
             if "content" in fields and body.content is not None:
@@ -1234,6 +1352,9 @@ class PaperStore:
                 idea.research_run_id = body.research_run_id
             if "claim_id" in fields:
                 idea.claim_id = body.claim_id
+            idea.claim_artifact_id = claim_artifact.id if claim_artifact else None
+            idea.claim_snapshot = claim_snapshot
+            idea.idempotency_key = idempotency_key
             if "paper_id" in fields:
                 idea.paper_id = body.paper_id
             if "source_span_id" in fields:
@@ -1391,27 +1512,10 @@ class PaperStore:
                 claim_artifact_id = None
                 claim_snapshot = None
             else:
-                run = self._scoped_research_run(session, workspace_id, body.research_run_id or "")
-                matches: list[tuple[RunArtifactRecord, dict]] = []
-                for artifact in self._run_artifacts(session, run.id):
-                    if artifact.kind != "validation" or not isinstance(artifact.payload, dict):
-                        continue
-                    claims = artifact.payload.get("claims")
-                    if not isinstance(claims, list):
-                        continue
-                    for claim in claims:
-                        if (
-                            isinstance(claim, dict)
-                            and claim.get("claim_id") == body.claim_id
-                            and isinstance(claim.get("text"), str)
-                            and claim["text"].strip()
-                        ):
-                            matches.append((artifact, dict(claim)))
-                if len(matches) != 1:
-                    raise ValueError(
-                        "claim_id must resolve to exactly one immutable validation artifact"
-                    )
-                claim_artifact_id, claim_snapshot = matches[0][0].id, matches[0][1]
+                artifact, claim_snapshot = self._resolve_validation_claim(
+                    session, workspace_id, body.research_run_id or "", body.claim_id or "",
+                )
+                claim_artifact_id = artifact.id
             record = ReviewThreadRecord(
                 id=str(uuid4()), workspace_id=workspace_id, created_by=created_by,
                 title=body.title, research_run_id=body.research_run_id,
@@ -1430,6 +1534,170 @@ class PaperStore:
                 ReviewThreadRecord.workspace_id == workspace_id,
             ).order_by(ReviewThreadRecord.updated_at.desc(), ReviewThreadRecord.id)).all()
             return [self._review_thread_model(session, row) for row in rows]
+
+    def list_review_candidates(self, workspace_id: str) -> list[ReviewCandidate]:
+        """List immutable Ask claims for a reload-safe review picker."""
+        with self.session_factory() as session:
+            self._require_workspace(session, workspace_id)
+            rows = session.execute(select(RunArtifactRecord, ResearchRunRecord.created_at).join(
+                ResearchRunRecord, ResearchRunRecord.id == RunArtifactRecord.research_run_id,
+            ).where(
+                ResearchRunRecord.workspace_id == workspace_id,
+                RunArtifactRecord.kind == "validation",
+            ).order_by(ResearchRunRecord.created_at.desc(), RunArtifactRecord.created_at.desc())).all()
+            result: list[ReviewCandidate] = []
+            seen: set[tuple[str, str]] = set()
+            for artifact, run_created_at in rows:
+                payload = artifact.payload if isinstance(artifact.payload, dict) else {}
+                claims = payload.get("claims")
+                if not isinstance(claims, list):
+                    continue
+                for claim in claims:
+                    if not isinstance(claim, dict):
+                        continue
+                    claim_id, claim_text = claim.get("claim_id"), claim.get("text")
+                    if not isinstance(claim_id, str) or not claim_id.strip() or not isinstance(claim_text, str) or not claim_text.strip():
+                        continue
+                    identity = (artifact.research_run_id, claim_id)
+                    if identity in seen:
+                        continue
+                    seen.add(identity)
+                    raw_citations = claim.get("citation_ids")
+                    result.append(ReviewCandidate(
+                        research_run_id=artifact.research_run_id, claim_id=claim_id,
+                        claim_artifact_id=artifact.id, text=claim_text.strip(),
+                        classification=claim.get("classification") if isinstance(claim.get("classification"), str) else None,
+                        citation_ids=[item for item in raw_citations if isinstance(item, int)] if isinstance(raw_citations, list) else [],
+                        created_at=run_created_at.isoformat(),
+                    ))
+            return result
+
+    def list_graph_idea_candidates(
+        self, workspace_id: str, conversation_id: str, message_id: str,
+    ) -> list[GraphIdeaCandidate]:
+        """Return selectable drafts even when LLM memory extraction is unavailable.
+
+        Memory events remain preferred because they have an explicit kind.  A
+        local/failed LLM answer has no memory delta by design; returning one
+        clearly-unverified draft lets a researcher edit and save it instead of
+        presenting an empty graph-export dialog.
+        """
+        with self.session_factory() as session:
+            conversation = self._scoped_conversation_record(session, workspace_id, conversation_id)
+            message = session.scalar(select(ResearchMessageRecord).where(
+                ResearchMessageRecord.id == message_id,
+                ResearchMessageRecord.conversation_id == conversation.id,
+                ResearchMessageRecord.role == "assistant",
+            ))
+            if message is None:
+                raise PaperNotFoundError(message_id)
+            events = session.scalars(select(ResearchMemoryEventRecord).where(
+                ResearchMemoryEventRecord.conversation_id == conversation.id,
+                ResearchMemoryEventRecord.source_message_id == message.id,
+            ).order_by(ResearchMemoryEventRecord.ordinal, ResearchMemoryEventRecord.id)).all()
+            citation_count = len(message.citations) if isinstance(message.citations, list) else 0
+            if events:
+                return [GraphIdeaCandidate(
+                    id=item.id, content=item.content, kind=item.kind,
+                    source_message_id=message.id, citation_count=citation_count,
+                    derived_from_memory=True,
+                ) for item in events]
+            content = str(message.content or "").strip()
+            if not content:
+                return []
+            return [GraphIdeaCandidate(
+                id=f"draft:{message.id}", content=content[:100_000], kind="hypothesis",
+                source_message_id=message.id, citation_count=citation_count,
+                derived_from_memory=False,
+            )]
+
+    def export_conversation_graph_drafts(
+        self, workspace_id: str, created_by: str, conversation_id: str, message_id: str,
+        body: ConversationGraphExportCreate,
+    ) -> list[KnowledgeNode]:
+        """Atomically export selected Ask drafts, safely idempotent across retries.
+
+        Node identifiers are deterministic over the workspace, immutable message,
+        candidate identity, and content.  The whole batch is one transaction, so
+        a validation/DB failure cannot leave only half of the selected ideas in
+        the graph.  An edited draft has a different content hash and is a new,
+        review-pending proposal rather than a silent mutation of an old one.
+        """
+        kind_shape = {
+            "hypothesis": ("hypothesis", "conversation_hypothesis"),
+            "assumption": ("idea", "assumption"),
+            "unresolved_question": ("idea", "unresolved_question"),
+            "planned_test": ("idea", "planned_test"),
+            "manual": ("idea", "manual_draft"),
+        }
+        with self.session_factory.begin() as session:
+            conversation = self._scoped_conversation_record(session, workspace_id, conversation_id)
+            message = session.scalar(select(ResearchMessageRecord).where(
+                ResearchMessageRecord.id == message_id,
+                ResearchMessageRecord.conversation_id == conversation.id,
+                ResearchMessageRecord.role == "assistant",
+            ))
+            if message is None:
+                raise PaperNotFoundError("research conversation assistant message")
+            # Validate the immutable chat span once before beginning writes.
+            span = self._scoped_span(session, workspace_id, body.source_span_id)
+            source = session.scalar(select(SourceVersionRecord).where(
+                SourceVersionRecord.id == span.source_version_id,
+                SourceVersionRecord.workspace_id == workspace_id,
+            ))
+            source_metadata = dict(source.metadata_json or {}) if source is not None else {}
+            if source is None or source.kind != "chat" or source_metadata.get("conversation_id") != conversation_id or source_metadata.get("message_id") != message_id:
+                raise ValueError("conversation graph draft source span must be the matching immutable assistant message")
+            # Go through the same shared validation path before an idempotent
+            # lookup. A forged span must not be accepted merely because the
+            # requested node already exists from an earlier export.
+            self._prepare_conversation_draft(
+                session, workspace_id,
+                metadata={"origin": "research_conversation", "conversation_id": conversation_id, "message_id": message_id},
+                content=body.drafts[0].content, evidence_span_ids=[span.id], evidence_links=None,
+                status="review_pending",
+            )
+            result: list[KnowledgeNode] = []
+            for draft in body.drafts:
+                node_type, phase = kind_shape[draft.kind]
+                digest = hashlib.sha256(
+                    f"{workspace_id}\x1f{conversation_id}\x1f{message_id}\x1f{draft.candidate_id}\x1f{draft.content}".encode("utf-8")
+                ).hexdigest()
+                node_id = f"conversation-draft:{digest}"
+                existing = session.scalar(select(KnowledgeNodeRecord).where(
+                    KnowledgeNodeRecord.id == node_id,
+                    KnowledgeNodeRecord.workspace_id == workspace_id,
+                ))
+                if existing is not None:
+                    evidence = self._node_evidence_map(session, [existing.id]).get(existing.id, [])
+                    result.append(_knowledge_node_model(existing, evidence))
+                    continue
+                metadata, span_ids, links, status = self._prepare_conversation_draft(
+                    session, workspace_id,
+                    metadata={
+                        "origin": "research_conversation_manual_draft" if draft.kind == "manual" else "research_conversation",
+                        "conversation_id": conversation_id, "message_id": message_id,
+                        "graph_candidate_id": draft.candidate_id, "memory_kind": draft.kind,
+                        "derived_from_memory": draft.derived_from_memory,
+                    },
+                    content=draft.content, evidence_span_ids=[span.id], evidence_links=None,
+                    status="review_pending",
+                )
+                now = datetime.now(timezone.utc)
+                record = KnowledgeNodeRecord(
+                    id=node_id, workspace_id=workspace_id, created_by=created_by,
+                    node_type=node_type, status=status, layer=1, content=draft.content,
+                    phase=phase, confidence=None, metadata_json=metadata,
+                    created_at=now, updated_at=now,
+                )
+                session.add(record)
+                session.flush()
+                evidence = self._add_evidence_refs(
+                    session, workspace_id, span_ids, knowledge_node_id=record.id,
+                    evidence_links=links, default_target_claim=record.content,
+                )
+                result.append(_knowledge_node_model(record, evidence))
+            return result
 
     def get_review_thread(self, workspace_id: str, thread_id: str) -> ReviewThread:
         with self.session_factory() as session:
@@ -2040,11 +2308,37 @@ class PaperStore:
 
     @staticmethod
     def _message_model(record: ResearchMessageRecord) -> ResearchMessage:
+        metadata = record.response_metadata if isinstance(record.response_metadata, dict) else {}
+        interaction_mode = None
+        draft = None
+        claims: list[AnswerClaim] = []
+        research_run_id = None
+        if record.role == "assistant" and metadata:
+            candidate_mode = metadata.get("interaction_mode")
+            if candidate_mode in {"evidence", "synthesis", "explore", "challenge", "design", "update"}:
+                interaction_mode = candidate_mode
+            candidate_draft = metadata.get("draft")
+            if isinstance(candidate_draft, bool):
+                draft = candidate_draft
+            candidate_claims = metadata.get("claims")
+            if isinstance(candidate_claims, list):
+                for item in candidate_claims:
+                    try:
+                        claims.append(AnswerClaim.model_validate(item))
+                    except (TypeError, ValueError):
+                        # A malformed legacy JSON blob must not make an entire
+                        # conversation unreadable. New writes are normalized.
+                        continue
+            candidate_run_id = metadata.get("research_run_id")
+            if isinstance(candidate_run_id, str) and candidate_run_id.strip():
+                research_run_id = candidate_run_id
         return ResearchMessage(
             id=record.id, conversation_id=record.conversation_id, role=record.role,
             ordinal=record.ordinal,
             content=record.content,
             citations=[Citation.model_validate(item) for item in (record.citations or [])],
+            interaction_mode=interaction_mode, draft=draft, claims=claims,
+            research_run_id=research_run_id,
             created_at=record.created_at.isoformat(),
         )
 
@@ -2128,18 +2422,21 @@ class PaperStore:
     def add_research_exchange(
         self, workspace_id: str, conversation_id: str, query: str, answer: str,
         citations: list[Citation], memory_delta: dict | None = None,
+        response_metadata: dict | None = None,
     ) -> ResearchConversationDetail:
         self.record_research_exchange(
             workspace_id, conversation_id, query, answer, citations,
-            memory_delta=memory_delta,
+            memory_delta=memory_delta, response_metadata=response_metadata,
         )
         return self.get_conversation(workspace_id, conversation_id)
 
     def record_research_exchange(
         self, workspace_id: str, conversation_id: str, query: str, answer: str,
         citations: list[Citation], memory_delta: dict | None = None,
+        response_metadata: dict | None = None,
     ) -> None:
         """Persist one exchange atomically without reloading the conversation."""
+        normalized_metadata = self._normalize_research_response_metadata(response_metadata)
         with self.session_factory.begin() as session:
             conversation = self._scoped_conversation_record(
                 session, workspace_id, conversation_id, lock=True,
@@ -2150,8 +2447,8 @@ class PaperStore:
             first_ordinal = conversation.message_count + 1
             assistant_message_id = str(uuid4())
             session.add_all([
-                ResearchMessageRecord(id=str(uuid4()), conversation_id=conversation_id, ordinal=first_ordinal, role="user", content=query, citations=[], created_at=now),
-                ResearchMessageRecord(id=assistant_message_id, conversation_id=conversation_id, ordinal=first_ordinal + 1, role="assistant", content=answer, citations=[c.model_dump(mode="json") for c in citations], created_at=now + timedelta(microseconds=1)),
+                ResearchMessageRecord(id=str(uuid4()), conversation_id=conversation_id, ordinal=first_ordinal, role="user", content=query, citations=[], response_metadata={}, created_at=now),
+                ResearchMessageRecord(id=assistant_message_id, conversation_id=conversation_id, ordinal=first_ordinal + 1, role="assistant", content=answer, citations=[c.model_dump(mode="json") for c in citations], response_metadata=normalized_metadata, created_at=now + timedelta(microseconds=1)),
             ])
             conversation.message_count += 2
             self._append_memory_events(
@@ -2167,6 +2464,43 @@ class PaperStore:
                 conversation.summary, query, answer, memory_delta=memory_delta,
             )
             conversation.updated_at = now
+
+    @staticmethod
+    def _normalize_research_response_metadata(response_metadata: dict | None) -> dict:
+        """Validate the compact, immutable assistant-response metadata contract."""
+        if response_metadata is None:
+            return {}
+        if not isinstance(response_metadata, dict):
+            raise ValueError("research response metadata must be an object")
+
+        normalized: dict = {}
+        interaction_mode = response_metadata.get("interaction_mode")
+        allowed_modes = {"evidence", "synthesis", "explore", "challenge", "design", "update"}
+        if interaction_mode is not None:
+            if interaction_mode not in allowed_modes:
+                raise ValueError("unsupported research interaction mode")
+            normalized["interaction_mode"] = interaction_mode
+
+        draft = response_metadata.get("draft")
+        if draft is not None:
+            if not isinstance(draft, bool):
+                raise ValueError("research response draft must be boolean")
+            normalized["draft"] = draft
+
+        claims = response_metadata.get("claims")
+        if claims is not None:
+            if not isinstance(claims, list):
+                raise ValueError("research response claims must be a list")
+            normalized["claims"] = [
+                AnswerClaim.model_validate(item).model_dump(mode="json") for item in claims
+            ]
+
+        research_run_id = response_metadata.get("research_run_id")
+        if research_run_id is not None:
+            if not isinstance(research_run_id, str) or not research_run_id.strip():
+                raise ValueError("research response run id must be a non-empty string")
+            normalized["research_run_id"] = research_run_id.strip()
+        return normalized
 
     @staticmethod
     def _append_memory_events(
@@ -2495,12 +2829,21 @@ class PaperStore:
                 .where(PaperRecord.status == "ready")
                 .group_by(PaperRecord.id, PaperRecord.workspace_id)
             ).all()
-            existing = set(session.scalars(select(EmbeddingJobRecord.paper_id).where(
-                EmbeddingJobRecord.provider == provider,
-                EmbeddingJobRecord.model == model,
-            )).all())
             for paper_id, workspace_id, total_chunks in rows:
-                if paper_id in existing:
+                # Match the claim/reindex lock order.  A snapshot of active
+                # jobs taken before this lock is insufficient: a worker could
+                # claim a different identity between the snapshot and queue.
+                session.get(PaperRecord, paper_id, with_for_update=True)
+                existing = session.scalar(select(EmbeddingJobRecord.id).where(
+                    EmbeddingJobRecord.paper_id == paper_id,
+                    EmbeddingJobRecord.provider == provider,
+                    EmbeddingJobRecord.model == model,
+                ))
+                active = session.scalar(select(EmbeddingJobRecord.id).where(
+                    EmbeddingJobRecord.paper_id == paper_id,
+                    EmbeddingJobRecord.status.in_(("queued", "running")),
+                ))
+                if existing is not None or active is not None:
                     continue
                 _queue_embedding_job(
                     session, paper_id=paper_id, workspace_id=workspace_id,
@@ -2508,6 +2851,90 @@ class PaperStore:
                 )
                 created += 1
         return created
+
+    def reindex_embedding_jobs(
+        self, workspace_id: str, provider: str, model: str, paper_ids: list[str] | None = None,
+    ) -> list[EmbeddingJob]:
+        """Queue a new embedding pass for ready papers in one workspace.
+
+        A currently-running job is never reset: doing so would invalidate its
+        lease and can cause two workers to bill for the same document.  All
+        other existing jobs for this provider/model are safely reset so an
+        operator can intentionally rebuild vectors after switching from the
+        deterministic local fallback to a multilingual provider.
+        """
+        requested = list(dict.fromkeys(paper_ids or []))
+        with self.session_factory.begin() as session:
+            statement = (
+                select(PaperRecord.id, func.count(ChunkRecord.id))
+                .join(ChunkRecord, ChunkRecord.paper_id == PaperRecord.id)
+                .where(PaperRecord.workspace_id == workspace_id, PaperRecord.status == "ready")
+                .group_by(PaperRecord.id)
+            )
+            if requested:
+                statement = statement.where(PaperRecord.id.in_(requested))
+            rows = session.execute(statement).all()
+            found = {paper_id for paper_id, _ in rows}
+            missing = set(requested) - found
+            if missing:
+                raise PaperNotFoundError(next(iter(missing)))
+            job_ids: list[str] = []
+            for paper_id, total_chunks in rows:
+                # Serialise provider switches and worker claims on the paper,
+                # not merely on the provider/model-specific job row.
+                session.get(PaperRecord, paper_id, with_for_update=True)
+                active_records = session.scalars(select(EmbeddingJobRecord).where(
+                    EmbeddingJobRecord.paper_id == paper_id,
+                    EmbeddingJobRecord.status.in_(("queued", "running")),
+                ).with_for_update()).all()
+                if any(record.status == "running" for record in active_records):
+                    raise ResourceConflictError("embedding job is already running for this paper")
+                # Queued jobs cannot have written vectors yet, so it is safe to
+                # supersede them before issuing the requested identity.  This
+                # prevents a delayed old queue delivery from overwriting it.
+                now = datetime.now(timezone.utc)
+                for active in active_records:
+                    if active.provider != provider or active.model != model:
+                        active.status = "failed"
+                        active.error_code = "superseded_by_reindex"
+                        active.updated_at = now
+                record = session.scalar(select(EmbeddingJobRecord).where(
+                    EmbeddingJobRecord.paper_id == paper_id,
+                    EmbeddingJobRecord.provider == provider,
+                    EmbeddingJobRecord.model == model,
+                ).with_for_update())
+                if record is not None and record.status == "running":
+                    job_ids.append(record.id)
+                    continue
+                # Chunk embeddings are keyed by chunk and carry their model
+                # identity.  Invalidate only this model while holding the
+                # same Paper lock used by a worker claim, so a reindex cannot
+                # accidentally reuse an old vector and cannot race a writer.
+                # A reindex does not delete rows for another model.  The
+                # single-vector-per-chunk schema will replace such a row only
+                # when this newly queued job successfully writes its vector.
+                session.execute(
+                    delete(ChunkEmbeddingRecord).where(
+                        ChunkEmbeddingRecord.model == model,
+                        ChunkEmbeddingRecord.chunk_id.in_(
+                            select(ChunkRecord.id).where(ChunkRecord.paper_id == paper_id)
+                        ),
+                    )
+                )
+                _queue_embedding_job(
+                    session, paper_id=paper_id, workspace_id=workspace_id,
+                    provider=provider, model=model, total_chunks=int(total_chunks),
+                )
+                record = session.scalar(select(EmbeddingJobRecord).where(
+                    EmbeddingJobRecord.paper_id == paper_id,
+                    EmbeddingJobRecord.provider == provider,
+                    EmbeddingJobRecord.model == model,
+                ))
+                if record is not None:
+                    job_ids.append(record.id)
+            records = session.scalars(select(EmbeddingJobRecord).where(EmbeddingJobRecord.id.in_(job_ids))).all() if job_ids else []
+            by_id = {record.id: record for record in records}
+            return [_embedding_job_model(by_id[job_id]) for job_id in job_ids if job_id in by_id]
 
     def embedding_statuses(
         self, workspace_id: str, paper_ids: list[str], model: str,
@@ -2530,6 +2957,15 @@ class PaperStore:
         self, job_id: str, max_attempts: int, lease_seconds: int = 300,
     ) -> EmbeddingJob | None:
         with self.session_factory.begin() as session:
+            # Resolve the parent without a row lock, then take the shared
+            # parent lock before locking the job.  Reindex uses the exact same
+            # Paper -> EmbeddingJob order; reversing this is a PostgreSQL
+            # deadlock when a provider switch races a worker claim.
+            paper_id = session.scalar(select(EmbeddingJobRecord.paper_id).where(EmbeddingJobRecord.id == job_id))
+            if paper_id is None:
+                raise PaperNotFoundError(job_id)
+            if session.get(PaperRecord, paper_id, with_for_update=True) is None:
+                raise PaperNotFoundError(job_id)
             record = session.scalar(
                 select(EmbeddingJobRecord)
                 .where(EmbeddingJobRecord.id == job_id)
@@ -2537,6 +2973,19 @@ class PaperStore:
             )
             if record is None:
                 raise PaperNotFoundError(job_id)
+            # Superseded queued jobs are a terminal fencing state, not a
+            # retryable provider failure.  Never let a delayed task reclaim it.
+            if record.error_code == "superseded_by_reindex":
+                return None
+            # All claims for one paper take the Paper row lock, so two workers
+            # cannot simultaneously claim different provider/model jobs.
+            another_running = session.scalar(select(EmbeddingJobRecord.id).where(
+                EmbeddingJobRecord.paper_id == record.paper_id,
+                EmbeddingJobRecord.id != record.id,
+                EmbeddingJobRecord.status == "running",
+            ))
+            if another_running is not None:
+                return None
             now = datetime.now(timezone.utc)
             updated_at = record.updated_at if record.updated_at.tzinfo else record.updated_at.replace(tzinfo=timezone.utc)
             stale = now - updated_at > timedelta(seconds=lease_seconds)
@@ -2911,11 +3360,15 @@ class PaperStore:
     def list_source_versions(self, workspace_id: str, kind: str | None = None) -> list[SourceVersion]:
         with self.session_factory() as session:
             self._require_workspace(session, workspace_id)
-            statement = select(SourceVersionRecord).where(SourceVersionRecord.workspace_id == workspace_id)
+            statement = select(SourceVersionRecord, PaperRecord.title).outerjoin(
+                PaperRecord,
+                and_(PaperRecord.id == SourceVersionRecord.paper_id,
+                     PaperRecord.workspace_id == SourceVersionRecord.workspace_id),
+            ).where(SourceVersionRecord.workspace_id == workspace_id)
             if kind:
                 statement = statement.where(SourceVersionRecord.kind == kind)
-            rows = session.scalars(statement.order_by(SourceVersionRecord.created_at.desc())).all()
-            return [_source_version_model(row) for row in rows]
+            rows = session.execute(statement.order_by(SourceVersionRecord.created_at.desc())).all()
+            return [_source_version_model(row, paper_title) for row, paper_title in rows]
 
     def get_source_span(self, workspace_id: str, source_span_id: str) -> SourceSpan:
         with self.session_factory() as session:
@@ -3017,6 +3470,7 @@ class PaperStore:
     ) -> KnowledgeNode:
         status = {"draft": "review_pending", "validated": "verified"}.get(status, status)
         evidence_span_ids = evidence_span_ids or []
+        metadata = dict(metadata or {})
         if node_type == "source" and not evidence_span_ids and not evidence_links:
             raise ValueError("source knowledge nodes require at least one source span")
         if not content.strip():
@@ -3024,11 +3478,16 @@ class PaperStore:
         now = datetime.now(timezone.utc)
         with self.session_factory.begin() as session:
             self._require_workspace(session, workspace_id)
+            metadata, evidence_span_ids, evidence_links, status = self._prepare_conversation_draft(
+                session, workspace_id, metadata=metadata, content=content,
+                evidence_span_ids=evidence_span_ids, evidence_links=evidence_links,
+                status=status,
+            )
             record = KnowledgeNodeRecord(
                 id=str(uuid4()), workspace_id=workspace_id, created_by=created_by,
                 node_type=node_type, status=status, layer=layer, content=content.strip(),
                 phase=phase.strip() or "unclassified", confidence=confidence,
-                metadata_json=dict(metadata or {}), created_at=now, updated_at=now,
+                metadata_json=metadata, created_at=now, updated_at=now,
             )
             session.add(record)
             session.flush()
@@ -3038,6 +3497,95 @@ class PaperStore:
                 default_target_claim=record.content,
             )
             return _knowledge_node_model(record, evidence)
+
+    @staticmethod
+    def _prepare_conversation_draft(
+        session: Session, workspace_id: str, *, metadata: dict, content: str,
+        evidence_span_ids: list[str], evidence_links: list[EvidenceLinkCreate] | None,
+        status: str,
+    ) -> tuple[dict, list[str], list[EvidenceLinkCreate] | None, str]:
+        """Make Ask/manual graph drafts auditable without calling them paper support.
+
+        Older UI payloads used ``evidence_span_ids`` and therefore inherited the
+        legacy ``supports`` default.  For a conversation draft that span is the
+        assistant-message source, not an author statement.  Convert it to an
+        exact ``context`` link and take the citation snapshot from the persisted
+        assistant message, never from mutable browser state.
+        """
+        origin = str(metadata.get("origin") or "")
+        if not origin.startswith("research_conversation"):
+            return metadata, evidence_span_ids, evidence_links, status
+        conversation_id = metadata.get("conversation_id")
+        message_id = metadata.get("message_id")
+        if not isinstance(conversation_id, str) or not conversation_id or not isinstance(message_id, str) or not message_id:
+            raise ValueError("conversation graph drafts require conversation_id and message_id")
+        conversation = session.scalar(select(ResearchConversationRecord).where(
+            ResearchConversationRecord.id == conversation_id,
+            ResearchConversationRecord.workspace_id == workspace_id,
+        ))
+        message = session.scalar(select(ResearchMessageRecord).where(
+            ResearchMessageRecord.id == message_id,
+            ResearchMessageRecord.conversation_id == conversation_id,
+            ResearchMessageRecord.role == "assistant",
+        )) if conversation is not None else None
+        if message is None:
+            raise PaperNotFoundError("research conversation assistant message")
+
+        source_ids = list(dict.fromkeys(evidence_span_ids))
+        if not source_ids:
+            raise ValueError("conversation graph drafts require the immutable assistant-message source span")
+        spans = session.scalars(select(SourceSpanRecord).where(
+            SourceSpanRecord.workspace_id == workspace_id,
+            SourceSpanRecord.id.in_(source_ids),
+        )).all()
+        if len(spans) != len(source_ids):
+            raise PaperNotFoundError("source span")
+        versions = {row.id: row for row in session.scalars(select(SourceVersionRecord).where(
+            SourceVersionRecord.workspace_id == workspace_id,
+            SourceVersionRecord.id.in_([span.source_version_id for span in spans]),
+        )).all()}
+        for span in spans:
+            version = versions.get(span.source_version_id)
+            source_metadata = dict(version.metadata_json or {}) if version is not None else {}
+            if version is None or version.kind != "chat" or source_metadata.get("conversation_id") != conversation_id or source_metadata.get("message_id") != message_id:
+                raise ValueError("conversation graph draft source span must be the matching immutable assistant message")
+            if span.text != message.content:
+                # Generic graph-node creation also reaches this helper; source
+                # metadata is client supplied and cannot by itself bind a span
+                # to an immutable assistant turn.
+                raise ValueError("conversation graph draft source span text must exactly match the persisted assistant message")
+
+        explicit_links = list(evidence_links or [])
+        if explicit_links:
+            for link in explicit_links:
+                if link.source_span_id in source_ids and link.role not in {"context", "mentions"}:
+                    raise ValueError("assistant-message provenance may only be context or mentions, never paper support")
+        else:
+            # Exact quote is filled from the immutable source span by
+            # _add_evidence_refs.  It is intentionally the chat source text,
+            # not the draft claim represented as a paper quotation.
+            explicit_links = [EvidenceLinkCreate(
+                source_span_id=span.id, target_claim=content.strip(), role="context",
+                extraction_quality="unknown",
+            ) for span in spans]
+
+        citations = message.citations if isinstance(message.citations, list) else []
+        snapshot_fields = (
+            "index", "paper_id", "paper_title", "chunk_id", "page", "section", "excerpt",
+            "source_kind", "source_version_id", "source_span_id", "evidence_role",
+            "knowledge_node_id", "knowledge_edge_id", "graph_path", "retrieval_channels",
+            "fusion_score", "extraction_quality", "retrieval_stance",
+        )
+        metadata["provenance_schema"] = "paperpilot.conversation-draft.v1"
+        metadata["unverified"] = True
+        metadata["citation_snapshot"] = [
+            {key: item[key] for key in snapshot_fields if key in item}
+            for item in citations if isinstance(item, dict)
+        ]
+        metadata["citation_count"] = len(metadata["citation_snapshot"])
+        # Conversation text is context, not evidence of a scientific claim; a
+        # human must explicitly promote/review it before it becomes active.
+        return metadata, [], explicit_links, "review_pending"
 
     def get_knowledge_node(self, workspace_id: str, node_id: str) -> KnowledgeNode:
         with self.session_factory() as session:
