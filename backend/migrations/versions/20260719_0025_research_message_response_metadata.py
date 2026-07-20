@@ -17,6 +17,10 @@ depends_on = None
 def upgrade() -> None:
     # A server default backfills legacy turns safely. New user turns explicitly
     # write {}, while assistant turns carry the normalized response contract.
+    bind = op.get_bind()
+    columns = {column["name"] for column in sa.inspect(bind).get_columns("research_messages")}
+    if "response_metadata" in columns:
+        return
     with op.batch_alter_table("research_messages") as batch:
         batch.add_column(
             sa.Column(
