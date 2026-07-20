@@ -598,6 +598,23 @@ export interface paths {
         patch: operations["update_idea_api_ideas__idea_id__patch"];
         trace?: never;
     };
+    "/api/ideas/{idea_id}/actions/decompose": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Decompose Idea Actions */
+        post: operations["decompose_idea_actions_api_ideas__idea_id__actions_decompose_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ideas/{idea_id}/promote": {
         parameters: {
             query?: never;
@@ -963,6 +980,41 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/research-actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Research Actions */
+        get: operations["list_research_actions_api_research_actions_get"];
+        put?: never;
+        /** Create Research Action */
+        post: operations["create_research_action_api_research_actions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/research-actions/{action_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update Research Action */
+        patch: operations["update_research_action_api_research_actions__action_id__patch"];
         trace?: never;
     };
     "/api/research/conversations": {
@@ -3175,6 +3227,117 @@ export interface components {
             /** Ordinal */
             ordinal: number;
         };
+        /** ResearchAction */
+        ResearchAction: {
+            /** Claim Id */
+            claim_id?: string | null;
+            /** Claim Snapshot */
+            claim_snapshot?: {
+                [key: string]: unknown;
+            } | null;
+            /** Created At */
+            created_at: string;
+            /** Created By */
+            created_by?: string | null;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** Due Date */
+            due_date?: string | null;
+            /** Evidence Ref Id */
+            evidence_ref_id?: string | null;
+            /** Experiment Plan Id */
+            experiment_plan_id?: string | null;
+            /**
+             * Generation Class
+             * @enum {string}
+             */
+            generation_class: "hypothesis" | "inference" | "unverified";
+            /** Generation Metadata */
+            generation_metadata?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Human Decision
+             * @enum {string}
+             */
+            human_decision: "unreviewed" | "accepted" | "held" | "rejected";
+            /**
+             * Human Reason
+             * @default
+             */
+            human_reason: string;
+            /** Id */
+            id: string;
+            /** Idea Id */
+            idea_id?: string | null;
+            /** Origin Node Id */
+            origin_node_id?: string | null;
+            /** Research Run Id */
+            research_run_id?: string | null;
+            /** Source Span Id */
+            source_span_id?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "open" | "in_progress" | "done" | "cancelled";
+            /** Title */
+            title: string;
+            /** Updated At */
+            updated_at: string;
+            /** Workspace Id */
+            workspace_id: string;
+        };
+        /** ResearchActionCreate */
+        ResearchActionCreate: {
+            /** Claim Id */
+            claim_id?: string | null;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** Due Date */
+            due_date?: string | null;
+            /** Evidence Ref Id */
+            evidence_ref_id?: string | null;
+            /** Experiment Plan Id */
+            experiment_plan_id?: string | null;
+            /**
+             * Generation Class
+             * @default unverified
+             * @enum {string}
+             */
+            generation_class: "hypothesis" | "inference" | "unverified";
+            /** Generation Metadata */
+            generation_metadata?: {
+                [key: string]: unknown;
+            };
+            /** Idea Id */
+            idea_id?: string | null;
+            /** Origin Node Id */
+            origin_node_id?: string | null;
+            /** Research Run Id */
+            research_run_id?: string | null;
+            /** Source Span Id */
+            source_span_id?: string | null;
+            /** Title */
+            title: string;
+        };
+        /** ResearchActionUpdate */
+        ResearchActionUpdate: {
+            /** Due Date */
+            due_date?: string | null;
+            /** Human Decision */
+            human_decision?: ("unreviewed" | "accepted" | "held" | "rejected") | null;
+            /** Human Reason */
+            human_reason?: string | null;
+            /** Status */
+            status?: ("open" | "in_progress" | "done" | "cancelled") | null;
+        };
         /** ResearchConversation */
         ResearchConversation: {
             /** Created At */
@@ -5381,6 +5544,37 @@ export interface operations {
             };
         };
     };
+    decompose_idea_actions_api_ideas__idea_id__actions_decompose_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                idea_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResearchAction"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     promote_idea_api_ideas__idea_id__promote_post: {
         parameters: {
             query?: never;
@@ -6150,6 +6344,94 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Tag"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_research_actions_api_research_actions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResearchAction"][];
+                };
+            };
+        };
+    };
+    create_research_action_api_research_actions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResearchActionCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResearchAction"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_research_action_api_research_actions__action_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                action_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResearchActionUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResearchAction"];
                 };
             };
             /** @description Validation Error */

@@ -16,7 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
 from .database import (
-    Base, BeliefEventRecord, CanvasLayoutRecord, ChunkEmbeddingRecord, ChunkRecord, DocumentElementRecord, ExperimentPlanRecord, HypothesisCardRecord, DiscoveryItemRecord, IdeaRecord,
+    Base, BeliefEventRecord, CanvasLayoutRecord, ChunkEmbeddingRecord, ChunkRecord, DocumentElementRecord, ExperimentPlanRecord, HypothesisCardRecord, DiscoveryItemRecord, IdeaRecord, ResearchActionRecord,
     EmbeddingJobRecord, EvidenceRefRecord, IngestionJobRecord, KnowledgeEdgeRecord, KnowledgeEdgeStatusEventRecord,
     KnowledgeNodeRecord, NodeFeedbackRecord, NoteRecord, PaperDecisionRecord, PaperPageRecord, PaperRecord,
     PaperTagRecord, ReasoningRunInputRecord, ReasoningRunOutputRecord, ReasoningRunRecord,
@@ -31,7 +31,7 @@ from .models import (
     ForwardPropagationResult, KnowledgeEdge, KnowledgeNode, NodeFeedback, Note, Paper, PaperDecision, PaperLibraryFacets, PaperLibraryItem, PaperLibraryPage, PaperPage, Principal, ResearchRunGraphSeed,
     ReasoningRun, ReasoningRunLink, ResearchConversation, ResearchConversationDetail,
     ResearchMemoryEvent, ResearchMemoryPage, ResearchMessage, ResearchMessagePage,
-    ConversationGraphExportCreate, GraphIdeaCandidate, Idea, IdeaCreate, IdeaUpdate, ResearchQuestion, ResearchRun, ReviewCandidate, ReviewComment, ReviewDecision, ReviewThread, ReviewThreadCreate, RunArtifact, SourceSet,
+    ConversationGraphExportCreate, GraphIdeaCandidate, Idea, IdeaCreate, IdeaUpdate, ResearchAction, ResearchActionCreate, ResearchActionUpdate, ResearchQuestion, ResearchRun, ReviewCandidate, ReviewComment, ReviewDecision, ReviewThread, ReviewThreadCreate, RunArtifact, SourceSet,
     SavedComparison, SearchHistory, SourceSpan, SourceVersion, Tag, User, Workspace,
     WorkspaceMember,
 )
@@ -384,6 +384,21 @@ def _idea_model(record: IdeaRecord) -> Idea:
         source_span_id=record.source_span_id, checklist=dict(record.checklist or {}),
         status=record.status, hypothesis_card_id=record.hypothesis_card_id,
         created_at=record.created_at.isoformat(),
+    )
+
+
+def _research_action_model(record: ResearchActionRecord) -> ResearchAction:
+    return ResearchAction(
+        id=record.id, workspace_id=record.workspace_id, created_by=record.created_by,
+        idea_id=record.idea_id, research_run_id=record.research_run_id,
+        claim_id=record.claim_id, claim_snapshot=dict(record.claim_snapshot or {}) if record.claim_snapshot else None,
+        source_span_id=record.source_span_id, evidence_ref_id=record.evidence_ref_id,
+        origin_node_id=record.origin_node_id, experiment_plan_id=record.experiment_plan_id,
+        title=record.title, description=record.description, due_date=record.due_date,
+        status=record.status, generation_class=record.generation_class,
+        generation_metadata=dict(record.generation_metadata or {}),
+        human_decision=record.human_decision, human_reason=record.human_reason,
+        created_at=record.created_at.isoformat(), updated_at=record.updated_at.isoformat(),
     )
 
 
@@ -1205,6 +1220,115 @@ class PaperStore:
         with self.session_factory() as s:
             self._require_workspace(s, workspace_id)
             return [_idea_model(x) for x in s.scalars(select(IdeaRecord).where(IdeaRecord.workspace_id == workspace_id).order_by(IdeaRecord.created_at.desc())).all()]
+
+    def list_research_actions(self, workspace_id: str) -> list[ResearchAction]:
+        with self.session_factory() as session:
+            self._require_workspace(session, workspace_id)
+            rows = session.scalars(select(ResearchActionRecord).where(
+                ResearchActionRecord.workspace_id == workspace_id,
+            ).order_by(ResearchActionRecord.due_date.is_(None), ResearchActionRecord.due_date, ResearchActionRecord.created_at.desc())).all()
+            return [_research_action_model(row) for row in rows]
+
+    def _action_anchor_context(
+        self, session: Session, workspace_id: str, body: ResearchActionCreate,
+    ) -> tuple[str | None, str | None, str | None, dict | None, str | None, str | None, str | None, str | None]:
+        idea_id, run_id, claim_id, claim_snapshot = body.idea_id, body.research_run_id, body.claim_id, None
+        span_id, evidence_ref_id = body.source_span_id, body.evidence_ref_id
+        if idea_id:
+            idea = session.scalar(select(IdeaRecord).where(IdeaRecord.id == idea_id, IdeaRecord.workspace_id == workspace_id))
+            if idea is None:
+                raise PaperNotFoundError(idea_id)
+            for explicit, inherited, label in ((run_id, idea.research_run_id, "research_run_id"), (claim_id, idea.claim_id, "claim_id"), (span_id, idea.source_span_id, "source_span_id")):
+                if explicit and inherited and explicit != inherited:
+                    raise ValueError(f"research action {label} must match its parent idea")
+            run_id = run_id or idea.research_run_id
+            claim_id = claim_id or idea.claim_id
+            span_id = span_id or idea.source_span_id
+            claim_snapshot = dict(idea.claim_snapshot or {}) or None
+        if claim_id:
+            artifact, claim_snapshot = self._resolve_validation_claim(session, workspace_id, run_id or "", claim_id)
+            del artifact
+        elif run_id:
+            self._scoped_research_run(session, workspace_id, run_id)
+        if span_id:
+            self._scoped_span(session, workspace_id, span_id)
+        if evidence_ref_id and not session.scalar(select(EvidenceRefRecord.id).where(
+            EvidenceRefRecord.id == evidence_ref_id, EvidenceRefRecord.workspace_id == workspace_id,
+        )):
+            raise PaperNotFoundError(evidence_ref_id)
+        if body.origin_node_id and not session.scalar(select(KnowledgeNodeRecord.id).where(
+            KnowledgeNodeRecord.id == body.origin_node_id, KnowledgeNodeRecord.workspace_id == workspace_id,
+        )):
+            raise PaperNotFoundError(body.origin_node_id)
+        if body.experiment_plan_id and not session.scalar(select(ExperimentPlanRecord.id).where(
+            ExperimentPlanRecord.id == body.experiment_plan_id, ExperimentPlanRecord.workspace_id == workspace_id,
+        )):
+            raise PaperNotFoundError(body.experiment_plan_id)
+        return idea_id, run_id, claim_id, claim_snapshot, span_id, evidence_ref_id, body.origin_node_id, body.experiment_plan_id
+
+    def create_research_action(self, workspace_id: str, user_id: str, body: ResearchActionCreate) -> ResearchAction:
+        with self.session_factory.begin() as session:
+            self._require_workspace(session, workspace_id)
+            idea_id, run_id, claim_id, claim_snapshot, span_id, evidence_ref_id, node_id, experiment_id = self._action_anchor_context(session, workspace_id, body)
+            now = datetime.now(timezone.utc)
+            row = ResearchActionRecord(
+                id=str(uuid4()), workspace_id=workspace_id, created_by=user_id,
+                idea_id=idea_id, research_run_id=run_id, claim_id=claim_id, claim_snapshot=claim_snapshot,
+                source_span_id=span_id, evidence_ref_id=evidence_ref_id, origin_node_id=node_id,
+                experiment_plan_id=experiment_id, title=body.title, description=body.description,
+                due_date=body.due_date, status="open", generation_class=body.generation_class,
+                generation_metadata=dict(body.generation_metadata), human_decision="unreviewed", human_reason="",
+                created_at=now, updated_at=now,
+            )
+            session.add(row); session.flush()
+            return _research_action_model(row)
+
+    def decompose_idea_into_actions(self, workspace_id: str, user_id: str, idea_id: str) -> list[ResearchAction]:
+        with self.session_factory.begin() as session:
+            idea = session.scalar(select(IdeaRecord).where(IdeaRecord.id == idea_id, IdeaRecord.workspace_id == workspace_id))
+            if idea is None:
+                raise PaperNotFoundError(idea_id)
+            existing = session.scalars(select(ResearchActionRecord).where(
+                ResearchActionRecord.workspace_id == workspace_id, ResearchActionRecord.idea_id == idea_id,
+            )).all()
+            generated = [row for row in existing if (row.generation_metadata or {}).get("source") == "idea_decomposition_v1"]
+            if generated:
+                return [_research_action_model(row) for row in generated]
+            base = idea.content.strip()[:240]
+            templates = [
+                ("根拠を確認する", "このIdeaを支持・限定・反証する原典spanを確認し、根拠リンクを追加する。"),
+                ("反証候補を検索する", "競合仮説、条件差、負の結果を検索し、反証条件を記録する。"),
+                ("識別可能な試験を設計する", "競合仮説を区別する測定・対照・判定基準をExperiment Planへ下書きする。"),
+            ]
+            now = datetime.now(timezone.utc); result: list[ResearchAction] = []
+            for ordinal, (suffix, description) in enumerate(templates, 1):
+                row = ResearchActionRecord(
+                    id=str(uuid4()), workspace_id=workspace_id, created_by=user_id, idea_id=idea.id,
+                    research_run_id=idea.research_run_id, claim_id=idea.claim_id,
+                    claim_snapshot=dict(idea.claim_snapshot or {}) or None, source_span_id=idea.source_span_id,
+                    evidence_ref_id=None, origin_node_id=None, experiment_plan_id=None,
+                    title=f"{suffix}: {base}", description=description, due_date=None, status="open",
+                    generation_class="inference", generation_metadata={"source":"idea_decomposition_v1", "ordinal":ordinal, "parent_idea_id":idea.id},
+                    human_decision="unreviewed", human_reason="", created_at=now, updated_at=now,
+                )
+                session.add(row); result.append(_research_action_model(row))
+            session.flush()
+            return result
+
+    def update_research_action(self, workspace_id: str, action_id: str, body: ResearchActionUpdate) -> ResearchAction:
+        with self.session_factory.begin() as session:
+            row = session.scalar(select(ResearchActionRecord).where(
+                ResearchActionRecord.id == action_id, ResearchActionRecord.workspace_id == workspace_id,
+            ).with_for_update())
+            if row is None:
+                raise PaperNotFoundError(action_id)
+            fields = body.model_fields_set
+            if "status" in fields and body.status is not None: row.status = body.status
+            if "due_date" in fields: row.due_date = body.due_date
+            if "human_decision" in fields and body.human_decision is not None: row.human_decision = body.human_decision
+            if "human_reason" in fields and body.human_reason is not None: row.human_reason = body.human_reason.strip()
+            row.updated_at = datetime.now(timezone.utc); session.flush()
+            return _research_action_model(row)
 
     @staticmethod
     def _resolve_validation_claim(

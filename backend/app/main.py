@@ -44,7 +44,7 @@ from .models import (
     SourceImportCreate, SourceImportResult, SourceVersion, SourceVersionCreate,
     HypothesisCard, HypothesisCardCreate, HypothesisCardStatusUpdate,
     DiscoveryItem, DiscoveryItemCreate, DiscoveryReviewUpdate,
-    BeliefEvent, BeliefEventCreate, ExperimentPlan, ExperimentPlanCreate, ExperimentPlanSnapshot, ExperimentResultCreate, Idea, IdeaCreate, IdeaUpdate,
+    BeliefEvent, BeliefEventCreate, ExperimentPlan, ExperimentPlanCreate, ExperimentPlanSnapshot, ExperimentResultCreate, Idea, IdeaCreate, IdeaUpdate, ResearchAction, ResearchActionCreate, ResearchActionUpdate,
     ConversationGraphExportCreate, GraphIdeaCandidate, ReviewAssignmentUpdate, ReviewCandidate, ReviewCommentCreate, ReviewDecisionCreate, ReviewThread, ReviewThreadCreate,
 )
 from .graph_rag import GraphEdge as RetrievalGraphEdge, PrunedTwoHopConfig, RetrievalSeed, pruned_two_hop_retrieve
@@ -723,6 +723,33 @@ def promote_idea(idea_id: str, store: PaperStore = Depends(get_store), context: 
     try: return store.promote_idea(context.workspace.id, context.user.id, idea_id)
     except PaperNotFoundError as exc: raise HTTPException(status_code=404, detail="idea not found") from exc
     except ValueError as exc: raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/research-actions", response_model=list[ResearchAction])
+def list_research_actions(store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    return store.list_research_actions(context.workspace.id)
+
+
+@app.post("/api/research-actions", response_model=ResearchAction, status_code=201)
+def create_research_action(body: ResearchActionCreate, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    require_workspace_write(context)
+    try: return store.create_research_action(context.workspace.id, context.user.id, body)
+    except PaperNotFoundError as exc: raise HTTPException(status_code=404, detail="research action anchor not found") from exc
+    except ValueError as exc: raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/ideas/{idea_id}/actions/decompose", response_model=list[ResearchAction], status_code=201)
+def decompose_idea_actions(idea_id: str, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    require_workspace_write(context)
+    try: return store.decompose_idea_into_actions(context.workspace.id, context.user.id, idea_id)
+    except PaperNotFoundError as exc: raise HTTPException(status_code=404, detail="idea not found") from exc
+
+
+@app.patch("/api/research-actions/{action_id}", response_model=ResearchAction)
+def update_research_action(action_id: str, body: ResearchActionUpdate, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    require_workspace_write(context)
+    try: return store.update_research_action(context.workspace.id, action_id, body)
+    except PaperNotFoundError as exc: raise HTTPException(status_code=404, detail="research action not found") from exc
 
 
 @app.get("/api/reviews", response_model=list[ReviewThread])

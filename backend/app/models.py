@@ -858,6 +858,59 @@ class Idea(BaseModel):
     checklist: dict = Field(default_factory=dict); status: Literal["unverified", "promoted"] = "unverified"; hypothesis_card_id: str | None = None; created_at: str
 
 
+class ResearchActionCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=500)
+    description: str = Field(default="", max_length=20_000)
+    idea_id: str | None = None
+    research_run_id: str | None = None
+    claim_id: str | None = Field(default=None, max_length=128)
+    source_span_id: str | None = None
+    evidence_ref_id: str | None = None
+    origin_node_id: str | None = None
+    experiment_plan_id: str | None = None
+    due_date: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    generation_class: Literal["hypothesis", "inference", "unverified"] = "unverified"
+    generation_metadata: dict = Field(default_factory=dict)
+
+    @field_validator("title")
+    @classmethod
+    def strip_title(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("research action title is required")
+        return value.strip()
+
+
+class ResearchActionUpdate(BaseModel):
+    status: Literal["open", "in_progress", "done", "cancelled"] | None = None
+    due_date: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    human_decision: Literal["unreviewed", "accepted", "held", "rejected"] | None = None
+    human_reason: str | None = Field(default=None, max_length=20_000)
+
+
+class ResearchAction(BaseModel):
+    id: str
+    workspace_id: str
+    created_by: str | None = None
+    idea_id: str | None = None
+    research_run_id: str | None = None
+    claim_id: str | None = None
+    claim_snapshot: dict | None = None
+    source_span_id: str | None = None
+    evidence_ref_id: str | None = None
+    origin_node_id: str | None = None
+    experiment_plan_id: str | None = None
+    title: str
+    description: str = ""
+    due_date: str | None = None
+    status: Literal["open", "in_progress", "done", "cancelled"]
+    generation_class: Literal["hypothesis", "inference", "unverified"]
+    generation_metadata: dict = Field(default_factory=dict)
+    human_decision: Literal["unreviewed", "accepted", "held", "rejected"]
+    human_reason: str = ""
+    created_at: str
+    updated_at: str
+
+
 class ReviewCommentCreate(BaseModel):
     body: str = Field(min_length=1, max_length=20_000)
 

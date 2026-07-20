@@ -14,6 +14,9 @@ export type LibraryPaperPage = components["schemas"]["PaperLibraryPage"];
 export type Idea = components["schemas"]["Idea"];
 export type IdeaCreate = components["schemas"]["IdeaCreate"];
 export type IdeaUpdate = components["schemas"]["IdeaUpdate"];
+export type ResearchAction = components["schemas"]["ResearchAction"];
+export type ResearchActionCreate = components["schemas"]["ResearchActionCreate"];
+export type ResearchActionUpdate = components["schemas"]["ResearchActionUpdate"];
 export type HypothesisCard = components["schemas"]["HypothesisCard"];
 export type HypothesisCardStatusUpdate = components["schemas"]["HypothesisCardStatusUpdate"];
 export type ExperimentPlan = components["schemas"]["ExperimentPlan"];
@@ -190,6 +193,11 @@ export async function promoteIdea(ideaId: string, signal?: AbortSignal): Promise
     params: { path: { idea_id:ideaId } }, signal,
   }), "アイデアを仮説へ昇格できませんでした");
 }
+
+export async function listResearchActions(signal?: AbortSignal): Promise<ResearchAction[]> { return unwrap(await api.GET("/api/research-actions", { signal }), "研究Actionを取得できませんでした"); }
+export async function createResearchAction(body: ResearchActionCreate, signal?: AbortSignal): Promise<ResearchAction> { return unwrap(await api.POST("/api/research-actions", { body, signal }), "研究Actionを作成できませんでした"); }
+export async function decomposeIdeaActions(ideaId: string, signal?: AbortSignal): Promise<ResearchAction[]> { return unwrap(await api.POST("/api/ideas/{idea_id}/actions/decompose", { params:{ path:{ idea_id:ideaId } }, signal }), "Ideaを研究Actionへ分解できませんでした"); }
+export async function updateResearchAction(actionId: string, body: ResearchActionUpdate, signal?: AbortSignal): Promise<ResearchAction> { return unwrap(await api.PATCH("/api/research-actions/{action_id}", { params:{ path:{ action_id:actionId } }, body, signal }), "研究Actionを更新できませんでした"); }
 
 export async function listHypothesisCards(signal?: AbortSignal): Promise<HypothesisCard[]> {
   return unwrap(await api.GET("/api/hypotheses", { signal }), "仮説カードを取得できませんでした");

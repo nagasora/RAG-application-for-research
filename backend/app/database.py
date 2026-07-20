@@ -159,6 +159,41 @@ class IdeaRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class ResearchActionRecord(Base):
+    """An actionable research step with its complete origin and review context."""
+    __tablename__ = "research_actions"
+    __table_args__ = (
+        CheckConstraint("status IN ('open', 'in_progress', 'done', 'cancelled')", name="ck_research_actions_status"),
+        CheckConstraint("generation_class IN ('hypothesis', 'inference', 'unverified')", name="ck_research_actions_generation_class"),
+        CheckConstraint("human_decision IN ('unreviewed', 'accepted', 'held', 'rejected')", name="ck_research_actions_human_decision"),
+        Index("ix_research_actions_workspace_status_due", "workspace_id", "status", "due_date"),
+        Index("ix_research_actions_idea", "idea_id"),
+        Index("ix_research_actions_node", "origin_node_id"),
+        Index("ix_research_actions_experiment", "experiment_plan_id"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_by: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    idea_id: Mapped[str | None] = mapped_column(ForeignKey("ideas.id", ondelete="SET NULL"))
+    research_run_id: Mapped[str | None] = mapped_column(ForeignKey("research_runs.id", ondelete="SET NULL"))
+    claim_id: Mapped[str | None] = mapped_column(String(128))
+    claim_snapshot: Mapped[dict | None] = mapped_column(JSON(none_as_null=True))
+    source_span_id: Mapped[str | None] = mapped_column(ForeignKey("source_spans.id", ondelete="SET NULL"))
+    evidence_ref_id: Mapped[str | None] = mapped_column(ForeignKey("evidence_refs.id", ondelete="SET NULL"))
+    origin_node_id: Mapped[str | None] = mapped_column(ForeignKey("knowledge_nodes.id", ondelete="SET NULL"))
+    experiment_plan_id: Mapped[str | None] = mapped_column(ForeignKey("experiment_plans.id", ondelete="SET NULL"))
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    due_date: Mapped[str | None] = mapped_column(String(10))
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="open")
+    generation_class: Mapped[str] = mapped_column(String(24), nullable=False, default="unverified")
+    generation_metadata: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    human_decision: Mapped[str] = mapped_column(String(24), nullable=False, default="unreviewed")
+    human_reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class ReviewThreadRecord(Base):
     __tablename__ = "review_threads"
     __table_args__ = (

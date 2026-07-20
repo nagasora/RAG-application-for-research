@@ -111,6 +111,16 @@
 - Consequences: migration 0025・0026とmessage API項目が増える。監査metadataを持つ環境では情報を失うdowngradeを拒否する一方、ライブ回答・履歴・Ideaの出所を一貫して追跡でき、通信再送で重複Ideaを作らない。
 - Date: 2026-07-19
 
+## D-20260720-11 研究ActionはIdeaを置き換えず、作成時点の出所を保持する
+
+- Status: accepted
+- Linked items: CI-027
+- Context: Ideaを単純なTODOへ書き換えると、発散した仮説・推測と実行作業を区別できず、親Idea・ResearchRun・claim・原典根拠の追跡も失われる。Knowledge GraphとExperiment Planから作る作業も同じ監査境界で扱う必要がある。
+- Decision: `ResearchAction`を独立レコードとして追加し、親IdeaからResearchRun・claim・claim snapshot・SourceSpanを継承する。必要に応じてEvidenceRef、Graph node、Experiment Planをworkspace内で検証して接続する。Idea分解は「根拠確認・反証検索・識別可能な試験設計」の3件を`inference`として生成し、初期の人間判断を`unreviewed`に固定する。採用・保留・却下、期限、進捗はAction側で更新する。
+- Alternatives: Ideaを`todo`へ直接変換する、未追跡のタスク管理機能を追加する、AI生成Actionを自動採用する。
+- Consequences: データとAPIは増えるが、研究タスクを根拠・仮説・実験に戻して監査できる。Action生成は研究判断を確定せず、人間による判断が必須になる。
+- Date: 2026-07-20
+
 ## 追記テンプレート
 
 ```text
