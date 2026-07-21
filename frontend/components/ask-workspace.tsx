@@ -60,6 +60,18 @@ function ideaKindForClaim(claim: AnswerClaim) {
   return claim.classification === "inference" ? "interpretation" as const : "hypothesis" as const;
 }
 
+function graphDraftApiKind(kind: "idea" | "hypothesis" | "constraint" | "experiment") {
+  // The graph export API intentionally has no generic "idea" node type. Keep
+  // researcher-authored ideas as manual proposals, while preserving the more
+  // specific choices as review-pending graph node types.
+  return ({
+    idea: "manual",
+    hypothesis: "hypothesis",
+    constraint: "assumption",
+    experiment: "planned_test",
+  } as const)[kind];
+}
+
 function ideaClaimKey(messageId: string, claimId: string) {
   return `${messageId}:${claimId}`;
 }
@@ -612,6 +624,7 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
     const draft = graphDraft.trim();
     if (!candidates.length && !draft) return;
     graphExportingRef.current = true; setGraphSaving(true); setGraphError(""); setGraphNotice("");
+    let saveStage: "source" | "export" = "source";
     try {
       // Preserve the assistant turn as an immutable chat Source. It is provenance for
       // an idea, never a substitute for the cited paper evidence in that turn.
@@ -625,15 +638,22 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
       if (!evidenceSpan) throw new Error("会話の根拠Spanを作成できませんでした");
       const drafts = [
         ...candidates.map(candidate => ({ candidate_id:candidate.id, content:candidate.content, kind:candidate.kind, derived_from_memory:candidate.derived_from_memory })),
-        ...(draft ? [{ candidate_id:`manual:${await sha256Hex(draft)}`, content:draft, kind:"manual" as const, derived_from_memory:false }] : []),
+        ...(draft ? [{
+          candidate_id:`manual:${graphDraftKind}:${await sha256Hex(draft)}`, content:draft,
+          kind:graphDraftApiKind(graphDraftKind), derived_from_memory:false,
+        }] : []),
       ];
+      saveStage = "export";
       await exportConversationGraphDrafts(conversationId, graphMessage.id, { source_span_id:evidenceSpan.id, drafts });
       candidates.forEach(candidate => graphSavedMemoryRef.current.add(candidate.id));
       setSelectedGraphCandidateIds([]);
       setGraphDraft("");
       setGraphNotice(`${candidates.length + (draft ? 1 : 0)}件をレビュー待ちとして知識グラフへ保存しました。会話由来の未検証メモであり、論文事実としては扱われません。`);
     } catch (requestError) {
-      setGraphError(apiErrorMessage(requestError, "知識グラフへ保存できませんでした"));
+      const normalized = toApiError(requestError, "知識グラフへ保存できませんでした");
+      const stageLabel = saveStage === "source" ? "会話の根拠を保存" : "レビュー候補をグラフへ保存";
+      const httpContext = normalized.status ? `（HTTP ${normalized.status}）` : "";
+      setGraphError(`${stageLabel}に失敗しました${httpContext}: ${apiErrorMessage(normalized, "詳細を取得できませんでした")}`);
     } finally { graphExportingRef.current = false; setGraphSaving(false); }
   };
 

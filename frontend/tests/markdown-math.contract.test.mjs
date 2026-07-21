@@ -5,6 +5,8 @@ import { remarkCitationLinks } from "../lib/remark-citations.mjs";
 
 const askSource = readFileSync(new URL("../components/ask-workspace.tsx", import.meta.url), "utf8");
 const layoutSource = readFileSync(new URL("../app/layout.tsx", import.meta.url), "utf8");
+const markdownSource = readFileSync(new URL("../lib/markdown.ts", import.meta.url), "utf8");
+const globalStyles = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 
 test("research answers compile Markdown and LaTeX without enabling raw HTML", () => {
@@ -16,6 +18,14 @@ test("research answers compile Markdown and LaTeX without enabling raw HTML", ()
   for (const dependency of ["react-markdown", "remark-gfm", "remark-math", "rehype-katex", "katex"]) {
     assert.equal(typeof packageJson.dependencies[dependency], "string");
   }
+});
+
+test("normalization accepts common LLM LaTex delimiters without touching fenced code", () => {
+  assert.match(markdownSource, /split\(\/\(```\[\\s\\S\]\*\?```\)\/g\)/);
+  assert.match(markdownSource, /replace\(\/\\\\\\\[\(\[\\s\\S\]\*\?\)\\\\\\\]\//);
+  assert.match(markdownSource, /replace\(\/\\\\\\\(\(\[\\s\\S\]\*\?\)\\\\\\\)\//);
+  assert.match(markdownSource, /begin\\\{\(equation/);
+  assert.match(globalStyles, /research-markdown \.katex-display/);
 });
 
 test("citation links are created from Markdown text nodes without touching code or math", () => {

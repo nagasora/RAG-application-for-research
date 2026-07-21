@@ -879,6 +879,18 @@ class ResearchActionCreate(BaseModel):
             raise ValueError("research action title is required")
         return value.strip()
 
+    @model_validator(mode="after")
+    def mind_map_extraction_has_a_stable_identity(self):
+        """Keep the DB idempotency key complete for deterministic map tasks."""
+        if self.generation_metadata.get("source") != "mind_map_task_extraction_v1":
+            return self
+        ordinal = self.generation_metadata.get("ordinal")
+        if not self.origin_node_id:
+            raise ValueError("mind-map task extraction requires origin_node_id")
+        if isinstance(ordinal, bool) or not isinstance(ordinal, int) or ordinal < 0:
+            raise ValueError("mind-map task extraction requires a non-negative integer ordinal")
+        return self
+
 
 class ResearchActionUpdate(BaseModel):
     status: Literal["open", "in_progress", "done", "cancelled"] | None = None
@@ -1286,6 +1298,9 @@ class NoteCreate(BaseModel):
     paper_id: str | None = None
     title: str = Field(min_length=1, max_length=255)
     content: str = Field(max_length=100_000)
+    # This is deliberately immutable after creation: it records why the note
+    # exists, rather than being a mutable display label.
+    origin_kind: Literal["mind_map"] | None = None
 
 
 class NoteUpdate(BaseModel):
@@ -1299,6 +1314,7 @@ class Note(BaseModel):
     author_id: str
     title: str
     content: str
+    origin_kind: Literal["mind_map"] | None = None
     created_at: str
     updated_at: str
 

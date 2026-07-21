@@ -43,20 +43,20 @@ class GeneratedClaimSchema(BaseModel):
 
 class AnswerSectionSchema(BaseModel):
     title: str
-    claims: list[GeneratedClaimSchema] = PydanticField(max_length=6)
+    claims: list[GeneratedClaimSchema] = PydanticField(max_length=8)
 
 
 class MemoryDeltaSchema(BaseModel):
-    hypotheses: list[str] = PydanticField(max_length=4)
-    assumptions: list[str] = PydanticField(max_length=4)
-    unresolved_questions: list[str] = PydanticField(max_length=4)
-    planned_tests: list[str] = PydanticField(max_length=4)
+    hypotheses: list[str] = PydanticField(max_length=6)
+    assumptions: list[str] = PydanticField(max_length=6)
+    unresolved_questions: list[str] = PydanticField(max_length=6)
+    planned_tests: list[str] = PydanticField(max_length=6)
 
 
 class StructuredAnswerSchema(BaseModel):
-    answer_sections: list[AnswerSectionSchema] = PydanticField(max_length=5)
-    limitations: list[str] = PydanticField(max_length=5)
-    next_steps: list[str] = PydanticField(max_length=5)
+    answer_sections: list[AnswerSectionSchema] = PydanticField(max_length=8)
+    limitations: list[str] = PydanticField(max_length=8)
+    next_steps: list[str] = PydanticField(max_length=8)
     memory_delta: MemoryDeltaSchema
 
 
@@ -291,12 +291,12 @@ class AgenticRAG:
         self.max_queries_per_iteration = max(1, min(max_queries_per_iteration, 4))
         self.max_evidence = max(1, min(max_evidence, 20))
         self.model_factory = model_factory
-        # A compact prompt is materially more reliable under the request deadline.
-        # Retrieval may inspect more chunks, but generation gets at most five
-        # source excerpts / 9k characters plus the structured-output schema.
-        self.max_sources = max(1, min(max_sources, 5))
-        self.max_evidence_chars = max(2_000, min(max_evidence_chars, 9_000))
-        self.generation_reserve_seconds = max(1.0, min(generation_reserve_seconds, 12.0))
+        # Keep evidence bounded, but allow a substantive research answer rather
+        # than forcing long Japanese explanations or LaTeX-heavy answers into a
+        # compact retry.
+        self.max_sources = max(1, min(max_sources, 8))
+        self.max_evidence_chars = max(2_000, min(max_evidence_chars, 18_000))
+        self.generation_reserve_seconds = max(1.0, min(generation_reserve_seconds, 15.0))
         self.verify_clean_claims = verify_clean_claims
         self._progress_callback = progress_callback
         self._deadline: float | None = None
@@ -524,7 +524,7 @@ class AgenticRAG:
     ) -> str:
         selected = citations[:3] if compact else citations
         memory_limit = 2_000 if compact else 5_000
-        claim_limit = 6 if compact else 12
+        claim_limit = 8 if compact else 20
         return self._ask(
             "あなたはPaperPilotの研究支援エージェントです。JSONだけを返します。論文根拠、一般知識、仮説を厳格に区別します。"
             "paper claimだけがcitation_idsを持ち、許可されたsource ID以外は使いません。数値・比較・因果は引用抜粋から直接確認します。"
@@ -537,12 +537,12 @@ class AgenticRAG:
             "\nanswer_sectionsを配列で返してください。各要素はtitleとclaimsを持ち、claimはclaim_id、text、"
             "kind（paper/general/hypothesis）、citation_idsを持ちます。さらにlimitations、next_steps、"
             "memory_delta（hypotheses、assumptions、unresolved_questions、planned_tests）を返してください。"
-            f"全sectionを通じてclaimは最大{claim_limit}件、各claimは2文以内にし、重複説明を避けてください。"
+            f"全sectionを通じてclaimは最大{claim_limit}件、各claimは4文以内にし、重複説明を避けてください。"
             "memory_deltaは、質問が仮説の展開、壁打ち、記憶、研究計画や次の検証を明示的に求める場合だけ更新し、"
             "通常の要約・定義・事実質問では全項目を空配列にしてください。"
             + ("JSONを短く保ち、必須フィールドをすべて含めてください。" if compact else ""),
             stage="generation_retry" if compact else "generation",
-            max_seconds=7.0 if compact else 16.0,
+            max_seconds=12.0 if compact else 28.0,
             structured_schema=StructuredAnswerSchema,
         )
 

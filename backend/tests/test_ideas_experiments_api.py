@@ -276,6 +276,35 @@ def test_idea_actions_preserve_anchors_are_idempotent_and_require_human_review(t
         main.app.dependency_overrides.clear()
 
 
+def test_mind_map_task_actions_are_idempotent_and_keep_node_anchor(tmp_path):
+    store = _setup(tmp_path)
+    try:
+        with TestClient(main.app) as client:
+            node = client.post("/api/graph/nodes", headers=_headers("alice"), json={
+                "node_type": "hypothesis", "content": "A mechanism worth testing",
+            }).json()
+            payload = {
+                "title": "Confirm falsifier: A mechanism worth testing",
+                "description": "Unverified task candidate from the mind map.",
+                "origin_node_id": node["id"], "generation_class": "unverified",
+                "generation_metadata": {
+                    "source": "mind_map_task_extraction_v1", "ordinal": 1,
+                    "node_snapshot": {"content": node["content"]}, "evidence_span_ids": [],
+                },
+            }
+            created = client.post("/api/research-actions", headers=_headers("alice"), json=payload)
+            retried = client.post("/api/research-actions", headers=_headers("alice"), json=payload)
+            listed = client.get("/api/research-actions", headers=_headers("alice"))
+
+        assert created.status_code == 201 and retried.status_code == 201
+        assert created.json()["id"] == retried.json()["id"]
+        assert created.json()["origin_node_id"] == node["id"]
+        assert created.json()["generation_metadata"]["node_snapshot"]["content"] == node["content"]
+        assert len(listed.json()) == 1
+    finally:
+        main.app.dependency_overrides.clear()
+
+
 def test_experiment_read_append_only_snapshot_and_workspace_scope(tmp_path):
     store = _setup(tmp_path)
     try:

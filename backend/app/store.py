@@ -1270,6 +1270,20 @@ class PaperStore:
         with self.session_factory.begin() as session:
             self._require_workspace(session, workspace_id)
             idea_id, run_id, claim_id, claim_snapshot, span_id, evidence_ref_id, node_id, experiment_id = self._action_anchor_context(session, workspace_id, body)
+            metadata = dict(body.generation_metadata)
+            extraction_source = None
+            extraction_ordinal = None
+            if metadata.get("source") == "mind_map_task_extraction_v1":
+                extraction_source = "mind_map_task_extraction_v1"
+                extraction_ordinal = metadata["ordinal"]
+                existing = session.scalar(select(ResearchActionRecord).where(
+                    ResearchActionRecord.workspace_id == workspace_id,
+                    ResearchActionRecord.origin_node_id == node_id,
+                    ResearchActionRecord.extraction_source == extraction_source,
+                    ResearchActionRecord.extraction_ordinal == extraction_ordinal,
+                ))
+                if existing is not None:
+                    return _research_action_model(existing)
             now = datetime.now(timezone.utc)
             row = ResearchActionRecord(
                 id=str(uuid4()), workspace_id=workspace_id, created_by=user_id,
@@ -1277,10 +1291,28 @@ class PaperStore:
                 source_span_id=span_id, evidence_ref_id=evidence_ref_id, origin_node_id=node_id,
                 experiment_plan_id=experiment_id, title=body.title, description=body.description,
                 due_date=body.due_date, status="open", generation_class=body.generation_class,
-                generation_metadata=dict(body.generation_metadata), human_decision="unreviewed", human_reason="",
+                generation_metadata=metadata, extraction_source=extraction_source,
+                extraction_ordinal=extraction_ordinal, human_decision="unreviewed", human_reason="",
                 created_at=now, updated_at=now,
             )
-            session.add(row); session.flush()
+            try:
+                # The savepoint lets us recover from the unique-index race while
+                # retaining the surrounding workspace/anchor transaction.
+                with session.begin_nested():
+                    session.add(row)
+                    session.flush()
+            except IntegrityError:
+                if extraction_source is None:
+                    raise
+                existing = session.scalar(select(ResearchActionRecord).where(
+                    ResearchActionRecord.workspace_id == workspace_id,
+                    ResearchActionRecord.origin_node_id == node_id,
+                    ResearchActionRecord.extraction_source == extraction_source,
+                    ResearchActionRecord.extraction_ordinal == extraction_ordinal,
+                ))
+                if existing is None:
+                    raise
+                return _research_action_model(existing)
             return _research_action_model(row)
 
     def decompose_idea_into_actions(self, workspace_id: str, user_id: str, idea_id: str) -> list[ResearchAction]:
@@ -2297,21 +2329,23 @@ class PaperStore:
 
     @staticmethod
     def _note_model(r: NoteRecord) -> Note:
-        return Note(id=r.id, paper_id=r.paper_id, author_id=r.author_id, title=r.title, content=r.content, created_at=r.created_at.isoformat(), updated_at=r.updated_at.isoformat())
+        return Note(id=r.id, paper_id=r.paper_id, author_id=r.author_id, title=r.title, content=r.content, origin_kind=r.origin_kind, created_at=r.created_at.isoformat(), updated_at=r.updated_at.isoformat())
 
-    def list_notes(self, workspace_id: str, paper_id: str | None = None) -> list[Note]:
+    def list_notes(self, workspace_id: str, paper_id: str | None = None, origin_kind: str | None = None) -> list[Note]:
         with self.session_factory() as session:
             stmt = select(NoteRecord).where(NoteRecord.workspace_id == workspace_id)
             if paper_id is not None:
                 stmt = stmt.where(NoteRecord.paper_id == paper_id)
+            if origin_kind is not None:
+                stmt = stmt.where(NoteRecord.origin_kind == origin_kind)
             return [self._note_model(r) for r in session.scalars(stmt.order_by(NoteRecord.updated_at.desc())).all()]
 
-    def create_note(self, workspace_id: str, author_id: str, paper_id: str | None, title: str, content: str) -> Note:
+    def create_note(self, workspace_id: str, author_id: str, paper_id: str | None, title: str, content: str, origin_kind: str | None = None) -> Note:
         now = datetime.now(timezone.utc)
         with self.session_factory.begin() as session:
             if paper_id and session.scalar(select(PaperRecord.id).where(PaperRecord.workspace_id == workspace_id, PaperRecord.id == paper_id)) is None:
                 raise PaperNotFoundError(paper_id)
-            record = NoteRecord(id=str(uuid4()), workspace_id=workspace_id, paper_id=paper_id, author_id=author_id, title=title.strip(), content=content, created_at=now, updated_at=now)
+            record = NoteRecord(id=str(uuid4()), workspace_id=workspace_id, paper_id=paper_id, author_id=author_id, title=title.strip(), content=content, origin_kind=origin_kind, created_at=now, updated_at=now)
             session.add(record)
         return self._note_model(record)
 

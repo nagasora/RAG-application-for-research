@@ -556,12 +556,22 @@ export async function setPaperTags(paperId: string, tagIds: string[], signal?: A
   return unwrap(await api.PUT("/api/papers/{paper_id}/tags", { params: { path: { paper_id: paperId } }, body: { tag_ids: tagIds }, signal }), "論文タグを更新できませんでした");
 }
 
-export async function listNotes(paperId?: string, signal?: AbortSignal): Promise<Note[]> {
-  return unwrap(await api.GET("/api/notes", { params: { query: { paper_id: paperId } }, signal }), "ノートを取得できませんでした");
+export type NoteOriginKind = "mind_map";
+export type NoteListOptions = { originKind?: NoteOriginKind; signal?: AbortSignal };
+export type NoteCreateOptions = { originKind?: NoteOriginKind; signal?: AbortSignal };
+
+function noteOptions(options?: NoteListOptions | AbortSignal): NoteListOptions {
+  return options instanceof AbortSignal ? { signal: options } : options ?? {};
 }
 
-export async function createNote(paperId: string | null, title: string, content: string, signal?: AbortSignal): Promise<Note> {
-  return unwrap(await api.POST("/api/notes", { body: { paper_id: paperId, title, content }, signal }), "ノートを作成できませんでした");
+export async function listNotes(paperId?: string, options?: NoteListOptions | AbortSignal): Promise<Note[]> {
+  const { originKind, signal } = noteOptions(options);
+  return unwrap(await api.GET("/api/notes", { params: { query: { paper_id: paperId, origin_kind: originKind } }, signal }), "ノートを取得できませんでした");
+}
+
+export async function createNote(paperId: string | null, title: string, content: string, options?: NoteCreateOptions | AbortSignal): Promise<Note> {
+  const { originKind, signal } = noteOptions(options);
+  return unwrap(await api.POST("/api/notes", { body: { paper_id: paperId, title, content, origin_kind: originKind }, signal }), "ノートを作成できませんでした");
 }
 
 export async function updateNote(noteId: string, title: string, content: string, signal?: AbortSignal): Promise<Note> {

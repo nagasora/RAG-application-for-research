@@ -2905,6 +2905,8 @@ export interface components {
             id: string;
             /** Paper Id */
             paper_id: string | null;
+            /** Origin Kind */
+            origin_kind?: "mind_map" | null;
             /** Title */
             title: string;
             /** Updated At */
@@ -2916,6 +2918,8 @@ export interface components {
             content: string;
             /** Paper Id */
             paper_id?: string | null;
+            /** Origin Kind */
+            origin_kind?: "mind_map" | null;
             /** Title */
             title: string;
         };
@@ -5718,6 +5722,7 @@ export interface operations {
     list_notes_api_notes_get: {
         parameters: {
             query?: {
+                origin_kind?: "mind_map" | null;
                 paper_id?: string | null;
             };
             header?: never;

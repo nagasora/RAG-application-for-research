@@ -27,9 +27,18 @@ test("research pipeline keeps promotion gates and experiment audit actions visib
 
 test("Ask can produce graph candidates even when durable memory is empty", () => {
   assert.match(ask, /await listGraphIdeaCandidates\(/);
+  assert.match(ask, /const imported = await importGraphSource\(/);
+  assert.match(ask, /kind:"chat", locator:`chat:\/\/conversation\/\$\{conversationId\}\/message\/\$\{graphMessage\.id\}`/);
+  assert.match(ask, /source_span_id:evidenceSpan\.id, drafts/);
   assert.match(ask, /await exportConversationGraphDrafts\(/);
+  assert.doesNotMatch(ask, /api\.PATCH\([^\n]*graph-drafts/);
   assert.match(ask, /自分でレビュー候補を追加/);
-  assert.match(ask, /kind:"manual"/);
+  assert.match(ask, /function graphDraftApiKind\(/);
+  assert.match(ask, /manual:.*graphDraftKind/);
+  assert.match(ask, /kind:graphDraftApiKind\(graphDraftKind\)/);
+  assert.match(ask, /会話の根拠を保存/);
+  assert.match(ask, /レビュー候補をグラフへ保存/);
+  assert.match(ask, /HTTP \$\{normalized\.status\}/);
   assert.match(ask, /論文根拠・検証済み知識・引用の支持を意味しません/);
 });
 

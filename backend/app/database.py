@@ -170,6 +170,10 @@ class ResearchActionRecord(Base):
         Index("ix_research_actions_idea", "idea_id"),
         Index("ix_research_actions_node", "origin_node_id"),
         Index("ix_research_actions_experiment", "experiment_plan_id"),
+        UniqueConstraint(
+            "workspace_id", "origin_node_id", "extraction_source", "extraction_ordinal",
+            name="uq_research_actions_mind_map_extraction",
+        ),
     )
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -188,6 +192,10 @@ class ResearchActionRecord(Base):
     status: Mapped[str] = mapped_column(String(24), nullable=False, default="open")
     generation_class: Mapped[str] = mapped_column(String(24), nullable=False, default="unverified")
     generation_metadata: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    # Normalized from generation_metadata for the deterministic mind-map path.
+    # NULL keeps all pre-existing and non-mind-map actions outside this key.
+    extraction_source: Mapped[str | None] = mapped_column(String(64))
+    extraction_ordinal: Mapped[int | None] = mapped_column(Integer)
     human_decision: Mapped[str] = mapped_column(String(24), nullable=False, default="unreviewed")
     human_reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -356,12 +364,14 @@ class PaperDecisionRecord(Base):
 
 class NoteRecord(Base):
     __tablename__ = "notes"
+    __table_args__ = (Index("ix_notes_workspace_origin_kind", "workspace_id", "origin_kind"),)
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
     paper_id: Mapped[str | None] = mapped_column(ForeignKey("papers.id", ondelete="CASCADE"), index=True)
     author_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    origin_kind: Mapped[str | None] = mapped_column(String(32))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
