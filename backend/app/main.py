@@ -44,7 +44,7 @@ from .models import (
     SourceImportCreate, SourceImportResult, SourceVersion, SourceVersionCreate,
     HypothesisCard, HypothesisCardCreate, HypothesisCardStatusUpdate,
     DiscoveryItem, DiscoveryItemCreate, DiscoveryReviewUpdate,
-    BeliefEvent, BeliefEventCreate, ExperimentPlan, ExperimentPlanCreate, ExperimentPlanSnapshot, ExperimentResultCreate, Idea, IdeaCreate, IdeaUpdate,
+    BeliefEvent, BeliefEventCreate, ExperimentPlan, ExperimentPlanCreate, ExperimentPlanSnapshot, ExperimentResultCreate, Idea, IdeaCreate, IdeaUpdate, ResearchAction, ResearchActionCreate, ResearchActionUpdate,
     ConversationGraphExportCreate, GraphIdeaCandidate, ReviewAssignmentUpdate, ReviewCandidate, ReviewCommentCreate, ReviewDecisionCreate, ReviewThread, ReviewThreadCreate,
 )
 from .graph_rag import GraphEdge as RetrievalGraphEdge, PrunedTwoHopConfig, RetrievalSeed, pruned_two_hop_retrieve
@@ -148,16 +148,16 @@ def _build_agentic_chat_model(timeout_seconds: float = 18.0):
         model=ANSWER_MODEL,
         api_key=os.environ["OPENAI_API_KEY"],
         # Respect the Agentic RAG stage budget. Keep the initial client usable
-        # for the 16-second generation stage; _ask still supplies a smaller
+        # for the longer generation stage; _ask still supplies a smaller
         # timeout for planning and verification calls.
-        timeout=max(0.5, min(timeout_seconds, 20.0)),
+        timeout=max(0.5, min(timeout_seconds, 35.0)),
         # The request-level deadline owns retries. SDK retries can otherwise
         # consume the whole response budget before a local fallback is returned.
         max_retries=0,
         # This is only an upper bound, not a reserved/charged token count.
-        # Complex Japanese answers with LaTeX can exceed 1,800 tokens and leave
-        # Structured Outputs as truncated, invalid JSON.
-        max_tokens=4000,
+        # Complex Japanese answers with LaTeX and structured claims can exceed
+        # 4,000 tokens. The configurable ceiling is an upper bound only.
+        max_tokens=ANSWER_MAX_OUTPUT_TOKENS,
         use_responses_api=True,
     )
 
@@ -240,7 +240,8 @@ def _generate_forward_hypothesis(input_contents: list[str], evidence_texts: list
 
 
 MAX_UPLOAD_FILES = _positive_int_env("MAX_UPLOAD_FILES", 10)
-RAG_REQUEST_DEADLINE_SECONDS = _positive_float_env("RAG_REQUEST_DEADLINE_SECONDS", 25.0)
+ANSWER_MAX_OUTPUT_TOKENS = _positive_int_env("ANSWER_MAX_OUTPUT_TOKENS", 6_000)
+RAG_REQUEST_DEADLINE_SECONDS = _positive_float_env("RAG_REQUEST_DEADLINE_SECONDS", 45.0)
 PAPER_SUMMARY_DEADLINE_SECONDS = _positive_float_env("PAPER_SUMMARY_DEADLINE_SECONDS", 16.0)
 MAX_UPLOAD_BYTES = _positive_int_env("MAX_UPLOAD_BYTES", 25 * 1024 * 1024)
 MAX_PDF_PAGES = _positive_int_env("MAX_PDF_PAGES", 300)
@@ -723,6 +724,33 @@ def promote_idea(idea_id: str, store: PaperStore = Depends(get_store), context: 
     try: return store.promote_idea(context.workspace.id, context.user.id, idea_id)
     except PaperNotFoundError as exc: raise HTTPException(status_code=404, detail="idea not found") from exc
     except ValueError as exc: raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/research-actions", response_model=list[ResearchAction])
+def list_research_actions(store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    return store.list_research_actions(context.workspace.id)
+
+
+@app.post("/api/research-actions", response_model=ResearchAction, status_code=201)
+def create_research_action(body: ResearchActionCreate, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    require_workspace_write(context)
+    try: return store.create_research_action(context.workspace.id, context.user.id, body)
+    except PaperNotFoundError as exc: raise HTTPException(status_code=404, detail="research action anchor not found") from exc
+    except ValueError as exc: raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/ideas/{idea_id}/actions/decompose", response_model=list[ResearchAction], status_code=201)
+def decompose_idea_actions(idea_id: str, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    require_workspace_write(context)
+    try: return store.decompose_idea_into_actions(context.workspace.id, context.user.id, idea_id)
+    except PaperNotFoundError as exc: raise HTTPException(status_code=404, detail="idea not found") from exc
+
+
+@app.patch("/api/research-actions/{action_id}", response_model=ResearchAction)
+def update_research_action(action_id: str, body: ResearchActionUpdate, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    require_workspace_write(context)
+    try: return store.update_research_action(context.workspace.id, action_id, body)
+    except PaperNotFoundError as exc: raise HTTPException(status_code=404, detail="research action not found") from exc
 
 
 @app.get("/api/reviews", response_model=list[ReviewThread])
@@ -1753,8 +1781,8 @@ def _run_agentic_rag(
         max_queries_per_iteration=3,
         max_evidence=max(body.limit, 10),
         model_factory=_build_agentic_chat_model,
-        max_sources=6,
-        max_evidence_chars=14_000,
+        max_sources=8,
+        max_evidence_chars=18_000,
         # Research memory is persisted only after the semantic audit.
         verify_clean_claims=conversation is not None,
         progress_callback=lambda stage: emit({
@@ -2821,14 +2849,14 @@ def set_paper_tags(paper_id: str, body: PaperTagsUpdate, store: PaperStore = Dep
 
 
 @app.get("/api/notes", response_model=list[Note])
-def list_notes(paper_id: str | None = None, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
-    return store.list_notes(context.workspace.id, paper_id)
+def list_notes(paper_id: str | None = None, origin_kind: Literal["mind_map"] | None = None, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    return store.list_notes(context.workspace.id, paper_id, origin_kind)
 
 
 @app.post("/api/notes", response_model=Note, status_code=201)
 def create_note(body: NoteCreate, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
     require_workspace_write(context)
-    try: return store.create_note(context.workspace.id, context.user.id, body.paper_id, body.title, body.content)
+    try: return store.create_note(context.workspace.id, context.user.id, body.paper_id, body.title, body.content, body.origin_kind)
     except PaperNotFoundError as exc: raise HTTPException(status_code=404, detail="paper not found") from exc
 
 

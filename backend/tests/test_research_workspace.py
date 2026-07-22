@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 import asyncio
+import threading
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -8,7 +9,7 @@ from app import main
 from app.agentic_rag import AgenticRAGResult
 from app.database import Base
 from app.models import (
-    Chunk, Paper, Principal, ResearchConversation, ResearchMemoryEvent,
+    Chunk, Paper, Principal, ResearchActionCreate, ResearchConversation, ResearchMemoryEvent,
     SearchRequest, User, Workspace,
 )
 from app.storage import LocalOriginalStorage
@@ -124,6 +125,72 @@ def test_assets_are_workspace_scoped_and_viewer_is_read_only(tmp_path):
         assert idor.status_code == 404
     finally:
         main.app.dependency_overrides.clear()
+
+
+def test_mind_map_notes_have_a_structured_origin_and_can_be_filtered(tmp_path):
+    setup_app(tmp_path)
+    try:
+        with TestClient(main.app) as client:
+            mind_map = client.post(
+                "/api/notes", headers=headers("alice"),
+                json={"title": "Map note", "content": "grounded detail", "origin_kind": "mind_map"},
+            )
+            ordinary = client.post(
+                "/api/notes", headers=headers("alice"),
+                json={"title": "Ordinary note", "content": "general detail"},
+            )
+            filtered = client.get("/api/notes?origin_kind=mind_map", headers=headers("alice"))
+
+        assert mind_map.status_code == 201
+        assert mind_map.json()["origin_kind"] == "mind_map"
+        assert ordinary.status_code == 201 and ordinary.json()["origin_kind"] is None
+        assert filtered.status_code == 200
+        assert [item["id"] for item in filtered.json()] == [mind_map.json()["id"]]
+    finally:
+        main.app.dependency_overrides.clear()
+
+
+def test_mind_map_task_extraction_is_idempotent_for_serial_and_parallel_calls(tmp_path):
+    store = setup_app(tmp_path)
+    user, workspace = store.ensure_user(Principal(issuer="test", subject="mind-map-action"))
+    node = store.create_knowledge_node(
+        workspace.id, node_type="idea", content="Investigate mechanism", created_by=user.id,
+    )
+    body = ResearchActionCreate(
+        title="Validate the mechanism", origin_node_id=node.id,
+        generation_metadata={"source": "mind_map_task_extraction_v1", "ordinal": 0},
+    )
+
+    first = store.create_research_action(workspace.id, user.id, body)
+    second = store.create_research_action(workspace.id, user.id, body)
+    assert first.id == second.id
+
+    parallel_body = ResearchActionCreate(
+        title="Independently validate the mechanism", origin_node_id=node.id,
+        generation_metadata={"source": "mind_map_task_extraction_v1", "ordinal": 1},
+    )
+
+    barrier = threading.Barrier(2)
+    created: list[str] = []
+    failures: list[Exception] = []
+
+    def create_from_another_tab() -> None:
+        try:
+            barrier.wait(timeout=5)
+            created.append(store.create_research_action(workspace.id, user.id, parallel_body).id)
+        except Exception as exc:  # pragma: no cover - assertion below exposes failures
+            failures.append(exc)
+
+    threads = [threading.Thread(target=create_from_another_tab) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert not failures
+    assert len(created) == 2 and created[0] == created[1]
+    assert {action.id for action in store.list_research_actions(workspace.id)} == {first.id, created[0]}
+    main.app.dependency_overrides.clear()
 
 
 def test_search_history_saved_comparison_and_exports(tmp_path):

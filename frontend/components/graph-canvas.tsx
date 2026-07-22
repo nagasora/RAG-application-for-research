@@ -35,7 +35,7 @@ type GraphCanvasProps = {
   onEdgeSelect?: (edge: GraphEdge) => void;
   ariaLabel?: string;
   className?: string;
-  viewMode?: "canvas" | "network";
+  viewMode?: "canvas" | "network" | "mindmap";
 };
 
 const NODE_WIDTH = 190;
@@ -96,6 +96,7 @@ const RELATION_STYLE: Record<string, { color: string; dash?: string }> = {
 };
 
 type PositionedNode = GraphNode & { x: number; y: number };
+type MindMapPosition = { side: "left" | "right" | "center"; depth: number };
 
 function truncate(value: string, maximum: number) {
   return value.length > maximum ? `${value.slice(0, Math.max(0, maximum - 1))}…` : value;
@@ -105,6 +106,54 @@ function nodeKeyboardSelect(event: KeyboardEvent<SVGGElement>, onSelect: () => v
   if (event.key !== "Enter" && event.key !== " ") return;
   event.preventDefault();
   onSelect();
+}
+
+function mindMapLayout(nodes: GraphNode[], edges: GraphEdge[], rootId: string): PositionedNode[] {
+  const root = nodes.find(node => node.id === rootId) ?? nodes[0];
+  const positions = new Map<string, MindMapPosition>([[root.id, { side:"center", depth:0 }]]);
+  const neighbours = new Map<string, { id: string; direction: "out" | "in" }[]>();
+  for (const edge of edges) {
+    neighbours.set(edge.source, [...(neighbours.get(edge.source) ?? []), { id:edge.target, direction:"out" }]);
+    neighbours.set(edge.target, [...(neighbours.get(edge.target) ?? []), { id:edge.source, direction:"in" }]);
+  }
+  const queue = [root.id];
+  for (let cursor = 0; cursor < queue.length; cursor += 1) {
+    const currentId = queue[cursor];
+    const current = positions.get(currentId)!;
+    for (const neighbour of neighbours.get(currentId) ?? []) {
+      if (positions.has(neighbour.id)) continue;
+      const side = current.side === "center" ? (neighbour.direction === "out" ? "right" : "left") : current.side;
+      positions.set(neighbour.id, { side, depth:current.depth + 1 });
+      queue.push(neighbour.id);
+    }
+  }
+  // Disconnected ideas remain visible as a separate right-hand branch.
+  for (const node of nodes) if (!positions.has(node.id)) positions.set(node.id, { side:"right", depth:1 });
+
+  const rootX = 560;
+  const rootY = Math.max(290, Math.ceil(nodes.length / 2) * 68 + 110);
+  const grouped = new Map<string, GraphNode[]>();
+  for (const node of nodes) {
+    const position = positions.get(node.id)!;
+    if (position.side === "center") continue;
+    const key = `${position.side}:${position.depth}`;
+    grouped.set(key, [...(grouped.get(key) ?? []), node]);
+  }
+  const rawNodes = nodes.map(node => {
+    const position = positions.get(node.id)!;
+    if (position.side === "center") return { ...node, x:rootX - NODE_WIDTH / 2, y:rootY - NODE_HEIGHT / 2 };
+    const group = grouped.get(`${position.side}:${position.depth}`) ?? [node];
+    const index = group.findIndex(item => item.id === node.id);
+    const spread = 132;
+    const y = rootY + (index - (group.length - 1) / 2) * spread;
+    const x = rootX + (position.side === "right" ? 1 : -1) * (position.depth * 282 + NODE_WIDTH / 2);
+    return { ...node, x, y };
+  });
+  const minX = Math.min(...rawNodes.map(node => node.x));
+  const minY = Math.min(...rawNodes.map(node => node.y));
+  const offsetX = minX < PADDING_X ? PADDING_X - minX : 0;
+  const offsetY = minY < PADDING_Y ? PADDING_Y - minY : 0;
+  return rawNodes.map(node => ({ ...node, x:node.x + offsetX, y:node.y + offsetY }));
 }
 
 /**
@@ -142,13 +191,20 @@ export function GraphCanvas({
       PADDING_X * 2 + Math.max(1, layerNumbers.length) * NODE_WIDTH + Math.max(0, layerNumbers.length - 1) * HORIZONTAL_GAP,
       maxPositionX + NODE_WIDTH + PADDING_X,
       viewMode === "network" ? PADDING_X * 2 + networkRadiusX * 2 + NODE_WIDTH : 0,
+      // The root is deliberately offset so its left and right branches remain
+      // readable. Reserve the root offset, an entire deepest branch, its card,
+      // and trailing padding (not only the branch-to-branch distance).
+      viewMode === "mindmap" ? Math.max(1_220, nodes.length * 282 + 627) : 0,
     );
     const calculatedHeight = Math.max(
       PADDING_Y * 2 + largestLayer * NODE_HEIGHT + Math.max(0, largestLayer - 1) * VERTICAL_GAP,
       maxPositionY + NODE_HEIGHT + PADDING_Y,
       viewMode === "network" ? PADDING_Y * 2 + networkRadiusY * 2 + NODE_HEIGHT : 0,
+      viewMode === "mindmap" ? Math.max(620, nodes.length * 132 + NODE_HEIGHT + PADDING_Y * 2) : 0,
     );
-    const nextNodes = viewMode === "network"
+    const nextNodes = viewMode === "mindmap"
+      ? mindMapLayout(nodes, edges, selectedNodeIds.at(-1) ?? nodes[0]?.id ?? "")
+      : viewMode === "network"
       ? nodes.map((node, index) => {
         const angle = (Math.PI * 2 * index) / Math.max(nodes.length, 1) - Math.PI / 2;
         const radiusX = networkRadiusX; const radiusY = networkRadiusY;
@@ -160,7 +216,7 @@ export function GraphCanvas({
         y: node.position?.y ?? PADDING_Y + nodeIndex * (NODE_HEIGHT + VERTICAL_GAP) + (largestLayer - (grouped.get(layer)?.length ?? 0)) * (NODE_HEIGHT + VERTICAL_GAP) / 2,
       })));
     return { positionedNodes:nextNodes, layers:layerNumbers, width:calculatedWidth, height:calculatedHeight };
-  }, [nodes, viewMode]);
+  }, [edges, nodes, selectedNodeIds, viewMode]);
   const nodesById = useMemo(() => new Map(positionedNodes.map(node => [node.id, node])), [positionedNodes]);
 
   if (!nodes.length) {
@@ -171,10 +227,10 @@ export function GraphCanvas({
 
   return <section aria-label={ariaLabel} className={`overflow-hidden rounded-2xl border border-[#d8ded9] bg-[#f8faf7] ${className}`}>
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-[#d8ded9] bg-white/80 px-4 py-3 text-[10px] text-[#52605b]">
-      <span className="font-bold uppercase tracking-[.14em] text-[#35634f]">{viewMode === "canvas" ? "Infinite canvas" : "Network view"}</span>
+      <span className="font-bold uppercase tracking-[.14em] text-[#35634f]">{viewMode === "mindmap" ? "Mind map" : viewMode === "canvas" ? "Infinite canvas" : "Network view"}</span>
       <span>{nodes.length} nodes</span><span>{edges.length} edges</span>
       <div className="ml-auto flex items-center gap-1" aria-label="キャンバスの拡大縮小"><button type="button" onClick={() => setZoom(current => Math.max(.65, current - .15))} className="grid h-6 w-6 place-items-center rounded border border-[#d8ded9] bg-white text-sm font-bold">−</button><span className="w-9 text-center font-mono">{Math.round(zoom * 100)}%</span><button type="button" onClick={() => setZoom(current => Math.min(1.5, current + .15))} className="grid h-6 w-6 place-items-center rounded border border-[#d8ded9] bg-white text-sm font-bold">+</button></div>
-      <span className="hidden text-[#7a837f] sm:inline">ドラッグでパン · Enter / Space で選択</span>
+      <span className="hidden text-[#7a837f] sm:inline">ノードを選ぶと中心テーマを切り替え · Enter / Space で選択</span>
     </div>
     <div className="graph-dot-grid overflow-auto overscroll-contain" tabIndex={0} aria-label={`${ariaLabel}。スクロールしてパンできます。`}>
       <svg viewBox={`0 0 ${width} ${height}`} role="group" aria-label={ariaLabel} style={{ width:`${zoom * 100}%`, minWidth:`${Math.max(720, 720 * zoom)}px` }} className="block min-h-[390px]" preserveAspectRatio="xMinYMin meet">
@@ -189,11 +245,13 @@ export function GraphCanvas({
           const source = nodesById.get(edge.source); const target = nodesById.get(edge.target);
           if (!source || !target) return null;
           const style = RELATION_STYLE[edge.relation] ?? { color: "#77857f", dash: "2 4" };
-          const startX = source.x + NODE_WIDTH; const startY = source.y + NODE_HEIGHT / 2;
-          const endX = target.x; const endY = target.y + NODE_HEIGHT / 2;
+          const flowsRight = source.x <= target.x;
+          const startX = flowsRight ? source.x + NODE_WIDTH : source.x; const startY = source.y + NODE_HEIGHT / 2;
+          const endX = flowsRight ? target.x : target.x + NODE_WIDTH; const endY = target.y + NODE_HEIGHT / 2;
           const midpointX = (startX + endX) / 2; const midpointY = (startY + endY) / 2;
           const relation = RELATION_LABEL[edge.relation as keyof typeof RELATION_LABEL] ?? edge.relation;
-          const path = `M ${startX} ${startY} C ${startX + 36} ${startY}, ${endX - 36} ${endY}, ${endX} ${endY}`;
+          const bend = flowsRight ? 52 : -52;
+          const path = `M ${startX} ${startY} C ${startX + bend} ${startY}, ${endX - bend} ${endY}, ${endX} ${endY}`;
           const selectable = Boolean(onEdgeSelect);
           const isFocused = focusedEdgeId === edge.id;
           const isHighlighted = highlightedEdges.has(edge.id);

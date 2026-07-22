@@ -232,6 +232,79 @@ def test_claim_anchored_ideas_require_one_validation_claim_and_are_idempotent(tm
         main.app.dependency_overrides.clear()
 
 
+def test_idea_actions_preserve_anchors_are_idempotent_and_require_human_review(tmp_path):
+    store = _setup(tmp_path)
+    try:
+        with TestClient(main.app) as client:
+            run = client.post("/api/research/runs", headers=_headers("alice"), json={"purpose": "action origin"}).json()
+            client.post(
+                f"/api/research/runs/{run['id']}/artifacts", headers=_headers("alice"),
+                json={"kind": "validation", "payload": {"claims": [{
+                    "claim_id": "action-claim", "text": "A claim to decompose", "classification": "hypothesis", "citation_ids": [],
+                }]}},
+            )
+            idea = client.post("/api/ideas", headers=_headers("alice"), json={
+                "content": "Explore the proposed mechanism", "research_run_id": run["id"], "claim_id": "action-claim",
+            }).json()
+            decomposed = client.post(f"/api/ideas/{idea['id']}/actions/decompose", headers=_headers("alice"))
+            retried = client.post(f"/api/ideas/{idea['id']}/actions/decompose", headers=_headers("alice"))
+            action = decomposed.json()[0]
+            reviewed = client.patch(f"/api/research-actions/{action['id']}", headers=_headers("alice"), json={
+                "status": "in_progress", "due_date": "2026-08-01", "human_decision": "held", "human_reason": "Need a stronger control",
+            })
+            bob_idea = client.post("/api/ideas", headers=_headers("bob"), json={"content": "foreign"}).json()
+            foreign = client.post("/api/research-actions", headers=_headers("alice"), json={
+                "title": "must reject foreign origin", "idea_id": bob_idea["id"],
+            })
+
+        assert decomposed.status_code == 201 and len(decomposed.json()) == 3
+        assert retried.status_code == 201
+        assert {item["id"] for item in decomposed.json()} == {item["id"] for item in retried.json()}
+        for item in decomposed.json():
+            assert item["idea_id"] == idea["id"]
+            assert item["research_run_id"] == run["id"]
+            assert item["claim_id"] == "action-claim"
+            assert item["claim_snapshot"]["text"] == "A claim to decompose"
+            assert item["generation_class"] == "inference"
+            assert item["human_decision"] == "unreviewed"
+        assert reviewed.status_code == 200
+        assert reviewed.json()["status"] == "in_progress"
+        assert reviewed.json()["due_date"] == "2026-08-01"
+        assert reviewed.json()["human_decision"] == "held"
+        assert foreign.status_code == 404
+    finally:
+        main.app.dependency_overrides.clear()
+
+
+def test_mind_map_task_actions_are_idempotent_and_keep_node_anchor(tmp_path):
+    store = _setup(tmp_path)
+    try:
+        with TestClient(main.app) as client:
+            node = client.post("/api/graph/nodes", headers=_headers("alice"), json={
+                "node_type": "hypothesis", "content": "A mechanism worth testing",
+            }).json()
+            payload = {
+                "title": "Confirm falsifier: A mechanism worth testing",
+                "description": "Unverified task candidate from the mind map.",
+                "origin_node_id": node["id"], "generation_class": "unverified",
+                "generation_metadata": {
+                    "source": "mind_map_task_extraction_v1", "ordinal": 1,
+                    "node_snapshot": {"content": node["content"]}, "evidence_span_ids": [],
+                },
+            }
+            created = client.post("/api/research-actions", headers=_headers("alice"), json=payload)
+            retried = client.post("/api/research-actions", headers=_headers("alice"), json=payload)
+            listed = client.get("/api/research-actions", headers=_headers("alice"))
+
+        assert created.status_code == 201 and retried.status_code == 201
+        assert created.json()["id"] == retried.json()["id"]
+        assert created.json()["origin_node_id"] == node["id"]
+        assert created.json()["generation_metadata"]["node_snapshot"]["content"] == node["content"]
+        assert len(listed.json()) == 1
+    finally:
+        main.app.dependency_overrides.clear()
+
+
 def test_experiment_read_append_only_snapshot_and_workspace_scope(tmp_path):
     store = _setup(tmp_path)
     try:

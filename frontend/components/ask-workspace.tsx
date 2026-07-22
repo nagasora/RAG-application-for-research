@@ -60,6 +60,18 @@ function ideaKindForClaim(claim: AnswerClaim) {
   return claim.classification === "inference" ? "interpretation" as const : "hypothesis" as const;
 }
 
+function graphDraftApiKind(kind: "idea" | "hypothesis" | "constraint" | "experiment") {
+  // The graph export API intentionally has no generic "idea" node type. Keep
+  // researcher-authored ideas as manual proposals, while preserving the more
+  // specific choices as review-pending graph node types.
+  return ({
+    idea: "manual",
+    hypothesis: "hypothesis",
+    constraint: "assumption",
+    experiment: "planned_test",
+  } as const)[kind];
+}
+
 function ideaClaimKey(messageId: string, claimId: string) {
   return `${messageId}:${claimId}`;
 }
@@ -73,19 +85,19 @@ const MEMORY_KIND_LABEL: Record<GraphIdeaCandidate["kind"], string> = {
   hypothesis:"仮説", assumption:"前提", unresolved_question:"未解決点", planned_test:"検証案",
 };
 const STAGE_LABELS: Record<SearchStage, string> = {
-  accepted: "質問を受け付けました",
-  embedding: "質問と論文をベクトル化しています",
-  retrieving: "プロジェクト知識ベースから根拠を検索しています",
-  planning: "検索結果を評価し、回答方針を組み立てています",
-  generating: "論文根拠とLLM知識を統合しています",
-  auditing: "主張と引用元を照合しています",
-  saving: "回答と研究メモリを保存しています",
+  accepted: "質問を受け付けました。回答を準備しています",
+  embedding: "質問と論文を解析しています",
+  retrieving: "関連する論文と根拠を探しています",
+  planning: "検索結果を整理し、回答の方針を組み立てています",
+  generating: "論文の根拠をもとに回答を作成しています",
+  auditing: "回答の主張と引用元を確認しています",
+  saving: "回答と研究メモを保存しています",
 };
 
 const FALLBACK_LABELS: Record<string, string> = {
   api_key_missing: "APIキーがバックエンドに反映されていません",
-  dependency_missing: "Agentic RAGの依存関係が不足しています",
-  no_evidence: "検索できる論文根拠がありません",
+  dependency_missing: "検索に必要な機能を利用できません",
+  no_evidence: "質問に一致する論文の根拠が見つかりません",
   authentication_failed: "APIキーの認証に失敗しました",
   permission_denied: "モデルの利用権限がありません",
   model_not_found: "指定モデルを利用できません",
@@ -96,16 +108,16 @@ const FALLBACK_LABELS: Record<string, string> = {
   deadline_exceeded: "根拠検証が制限時間を超えました",
   network_error: "OpenAI APIへ接続できません",
   provider_unavailable: "OpenAI APIが一時的に利用できません",
-  citation_validation_failed: "引用番号の検証を通過しませんでした",
-  grounding_audit_failed: "根拠監査を通過しませんでした",
-  verification_skipped_timeout: "追加の根拠監査が制限時間内に完了しませんでした",
-  model_call_failed: "LLMの追加処理を完了できませんでした",
-  repair_failed: "引用の修復を完了できませんでした",
-  grounding_failed: "根拠監査を通過しませんでした",
+  citation_validation_failed: "引用元を確認できませんでした",
+  grounding_audit_failed: "回答と根拠の対応を確認できませんでした",
+  verification_skipped_timeout: "追加の根拠確認が時間内に完了しませんでした",
+  model_call_failed: "回答の作成を完了できませんでした",
+  repair_failed: "引用の調整を完了できませんでした",
+  grounding_failed: "回答と根拠の対応を確認できませんでした",
 };
 
 function fallbackLabel(code?: string | null) {
-  return code ? (FALLBACK_LABELS[code] ?? "LLM生成を完了できませんでした") : "";
+  return code ? (FALLBACK_LABELS[code] ?? "回答を作成できませんでした") : "";
 }
 
 function isGraphCitation(citation: Citation) {
@@ -612,6 +624,7 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
     const draft = graphDraft.trim();
     if (!candidates.length && !draft) return;
     graphExportingRef.current = true; setGraphSaving(true); setGraphError(""); setGraphNotice("");
+    let saveStage: "source" | "export" = "source";
     try {
       // Preserve the assistant turn as an immutable chat Source. It is provenance for
       // an idea, never a substitute for the cited paper evidence in that turn.
@@ -625,15 +638,22 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
       if (!evidenceSpan) throw new Error("会話の根拠Spanを作成できませんでした");
       const drafts = [
         ...candidates.map(candidate => ({ candidate_id:candidate.id, content:candidate.content, kind:candidate.kind, derived_from_memory:candidate.derived_from_memory })),
-        ...(draft ? [{ candidate_id:`manual:${await sha256Hex(draft)}`, content:draft, kind:"manual" as const, derived_from_memory:false }] : []),
+        ...(draft ? [{
+          candidate_id:`manual:${graphDraftKind}:${await sha256Hex(draft)}`, content:draft,
+          kind:graphDraftApiKind(graphDraftKind), derived_from_memory:false,
+        }] : []),
       ];
+      saveStage = "export";
       await exportConversationGraphDrafts(conversationId, graphMessage.id, { source_span_id:evidenceSpan.id, drafts });
       candidates.forEach(candidate => graphSavedMemoryRef.current.add(candidate.id));
       setSelectedGraphCandidateIds([]);
       setGraphDraft("");
       setGraphNotice(`${candidates.length + (draft ? 1 : 0)}件をレビュー待ちとして知識グラフへ保存しました。会話由来の未検証メモであり、論文事実としては扱われません。`);
     } catch (requestError) {
-      setGraphError(apiErrorMessage(requestError, "知識グラフへ保存できませんでした"));
+      const normalized = toApiError(requestError, "知識グラフへ保存できませんでした");
+      const stageLabel = saveStage === "source" ? "会話の根拠を保存" : "レビュー候補をグラフへ保存";
+      const httpContext = normalized.status ? `（HTTP ${normalized.status}）` : "";
+      setGraphError(`${stageLabel}に失敗しました${httpContext}: ${apiErrorMessage(normalized, "詳細を取得できませんでした")}`);
     } finally { graphExportingRef.current = false; setGraphSaving(false); }
   };
 

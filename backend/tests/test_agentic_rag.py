@@ -150,6 +150,34 @@ def test_structured_capable_model_uses_strict_pydantic_schema():
     assert configured == [(StructuredAnswerSchema, "json_schema", True)]
 
 
+def test_long_form_answer_budget_allows_eight_sections_and_bounds_runtime_inputs():
+    """Keep the configured long-form budget finite even for invalid deployment values."""
+    agent = AgenticRAG(
+        RunnableLambda(lambda prompt: _generation([_general_claim()])),
+        lambda query, limit: [_citation(1, "c1")],
+        max_execution_seconds=99, max_sources=99, max_evidence_chars=99_999,
+        generation_reserve_seconds=99,
+    )
+    assert agent.max_execution_seconds == 60.0
+    assert agent.max_sources == 8
+    assert agent.max_evidence_chars == 18_000
+    assert agent.generation_reserve_seconds == 15.0
+
+    section = {"title": "結果", "claims": [_general_claim()]}
+    payload = {
+        "answer_sections": [section] * 8,
+        "limitations": ["limit"] * 8,
+        "next_steps": ["next"] * 8,
+        "memory_delta": {
+            "hypotheses": ["h"] * 6, "assumptions": ["a"] * 6,
+            "unresolved_questions": ["q"] * 6, "planned_tests": ["t"] * 6,
+        },
+    }
+    StructuredAnswerSchema.model_validate(payload)
+    with pytest.raises(ValidationError):
+        StructuredAnswerSchema.model_validate({**payload, "answer_sections": [section] * 9})
+
+
 def test_complex_query_adapts_with_plan_rerank_and_generation_only():
     calls: list[str] = []
     evidence = [_citation(index, f"c{index}", 0.8 - index * 0.01) for index in range(1, 11)]
