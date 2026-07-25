@@ -57,8 +57,16 @@ function claimSnapshotView(thread: ReviewThread): ClaimSnapshotView | null {
 }
 
 function anchorLabel(thread: ReviewThread): string {
-  if (thread.evidence_link_id) return `EvidenceLink: ${thread.evidence_link_id}`;
-  return claimSnapshotView(thread)?.text || `Run: ${thread.research_run_id ?? "-"} / Claim: ${thread.claim_id ?? "-"}`;
+  if (thread.evidence_link_id) return `根拠リンク: ${thread.evidence_link_id}`;
+  return claimSnapshotView(thread)?.text || `研究実行: ${thread.research_run_id ?? "-"} / 主張: ${thread.claim_id ?? "-"}`;
+}
+
+function roleLabel(role: WorkspaceMember["role"]): string {
+  return role === "owner" ? "所有者" : role === "editor" ? "編集者" : "閲覧者";
+}
+
+function classificationLabel(value: string): string {
+  return ({ evidence_backed:"根拠あり", inference:"推論", general_knowledge:"一般知識", hypothesis:"仮説", unverified:"未検証" } as Record<string, string>)[value] ?? "区分未設定";
 }
 
 export function CollaborativeReviews({ workspaceId, canWrite }: CollaborativeReviewsProps) {
@@ -173,10 +181,10 @@ export function CollaborativeReviews({ workspaceId, canWrite }: CollaborativeRev
 
   return <section className="paper-card mb-6 rounded-3xl p-6">
     <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
-      <div><div className="flex items-center gap-2"><ChatBubbleLeftRightIcon className="h-5 w-5 text-[#164f3b]"/><h2 className="serif text-2xl font-semibold">共同レビュー</h2></div><p className="mt-2 text-xs leading-5 text-[#68736f]">主張または EvidenceLink を起点に、担当・議論・判断を監査可能な形で残します。</p></div>
-      <button type="button" onClick={downloadReport} disabled={busy === "report"} className="inline-flex items-center gap-2 rounded-full border border-[#164f3b] px-4 py-2 text-xs font-semibold text-[#164f3b] disabled:opacity-40"><ArrowDownTrayIcon className="h-4 w-4"/>引用付き Markdown レポート</button>
+      <div><div className="flex items-center gap-2"><ChatBubbleLeftRightIcon className="h-5 w-5 text-[#164f3b]"/><h2 className="serif text-2xl font-semibold">共同レビュー</h2></div><p className="mt-2 text-xs leading-5 text-[#68736f]">主張または根拠リンクを起点に、担当・議論・判断を監査可能な形で残します。</p></div>
+      <button type="button" onClick={downloadReport} disabled={busy === "report"} className="inline-flex items-center gap-2 rounded-full border border-[#164f3b] px-4 py-2 text-xs font-semibold text-[#164f3b] disabled:opacity-40"><ArrowDownTrayIcon className="h-4 w-4"/>引用付きレポート</button>
     </div>
-    {!canWrite && <p className="mb-4 rounded-xl bg-amber-50 p-3 text-xs text-amber-800">viewer はレビュー一覧・詳細・判断履歴・レポートを閲覧できます。</p>}
+    {!canWrite && <p className="mb-4 rounded-xl bg-amber-50 p-3 text-xs text-amber-800">閲覧者はレビュー一覧・詳細・判断履歴・レポートを確認できます。</p>}
     {error && <div role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</div>}
     {notice && <div role="status" className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">{notice}</div>}
 
@@ -184,9 +192,9 @@ export function CollaborativeReviews({ workspaceId, canWrite }: CollaborativeRev
       <h3 className="mb-3 text-sm font-semibold">レビューを開始</h3>
       <div className="grid gap-3 md:grid-cols-2">
         <input aria-label="レビュー名" maxLength={255} value={title} onChange={event => setTitle(event.target.value)} placeholder="レビュー名" className="rounded-xl border border-[#d5d8d2] bg-white px-3 py-2 text-sm"/>
-        <select aria-label="アンカー種別" value={anchorMode} onChange={event => setAnchorMode(event.target.value as AnchorMode)} className="rounded-xl border border-[#d5d8d2] bg-white px-3 py-2 text-sm"><option value="claim">Research Run の主張</option><option value="evidence">EvidenceLink</option></select>
-        {anchorMode === "claim" ? <><input aria-label="Research Run ID" value={researchRunId} onChange={event => setResearchRunId(event.target.value)} placeholder="Research Run ID" className="rounded-xl border border-[#d5d8d2] bg-white px-3 py-2 text-sm"/><input aria-label="Claim ID" maxLength={128} value={claimId} onChange={event => setClaimId(event.target.value)} placeholder="Claim ID" className="rounded-xl border border-[#d5d8d2] bg-white px-3 py-2 text-sm"/></> : <input aria-label="EvidenceLink ID" value={evidenceLinkId} onChange={event => setEvidenceLinkId(event.target.value)} placeholder="EvidenceLink ID" className="rounded-xl border border-[#d5d8d2] bg-white px-3 py-2 text-sm"/>}
-        <select aria-label="初期担当者" value={assignedTo} onChange={event => setAssignedTo(event.target.value)} className="rounded-xl border border-[#d5d8d2] bg-white px-3 py-2 text-sm"><option value="">未割り当て</option>{members.map(member => <option key={member.user.id} value={member.user.id}>{memberLabel(member)} ({member.role})</option>)}</select>
+        <select aria-label="アンカー種別" value={anchorMode} onChange={event => setAnchorMode(event.target.value as AnchorMode)} className="rounded-xl border border-[#d5d8d2] bg-white px-3 py-2 text-sm"><option value="claim">研究実行の主張</option><option value="evidence">根拠リンク</option></select>
+        {anchorMode === "claim" ? <><input aria-label="研究実行ID" value={researchRunId} onChange={event => setResearchRunId(event.target.value)} placeholder="研究実行ID" className="rounded-xl border border-[#d5d8d2] bg-white px-3 py-2 text-sm"/><input aria-label="主張ID" maxLength={128} value={claimId} onChange={event => setClaimId(event.target.value)} placeholder="主張ID" className="rounded-xl border border-[#d5d8d2] bg-white px-3 py-2 text-sm"/></> : <input aria-label="根拠リンクID" value={evidenceLinkId} onChange={event => setEvidenceLinkId(event.target.value)} placeholder="根拠リンクID" className="rounded-xl border border-[#d5d8d2] bg-white px-3 py-2 text-sm"/>}
+        <select aria-label="初期担当者" value={assignedTo} onChange={event => setAssignedTo(event.target.value)} className="rounded-xl border border-[#d5d8d2] bg-white px-3 py-2 text-sm"><option value="">未割り当て</option>{members.map(member => <option key={member.user.id} value={member.user.id}>{memberLabel(member)}（{roleLabel(member.role)}）</option>)}</select>
       </div>
       <button disabled={!title.trim() || !anchorReady || busy === "create"} className="mt-3 rounded-full bg-[#164f3b] px-4 py-2 text-xs font-semibold text-white disabled:opacity-40">レビューを作成</button>
     </form>}
@@ -196,9 +204,9 @@ export function CollaborativeReviews({ workspaceId, canWrite }: CollaborativeRev
 
       {selected ? <article className="rounded-2xl border border-[#deddd5] bg-white/65 p-5">
         <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="serif text-xl font-semibold">{selected.title}</h3>{selected.evidence_link_id && <p className="mt-1 break-all text-xs text-[#68736f]">{anchorLabel(selected)}</p>}</div><span className="rounded-full bg-[#eef1ee] px-2.5 py-1 text-[10px] font-bold">{selected.status === "resolved" ? "解決済み" : "未解決"}</span></div>
-        {selectedClaimSnapshot && <section aria-label="保存時点の主張" className="mt-4 rounded-2xl border border-[#b9d4c5] bg-[#edf7f1] p-4"><div className="flex flex-wrap items-center gap-2"><h4 className="text-xs font-bold text-[#23513e]">保存時点の主張</h4><span className="rounded-full bg-white/75 px-2 py-0.5 text-[10px] font-semibold text-[#35634f]">immutable snapshot</span>{selectedClaimSnapshot.classification && <span className="rounded-full bg-white/75 px-2 py-0.5 text-[10px] text-[#52605b]">{selectedClaimSnapshot.classification}</span>}</div><p className="mt-2 whitespace-pre-wrap text-sm font-medium leading-6 text-[#26342e]">{selectedClaimSnapshot.text}</p>{selectedClaimSnapshot.citationIds.length ? <p className="mt-2 text-[11px] text-[#52605b]">引用: {selectedClaimSnapshot.citationIds.join(", ")}</p> : null}<p className="mt-2 break-all text-[10px] text-[#68736f]">Run {selected.research_run_id} · Claim {selected.claim_id}{selected.claim_artifact_id ? ` · Artifact ${selected.claim_artifact_id}` : ""}</p></section>}
+        {selectedClaimSnapshot && <section aria-label="保存時点の主張" className="mt-4 rounded-2xl border border-[#b9d4c5] bg-[#edf7f1] p-4"><div className="flex flex-wrap items-center gap-2"><h4 className="text-xs font-bold text-[#23513e]">保存時点の主張</h4><span className="rounded-full bg-white/75 px-2 py-0.5 text-[10px] font-semibold text-[#35634f]">変更されない記録</span>{selectedClaimSnapshot.classification && <span className="rounded-full bg-white/75 px-2 py-0.5 text-[10px] text-[#52605b]">{classificationLabel(selectedClaimSnapshot.classification)}</span>}</div><p className="mt-2 whitespace-pre-wrap text-sm font-medium leading-6 text-[#26342e]">{selectedClaimSnapshot.text}</p>{selectedClaimSnapshot.citationIds.length ? <p className="mt-2 text-[11px] text-[#52605b]">引用: {selectedClaimSnapshot.citationIds.join(", ")}</p> : null}<p className="mt-2 break-all text-[10px] text-[#68736f]">研究実行 {selected.research_run_id} · 主張 {selected.claim_id}{selected.claim_artifact_id ? ` · 保存記録 ${selected.claim_artifact_id}` : ""}</p></section>}
         {!selected.evidence_link_id && !selectedClaimSnapshot && <p className="mt-3 break-all rounded-xl bg-amber-50 p-3 text-xs text-amber-800">主張スナップショットを表示できません。{anchorLabel(selected)}</p>}
-        <label className="mt-5 block text-xs font-semibold text-[#52605b]">担当者<select aria-label="レビュー担当者" disabled={!canWrite || busy === "assignment"} value={selected.assigned_to ?? ""} onChange={event => updateAssignment(event.target.value)} className="mt-1 block w-full rounded-xl border border-[#d5d8d2] bg-white px-3 py-2 text-sm disabled:opacity-60"><option value="">未割り当て</option>{members.map(member => <option key={member.user.id} value={member.user.id}>{memberLabel(member)} ({member.role})</option>)}</select></label>
+        <label className="mt-5 block text-xs font-semibold text-[#52605b]">担当者<select aria-label="レビュー担当者" disabled={!canWrite || busy === "assignment"} value={selected.assigned_to ?? ""} onChange={event => updateAssignment(event.target.value)} className="mt-1 block w-full rounded-xl border border-[#d5d8d2] bg-white px-3 py-2 text-sm disabled:opacity-60"><option value="">未割り当て</option>{members.map(member => <option key={member.user.id} value={member.user.id}>{memberLabel(member)}（{roleLabel(member.role)}）</option>)}</select></label>
 
         <div className="mt-6"><h4 className="text-sm font-semibold">コメント</h4><div className="mt-2 space-y-2">{selected.comments?.length ? selected.comments.map(item => <div key={item.id} className="rounded-xl bg-[#f3f4f0] p-3"><p className="whitespace-pre-wrap text-sm leading-6">{item.body}</p><p className="mt-1 text-[10px] text-[#89918e]">{item.author_id ? memberNames[item.author_id] ?? item.author_id : "不明"} · {new Date(item.created_at).toLocaleString("ja-JP")}</p></div>) : <p className="text-xs text-[#89918e]">コメントはありません。</p>}</div>{canWrite && <form onSubmit={submitComment} className="mt-3 flex gap-2"><textarea aria-label="レビューコメント" maxLength={20000} rows={2} value={comment} onChange={event => setComment(event.target.value)} placeholder="確認事項や修正案" className="min-w-0 flex-1 rounded-xl border border-[#d5d8d2] bg-white px-3 py-2 text-sm"/><button disabled={!comment.trim() || busy === "comment"} className="self-end rounded-full border border-[#164f3b] px-4 py-2 text-xs font-semibold text-[#164f3b] disabled:opacity-40">追加</button></form>}</div>
 

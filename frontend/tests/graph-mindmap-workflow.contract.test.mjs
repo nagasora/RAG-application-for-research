@@ -6,17 +6,25 @@ const root = new URL("../", import.meta.url);
 const read = (path) => readFile(new URL(path, root), "utf8");
 
 test("mind map preserves layout boundaries and structured task/note workflows", async () => {
-  const [canvas, workspace] = await Promise.all([
+  const [canvas, workspace, layout, boundary] = await Promise.all([
     read("components/graph-canvas.tsx"), read("components/graph-workspace.tsx"),
+    read("lib/graph/mindmap-layout.mjs"),
+    read("components/graph-canvas-error-boundary.tsx"),
   ]);
 
   assert.match(canvas, /"mindmap"/);
-  assert.match(canvas, /mindMapLayout/);
-  assert.match(canvas, /offsetX/);
-  assert.match(canvas, /minX\s*=\s*Math\.min/);
+  assert.match(canvas, /import\s*\{\s*mindMapLayout\s*\}\s*from\s*["']@\/lib\/graph\/mindmap-layout\.mjs["']/);
+  assert.match(layout, /if\s*\(!nodes\.length\)\s*return\s*\[\]/);
+  assert.match(layout, /nodes\.find\(node\s*=>\s*node\.id\s*===\s*rootId\)\s*\?\?\s*nodes\[0\]/);
+  assert.match(layout, /offsetX/);
+  assert.match(layout, /minX\s*=\s*Math\.min/);
   assert.match(canvas, /viewMode\s*===\s*"mindmap"\s*\?\s*Math\.max/);
   assert.match(canvas, /selectedNodeIds\.at\(-1\)/);
   assert.match(workspace, /setCanvasView\("mindmap"\)/);
+  assert.match(workspace, /<GraphCanvasErrorBoundary[\s\S]*?<GraphCanvas/);
+  assert.match(boundary, /知識グラフを表示できませんでした。/);
+  assert.match(boundary, /再試行/);
+  assert.doesNotMatch(boundary, /\{(?:_?error|_?errorInfo)\}/);
   assert.match(workspace, /extractTasksFromSelectedNode/);
   assert.match(workspace, /createResearchAction\(\{/);
   assert.match(workspace, /origin_node_id:\s*selected\.id/);

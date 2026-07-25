@@ -614,6 +614,12 @@ export async function createResearchRun(body: ResearchRunCreate, signal?: AbortS
   return unwrap(await api.POST("/api/research/runs", { body, signal }), "研究実行を記録できませんでした");
 }
 
+export async function getResearchRun(runId: string, signal?: AbortSignal): Promise<ResearchRun> {
+  return unwrap(await api.GET("/api/research/runs/{run_id}", {
+    params: { path: { run_id:runId } }, signal,
+  }), "研究実行を取得できませんでした");
+}
+
 export async function cancelResearchRun(runId: string, signal?: AbortSignal): Promise<ResearchRun> {
   return unwrap(await api.POST("/api/research/runs/{run_id}/cancel", {
     params: { path: { run_id:runId } }, signal,

@@ -17,6 +17,7 @@ from time import perf_counter_ns
 from typing import Any
 
 from .models import Paper
+from .openai_client import get_openai_adapter
 from .rag import citations_from, chunk_pages, search
 from .graph_rag import GraphEdge, PrunedTwoHopConfig, RetrievalSeed, pruned_two_hop_retrieve
 
@@ -202,6 +203,14 @@ def build_offline_artifact(
         "component_p50_ms": percentile(latency, 0.50) if latency else None,
         "component_p95_ms": percentile(latency, 0.95) if latency else None,
         "cost_usd": 0.0,
+        # Offline CI-014 never calls a provider. Keep the fields explicit so
+        # consumers cannot mistake zero for measured production usage.
+        "openai_calls": 0,
+        "openai_retries": 0,
+        "openai_input_tokens": 0,
+        "openai_output_tokens": 0,
+        "openai_cached_tokens": 0,
+        "openai_reasoning_tokens": 0,
     }
     gates = {
         "lexical_unit": (
@@ -240,6 +249,7 @@ def build_offline_artifact(
                 "declared_system_sizes": profile.get("paper_counts", []),
             },
             "cost": {"status": "offline_zero", "source": "no_model_calls"},
+            "openai_usage": {"status": "not_evaluated", "source": None},
             "contradiction": {"status": "traversal_unit_only"},
             "production_retrieval": {"status": "not_evaluated"},
             "query_plan": {
@@ -282,21 +292,42 @@ def require_live_benchmark_opt_in() -> None:
 def run_live_model_benchmark(model: str = "gpt-5.4-nano") -> dict[str, Any]:
     """One explicit provider probe, never invoked by the offline harness/tests."""
     require_live_benchmark_opt_in()
-    from openai import OpenAI
-
-    started = perf_counter_ns()
-    response = OpenAI(api_key=os.environ["OPENAI_API_KEY"], max_retries=0).responses.create(
-        model=model, store=False,
-        input="Return exactly: CI014 live benchmark ready",
+    adapter = get_openai_adapter()
+    operation = "responses.create.ci014_live"
+    metric_key = f"{operation}:{model}"
+    before = adapter.snapshot_metrics().get(metric_key, {})
+    response = adapter.call(
+        operation=operation,
+        model=model,
+        timeout_seconds=float(os.getenv("OPENAI_TIMEOUT_SECONDS", "15")),
+        request=lambda client: client.responses.create(
+            model=model, store=False,
+            max_output_tokens=32,
+            input="Return exactly: CI014 live benchmark ready",
+        ),
     )
     usage = getattr(response, "usage", None)
+    cumulative = adapter.snapshot_metrics().get(metric_key, {})
+    telemetry = {
+        key: max(0, cumulative.get(key, 0) - before.get(key, 0))
+        for key in {
+            "calls", "errors", "retries", "latency_ms", "input_tokens",
+            "output_tokens", "total_tokens", "cached_tokens", "reasoning_tokens",
+        }
+    }
     return {
         "schema_version": "ci014-live-model-artifact-v1",
         "mode": "live_model",
         "model": model,
-        "latency_ms": (perf_counter_ns() - started) / 1_000_000,
-        "input_tokens": getattr(usage, "input_tokens", None),
-        "output_tokens": getattr(usage, "output_tokens", None),
+        "latency_ms": telemetry.get("latency_ms"),
+        "openai_calls": telemetry.get("calls", 0),
+        "openai_errors": telemetry.get("errors", 0),
+        "input_tokens": telemetry.get("input_tokens", getattr(usage, "input_tokens", None)),
+        "output_tokens": telemetry.get("output_tokens", getattr(usage, "output_tokens", None)),
+        "openai_total_tokens": telemetry.get("total_tokens", getattr(usage, "total_tokens", None)),
+        "cached_tokens": telemetry.get("cached_tokens"),
+        "reasoning_tokens": telemetry.get("reasoning_tokens"),
+        "retries": telemetry.get("retries", 0),
         "cost_usd": None,
         "output_verified": response.output_text.strip() == "CI014 live benchmark ready",
     }

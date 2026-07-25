@@ -5,18 +5,19 @@ import test from "node:test";
 const client = await readFile(new URL("../lib/api/client.ts", import.meta.url), "utf8");
 const ask = await readFile(new URL("../components/ask-workspace.tsx", import.meta.url), "utf8");
 
-test("the API client exposes generated ResearchRun creation and cancellation", () => {
+test("the API client exposes generated ResearchRun creation, lookup, and cancellation", () => {
   assert.match(client, /export type ResearchRun = components\["schemas"\]\["ResearchRun"\]/);
   assert.match(client, /export type ResearchRunCreate = components\["schemas"\]\["ResearchRunCreate"\]/);
   assert.match(client, /api\.POST\("\/api\/research\/runs", \{ body, signal \}\)/);
+  assert.match(client, /api\.GET\("\/api\/research\/runs\/\{run_id\}"/);
   assert.match(client, /api\.POST\("\/api\/research\/runs\/\{run_id\}\/cancel"/);
 });
 
 test("editor Ask creates an auditable run before a new conversation or stream", () => {
   assert.match(ask, /const researchRun = await createResearchRun\(\{/);
-  assert.match(ask, /source_paper_ids:selected\.length \? selected : readyPapers\.map\(paper => paper\.id\)/);
+  assert.match(ask, /source_paper_ids:paperIds/);
   assert.match(ask, /purpose:prompt/);
-  assert.match(ask, /plan:\{ origin:"ask_workspace", interaction_mode:interactionMode, \.\.\.\(runGraphSeed \?/);
+  assert.match(ask, /plan:\{ origin:"ask_workspace", interaction_mode:attemptMode, \.\.\.\(runGraphSeed \?/);
   assert.match(ask, /research_run_id:researchRun\.id/);
   assert.ok(ask.indexOf("const researchRun = await createResearchRun") < ask.indexOf("const created = await createResearchConversation"));
   assert.ok(ask.indexOf("const researchRun = await createResearchRun") < ask.indexOf("for await (const streamEvent of streamSearch"));
@@ -29,7 +30,7 @@ test("editor Ask creates an auditable run before a new conversation or stream", 
 test("viewer preview remains evidence-only and does not create a ResearchRun", () => {
   const start = ask.indexOf("if (!canWrite) {");
   const viewer = ask.slice(start, ask.indexOf("streamAbortRef.current?.abort();", start));
-  assert.match(viewer, /previewSearch\(\{ query:prompt, paper_ids:selected, limit:10, interaction_mode:"evidence" \}\)/);
+  assert.match(viewer, /previewSearch\(\{ query:prompt, paper_ids:paperIds, limit:SEARCH_RESULT_LIMIT, interaction_mode:"evidence" \}\)/);
   assert.doesNotMatch(viewer, /createResearchRun/);
 });
 

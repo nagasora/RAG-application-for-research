@@ -2,6 +2,8 @@
 
 import { KeyboardEvent, useId, useMemo, useState } from "react";
 
+import { mindMapLayout } from "@/lib/graph/mindmap-layout.mjs";
+
 export type GraphNodeType = "source" | "idea" | "constraint" | "hypothesis" | "experiment";
 export type GraphNodeStatus = "active" | "review_pending" | "review_required" | "verified" | "rejected" | "superseded" | "pruned";
 export type GraphEdgeRelation = string;
@@ -95,9 +97,6 @@ const RELATION_STYLE: Record<string, { color: string; dash?: string }> = {
   related: { color: "#77857f", dash: "2 4" },
 };
 
-type PositionedNode = GraphNode & { x: number; y: number };
-type MindMapPosition = { side: "left" | "right" | "center"; depth: number };
-
 function truncate(value: string, maximum: number) {
   return value.length > maximum ? `${value.slice(0, Math.max(0, maximum - 1))}…` : value;
 }
@@ -106,54 +105,6 @@ function nodeKeyboardSelect(event: KeyboardEvent<SVGGElement>, onSelect: () => v
   if (event.key !== "Enter" && event.key !== " ") return;
   event.preventDefault();
   onSelect();
-}
-
-function mindMapLayout(nodes: GraphNode[], edges: GraphEdge[], rootId: string): PositionedNode[] {
-  const root = nodes.find(node => node.id === rootId) ?? nodes[0];
-  const positions = new Map<string, MindMapPosition>([[root.id, { side:"center", depth:0 }]]);
-  const neighbours = new Map<string, { id: string; direction: "out" | "in" }[]>();
-  for (const edge of edges) {
-    neighbours.set(edge.source, [...(neighbours.get(edge.source) ?? []), { id:edge.target, direction:"out" }]);
-    neighbours.set(edge.target, [...(neighbours.get(edge.target) ?? []), { id:edge.source, direction:"in" }]);
-  }
-  const queue = [root.id];
-  for (let cursor = 0; cursor < queue.length; cursor += 1) {
-    const currentId = queue[cursor];
-    const current = positions.get(currentId)!;
-    for (const neighbour of neighbours.get(currentId) ?? []) {
-      if (positions.has(neighbour.id)) continue;
-      const side = current.side === "center" ? (neighbour.direction === "out" ? "right" : "left") : current.side;
-      positions.set(neighbour.id, { side, depth:current.depth + 1 });
-      queue.push(neighbour.id);
-    }
-  }
-  // Disconnected ideas remain visible as a separate right-hand branch.
-  for (const node of nodes) if (!positions.has(node.id)) positions.set(node.id, { side:"right", depth:1 });
-
-  const rootX = 560;
-  const rootY = Math.max(290, Math.ceil(nodes.length / 2) * 68 + 110);
-  const grouped = new Map<string, GraphNode[]>();
-  for (const node of nodes) {
-    const position = positions.get(node.id)!;
-    if (position.side === "center") continue;
-    const key = `${position.side}:${position.depth}`;
-    grouped.set(key, [...(grouped.get(key) ?? []), node]);
-  }
-  const rawNodes = nodes.map(node => {
-    const position = positions.get(node.id)!;
-    if (position.side === "center") return { ...node, x:rootX - NODE_WIDTH / 2, y:rootY - NODE_HEIGHT / 2 };
-    const group = grouped.get(`${position.side}:${position.depth}`) ?? [node];
-    const index = group.findIndex(item => item.id === node.id);
-    const spread = 132;
-    const y = rootY + (index - (group.length - 1) / 2) * spread;
-    const x = rootX + (position.side === "right" ? 1 : -1) * (position.depth * 282 + NODE_WIDTH / 2);
-    return { ...node, x, y };
-  });
-  const minX = Math.min(...rawNodes.map(node => node.x));
-  const minY = Math.min(...rawNodes.map(node => node.y));
-  const offsetX = minX < PADDING_X ? PADDING_X - minX : 0;
-  const offsetY = minY < PADDING_Y ? PADDING_Y - minY : 0;
-  return rawNodes.map(node => ({ ...node, x:node.x + offsetX, y:node.y + offsetY }));
 }
 
 /**

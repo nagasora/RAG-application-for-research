@@ -70,9 +70,7 @@ PaperPilotを「論文について賢く話せるアプリ」から、「既存�
 Focusは同時に最大3件とする。次回実装では、原則として上から検討する。
 
 <!-- FOCUS_START -->
-- CI-023: AIとの壁打ちで発散・反証・実験化し、根拠を失わず次の問いへ進める。
 - CI-022: 初回利用者が研究ワークフロー全体をUIで確認できるようにする。
-- CI-007: 比較・gap候補の引用と人間判断を再取り込み後も検証する。
 <!-- FOCUS_END -->
 
 ## 優先バックログ
@@ -95,7 +93,7 @@ Focusは同時に最大3件とする。次回実装では、原則として上�
 | CI-011 | P1 | done | retrieval | 通常RAGが支持だけでなく棄却仮説・矛盾・negative evidenceを検索する | CI-001, CI-004, CI-009 | 2026-07-16 | - | 通常/Agentic RAGへpaper/graph/contradiction RRFと監査provenanceを統合。backend全回帰・frontend単体28件成功 |
 | CI-012 | P1 | done | discovery | 新着論文が既存仮説を支持・反証・条件変更する差分としてレビュー待ちになる | CI-001, CI-002, CI-004 | 2026-07-16 | D-20260716-05 | Semantic Scholar provider、snapshot/license/rate limitを持つpending review queueを実装。外部APIはMockTransport、対象テスト1件成功 |
 | CI-013 | P1 | done | library | 500件規模でも検索・filter・名前付きcollection・採用除外理由を扱える | CI-002 | 2026-07-16 | - | SourceSet回帰解消、SQL chunk count、OpenAPI生成型へ移行。TypeScript・単体23件・production build成功 |
-| CI-014 | P0 | validating | evaluation | 引用精度・反証回収・仮説重複・専門家採用率を継続評価できる | - | 2026-07-16 | D-20260716-08 | v2 offline artifactでRecall/citation/quote/contradiction/semantic gate/query plan/p50-p95/costを版管理。明示opt-in live runと専門家評価を実行し、CI-019のsemantic/index gateを解消する |
+| CI-014 | P0 | validating | evaluation | 引用精度・反証回収・仮説重複・専門家採用率を継続評価できる | - | 2026-07-22 | D-20260716-08 | OpenAI呼び出しのusage/latency/retry/fallbackを本文非記録で統一し、offline/live artifactへ反映する。通常回帰はモックで成功。live runは明示opt-inを維持し、実providerで品質・TTFT・費用を比較して完了判定する |
 | CI-015 | P1 | done | collaboration | claim単位のコメント・担当・レビュー・Decisionと引用付きReportを共有できる | CI-003, CI-006, CI-009 | 2026-07-16 | D-20260716-07 | claim/EvidenceLink排他的anchor、claim immutable snapshot、担当・comment・Decision・引用付き安全なMarkdown report・viewer read-onlyを実装。独立再レビューP0/P1なし、frontend型検査・単体33件・production build成功。backend重点3件成功、全回帰では高負荷下の既存deadline flaky 1件（単独再実行成功）を継続監視 |
 | CI-016 | P0 | done | authorization | viewerの検索・LLMコスト・レート制限がUIとAPIで一貫する | - | 2026-07-16 | D-20260716-04 | viewerはローカルpreview検索のみ許可、LLM回答/SSE/要約はeditor以上に限定。OpenAPI確認と認可回帰テストを追加 |
 | CI-017 | P0 | done | storage | DB・原本・graph sourceの部分失敗が孤立データや誤った成功失敗表示を残さない | - | 2026-07-16 | - | job作成・paper削除・source importの補償を実装。失敗注入テスト3件とpy_compile成功 |
@@ -103,12 +101,15 @@ Focusは同時に最大3件とする。次回実装では、原則として上�
 | CI-019 | P2 | validating | performance | requestごとの全chunk走査を避け、検索品質とp95を測定できる | CI-014 | 2026-07-16 | D-20260716-08 | ORM hydrationは最大200 chunk、graphはseed 12/edge 200/evidence 400で制限し原典pageを独立取得。LIKEのDB全走査・semantic-only vector recallは未解消のため、CI-014でquery plan・Recall@k・p95を実測してFTS/pgvector採否を決める |
 | CI-020 | P1 | done | operations | queue・retry・quota・cost・backup restoreを本番運用で監視・復旧できる | CI-017 | 2026-07-16 | - | operations status APIとCelery/retry/quota/cost/backup restore runbookを追加。py_compile成功 |
 | CI-021 | P1 | validating | multilingual-retrieval | 日本語の研究質問から英語・日本語論文の意味的根拠を同じ検索経路で回収でき、既存論文も安全に再embeddingできる | CI-019 | 2026-07-16 | D-20260716-09 | APIキー時のOpenAI多言語embedding自動選択、workspace scoped再embedding、日→英mock回帰、Analysis/Library導線を実装。P0/P1独立レビュー済み。実providerでの再embeddingと日英検索結果を確認する |
-| CI-022 | P1 | in_progress | onboarding | 初回利用者が論文登録から根拠確認、アイデア、仮説、比較、グラフまでの実装済み機能をUIで確認できる | CI-008, CI-021 | 2026-07-16 | - | 実データ状態に連動する再表示可能な初回チュートリアルと各画面への導線を追加する |
+| CI-022 | P1 | in_progress | onboarding | 初回利用者が論文登録から根拠確認、アイデア、仮説、比較、グラフまでの実装済み機能をUIで確認できる | CI-008, CI-021 | 2026-07-23 | - | 空グラフのmind map配置を全域化し、局所ErrorBoundaryを追加。frontend単体75件・型検査・production build、再構築後の空グラフ3表示・画面往復・console errorなしを確認。初回チュートリアル全体の完了条件は継続検証する |
 | CI-023 | P1 | done | ideation | AIとの対話で統合・発散・反証・実験化・更新を選び、生成案の根拠区分を保ったまま次の問いと人間レビューへ進める | CI-005, CI-008 | 2026-07-19 | D-20260716-02, D-20260716-03, D-20260719-10 | Ask目的選択、ResearchRun自動記録、mode・draft・claims履歴、分類バッジ、真正性検証・冗等保存付きclaim→Idea Inbox、Graph選択ノードからの発散・反証・実験設計導線を実装。backend 198件、frontend 58件・型検査・buildを確認 |
 | CI-024 | P1 | intake | discovery-map | 論文間の引用ネットワークを主張・仮説グラフと混同せず探索し、候補を人間レビューへ送れる | CI-012 | 2026-07-19 | - | Semantic Scholar等のcitation edge取得範囲、license、snapshot、外部候補のDiscovery queue接続を設計する |
 | CI-025 | P1 | intake | evidence-matrix | 問い、採否基準、比較列、引用付き抽出を再現可能なEvidence Matrixとしてレビューできる | CI-007 | 2026-07-19 | - | 比較セルのEvidenceLink固定完了後、screening基準と列定義をResearchRunへ保存する契約を設計する |
 | CI-026 | P1 | intake | claim-debate | claimごとに支持、反証、条件差、未確定を原典spanと人間判断付きで見比べられる | CI-007, CI-011 | 2026-07-19 | - | negative retrievalと比較監査を再利用するread modelとレビューUIを設計する |
 | CI-027 | P1 | done | research-actions | Idea・Graph・Experimentから、出所と人間判断を保った期限付き研究Actionへ進める | CI-008, CI-010, CI-023 | 2026-07-20 | D-20260720-11 | ResearchAction API/migration、Ideaの3段階分解、Graph/Experiment導線、OpenAPI型、backend 6件・frontend 59件・型検査を確認 |
+| CI-028 | P0 | done | agentic-rag | 選択した1〜5件の論文だけを対象に、生成時間を確保しながら45秒以内に回答または説明付き抽出結果を返す | CI-003, CI-014, CI-019, CI-023 | 2026-07-22 | D-20260722-12 | source scope、DB/LLM期限、PG 57014、キャンセル境界を実装。backend 227件成功。再構築コンテナでadapter・45秒・生成予約30秒・3000 tokens・API 200を確認 |
+| CI-029 | P1 | done | frontend | 会話をスクロールしても研究対話、検索対象、入力欄、最新回答の根拠へ常にアクセスでき、自然な日本語で状態を理解できる | CI-006, CI-022, CI-023, CI-028 | 2026-07-22 | D-20260722-12 | 固定3ペイン、responsive drawer、1〜5件選択、日本語copyを実装。frontend 68件・型検査・production build・5 viewport・Escape/focus復元・design QA成功 |
+| CI-030 | P1 | done | project-navigation | 複数の研究プロジェクトを作成・切替・名前変更でき、論文・対話・グラフ・下書きが混ざらず、再読込後も直前の選択を安全に再開できる | CI-016 | 2026-07-22 | D-20260722-13 | workspace境界を再利用して切替・検索・作成・名前変更、利用者別復元、状態分離を実装。backend認可16件、frontend 72件・型検査・production build、再構築後API/Web 200、独立レビューP0/P1なしを確認 |
 <!-- BACKLOG_TABLE_END -->
 
 ## 主要項目の受入条件と評価指標
@@ -204,6 +205,30 @@ Focusは同時に最大3件とする。次回実装では、原則として上�
 - AI生成案は人間が選択するまでreview pendingとし、会話由来の根拠と論文の原典EvidenceLinkを混同しない。
 - 次段ではGraphの選択ノードから「広げる」「対立仮説」「検証案」の派生対話を開始し、選択ノードと意図をResearchRunへ残す。
 - LLMが使えない場合は決定的な質問テンプレートまたは抽出根拠へフォールバックし、生成済み仮説のように表示しない。
+
+### CI-028 研究対話の期限とsource scope
+
+- 新しい対話では検索対象を空に戻し、1〜5件を選ぶまで回答生成を開始できない。
+- ResearchRunへ保存したsource paper IDとpreview・SSE・検索で使うIDを一致させ、不一致は機械可読なエラーで拒否する。
+- DB候補32件、LLM根拠8件、1論文3件、根拠本文12,000文字を上限とし、論文総数に応じて無制限に入力を増やさない。
+- 全体45秒の中で生成に約30秒を確保し、残り時間が少ない場合は任意の再計画・再ランキング・監査を省略する。
+- 期限内に生成できない場合も抽出根拠を返し、AI生成ではないことと再試行操作を明示する。
+
+### CI-029 固定レイアウトと利用者向け日本語
+
+- Ask表示中はページ全体をスクロールさせず、プロジェクト帯、対話ヘッダー、入力欄を固定し、中央の会話だけをスクロールする。
+- 1536px以上は3ペイン、1536px未満は根拠drawer、1280px未満は研究対話drawerとし、Escape、フォーカストラップ、フォーカス復元を維持する。
+- 390×844、1024×768、1280×800、1536×864、1920px幅で主要操作とsafe-areaを確認する。
+- 共通ナビ、状態、進捗、回答区分、エラーを自然な日本語へ集約し、未知の内部エラー本文を画面へ表示しない。
+- 引用形式の確認と、回答主張・引用元の対応確認を別表示にし、実施していない検証を「確認済み」と表現しない。
+
+### CI-030 複数研究プロジェクト
+
+- 現在のプロジェクト名と切替操作を常時確認でき、一覧から切替、新規作成、所有プロジェクトの名前変更ができる。
+- 新規作成後は空の新プロジェクトへ自動で切り替わり、既存プロジェクトの論文・対話・ノートは移動しない。
+- 切替時は進行中の要求を中止し、論文検索、選択、根拠、アイデア下書き、再embedding状態を旧プロジェクトから持ち越さない。
+- 全API要求は選択中のworkspace IDを認可境界へ渡し、アクセス権を失った保存済みIDは個人プロジェクトへ安全に戻す。
+- 最後に開いたアクセス可能なプロジェクトを再読込後に復元し、A/Bプロジェクト間の論文が相互に表示されないことを回帰テストで確認する。
 
 ## 調査ログ
 

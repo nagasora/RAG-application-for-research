@@ -7,12 +7,13 @@ import html
 import json
 import os
 import re
+import time
 from uuid import uuid4
 
 from sqlalchemy import and_, case, delete, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
 from .database import (
@@ -35,6 +36,72 @@ from .models import (
     SavedComparison, SearchHistory, SourceSpan, SourceVersion, Tag, User, Workspace,
     WorkspaceMember,
 )
+
+
+def _postgres_sqlstate(exc: BaseException) -> str | None:
+    """Return a PostgreSQL SQLSTATE from SQLAlchemy/psycopg exception layers."""
+    pending: list[BaseException] = [exc]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        for candidate in (current, getattr(current, "orig", None)):
+            if candidate is None:
+                continue
+            code = getattr(candidate, "sqlstate", None) or getattr(candidate, "pgcode", None)
+            if code:
+                return str(code)
+            diag = getattr(candidate, "diag", None)
+            code = getattr(diag, "sqlstate", None) if diag is not None else None
+            if code:
+                return str(code)
+        for nested in (getattr(current, "__cause__", None), getattr(current, "__context__", None)):
+            if isinstance(nested, BaseException):
+                pending.append(nested)
+    return None
+
+
+def _raise_rag_db_timeout(exc: DBAPIError) -> None:
+    """Translate PostgreSQL statement cancellation into the public RAG deadline contract."""
+    if _postgres_sqlstate(exc) == "57014":
+        raise TimeoutError("rag database deadline exceeded") from exc
+    raise exc
+
+
+def _rag_db_call(request):
+    try:
+        return request()
+    except DBAPIError as exc:
+        _raise_rag_db_timeout(exc)
+
+
+def _configure_rag_statement_timeout(
+    session: Session, *, deadline_monotonic: float | None,
+    statement_timeout_seconds: float,
+) -> None:
+    """Apply one bounded, transaction-local timeout and reject expired work."""
+    remaining = (
+        deadline_monotonic - time.monotonic()
+        if deadline_monotonic is not None else statement_timeout_seconds
+    )
+    if remaining <= 0:
+        raise TimeoutError("rag database deadline exceeded")
+    timeout_ms = max(1, int(min(remaining, statement_timeout_seconds) * 1_000))
+    if session.get_bind().dialect.name == "postgresql":
+        try:
+            session.execute(
+                text("SELECT set_config('statement_timeout', :timeout, true)"),
+                {"timeout": f"{timeout_ms}ms"},
+            )
+        except DBAPIError as exc:
+            _raise_rag_db_timeout(exc)
+
+
+def _check_rag_db_deadline(deadline_monotonic: float | None) -> None:
+    if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+        raise TimeoutError("rag database deadline exceeded")
 
 
 class DuplicatePaperError(Exception):
@@ -1975,15 +2042,17 @@ class PaperStore:
         self, workspace_id: str, query: str, *, limit: int = 8,
         paper_ids: list[str] | None = None, year_from: int | None = None,
         year_to: int | None = None,
+        deadline_monotonic: float | None = None,
+        statement_timeout_seconds: float = 5.0,
     ) -> list[Paper]:
         """Load a bounded, portable lexical candidate pool for request-time RAG.
 
         The database performs the coarse filtering. Python scoring and optional
-        vector fusion only see at most ``min(max(4 * limit, 32), 200)`` chunks.
+        vector fusion only see at most 32 chunks.
         Zero-score rows are retained as a deterministic fallback for queries
         that SQLite/PostgreSQL ``LIKE`` cannot tokenize usefully.
         """
-        pool_size = min(max(4 * max(1, limit), 32), 200)
+        pool_size = 32
         scoped_ids = list(dict.fromkeys(paper_ids or []))[:500]
         terms = list(dict.fromkeys(
             re.findall(r"[a-z0-9][a-z0-9_-]+|[一-龯ぁ-んァ-ヶ]{2,}", query.casefold())
@@ -1993,6 +2062,10 @@ class PaperStore:
             for term in terms
         ]
         with self.session_factory() as session:
+            _configure_rag_statement_timeout(
+                session, deadline_monotonic=deadline_monotonic,
+                statement_timeout_seconds=statement_timeout_seconds,
+            )
             searchable = func.lower(
                 PaperRecord.title + " " + PaperRecord.abstract + " " + ChunkRecord.text
             )
@@ -2014,12 +2087,16 @@ class PaperStore:
                 statement = statement.where(or_(PaperRecord.year.is_(None), PaperRecord.year >= year_from))
             if year_to is not None:
                 statement = statement.where(or_(PaperRecord.year.is_(None), PaperRecord.year <= year_to))
-            rows = session.execute(
-                statement.order_by(
-                    lexical_score.desc(), PaperRecord.created_at.desc(),
-                    ChunkRecord.page, ChunkRecord.id,
-                ).limit(pool_size)
-            ).all()
+            try:
+                rows = session.execute(
+                    statement.order_by(
+                        lexical_score.desc(), PaperRecord.created_at.desc(),
+                        ChunkRecord.page, ChunkRecord.id,
+                    ).limit(pool_size)
+                ).all()
+            except DBAPIError as exc:
+                _raise_rag_db_timeout(exc)
+            _check_rag_db_deadline(deadline_monotonic)
 
             grouped: dict[str, tuple[PaperRecord, list[Chunk]]] = {}
             for paper, chunk in rows:
@@ -2378,20 +2455,31 @@ class PaperStore:
         with self.session_factory.begin() as session:
             return bool(session.execute(delete(SearchHistoryRecord).where(SearchHistoryRecord.workspace_id == workspace_id, SearchHistoryRecord.id == history_id)).rowcount)
 
-    def get_chunk_embeddings(self, workspace_id: str, chunk_ids: list[str], model: str) -> dict[str, list[float]]:
+    def get_chunk_embeddings(
+        self, workspace_id: str, chunk_ids: list[str], model: str, *,
+        deadline_monotonic: float | None = None, statement_timeout_seconds: float = 5.0,
+    ) -> dict[str, list[float]]:
         if not chunk_ids:
             return {}
         with self.session_factory() as session:
-            rows = session.execute(
-                select(ChunkEmbeddingRecord.chunk_id, ChunkEmbeddingRecord.vector)
-                .join(ChunkRecord, ChunkRecord.id == ChunkEmbeddingRecord.chunk_id)
-                .join(PaperRecord, PaperRecord.id == ChunkRecord.paper_id)
-                .where(
-                    PaperRecord.workspace_id == workspace_id,
-                    ChunkEmbeddingRecord.chunk_id.in_(chunk_ids),
-                    ChunkEmbeddingRecord.model == model,
-                )
-            ).all()
+            _configure_rag_statement_timeout(
+                session, deadline_monotonic=deadline_monotonic,
+                statement_timeout_seconds=statement_timeout_seconds,
+            )
+            try:
+                rows = session.execute(
+                    select(ChunkEmbeddingRecord.chunk_id, ChunkEmbeddingRecord.vector)
+                    .join(ChunkRecord, ChunkRecord.id == ChunkEmbeddingRecord.chunk_id)
+                    .join(PaperRecord, PaperRecord.id == ChunkRecord.paper_id)
+                    .where(
+                        PaperRecord.workspace_id == workspace_id,
+                        ChunkEmbeddingRecord.chunk_id.in_(chunk_ids),
+                        ChunkEmbeddingRecord.model == model,
+                    )
+                ).all()
+            except DBAPIError as exc:
+                _raise_rag_db_timeout(exc)
+            _check_rag_db_deadline(deadline_monotonic)
             return {chunk_id: list(vector) for chunk_id, vector in rows}
 
     def upsert_chunk_embeddings(self, workspace_id: str, model: str, embeddings: dict[str, list[float]]) -> None:
@@ -2756,6 +2844,7 @@ class PaperStore:
 
     def search_research_memory(
         self, workspace_id: str, conversation_id: str, query: str, *, limit: int = 20,
+        deadline_monotonic: float | None = None, statement_timeout_seconds: float = 5.0,
     ) -> list[ResearchMemoryEvent]:
         """Return a bounded set of query-relevant durable memories.
 
@@ -2776,7 +2865,13 @@ class PaperStore:
                     break
 
         with self.session_factory() as session:
-            self._scoped_conversation_record(session, workspace_id, conversation_id)
+            _configure_rag_statement_timeout(
+                session, deadline_monotonic=deadline_monotonic,
+                statement_timeout_seconds=statement_timeout_seconds,
+            )
+            _rag_db_call(lambda: self._scoped_conversation_record(
+                session, workspace_id, conversation_id,
+            ))
 
             statement = select(ResearchMemoryEventRecord).where(
                 ResearchMemoryEventRecord.conversation_id == conversation_id
@@ -2802,17 +2897,18 @@ class PaperStore:
                 )
             else:
                 statement = statement.order_by(ResearchMemoryEventRecord.ordinal.desc())
-            rows = list(session.scalars(statement.limit(limit)).all())
+            rows = list(_rag_db_call(lambda: session.scalars(statement.limit(limit)).all()))
             if terms and not rows:
                 # Japanese research questions often have no whitespace, so a
                 # purely lexical LIKE query can miss a clearly relevant prior
                 # event. Fall back to the most recent bounded slice rather than
                 # loading the full history or silently dropping all memory.
-                rows = list(session.scalars(
+                rows = list(_rag_db_call(lambda: session.scalars(
                     select(ResearchMemoryEventRecord).where(
                         ResearchMemoryEventRecord.conversation_id == conversation_id
                     ).order_by(ResearchMemoryEventRecord.ordinal.desc()).limit(limit)
-                ).all())
+                ).all()))
+            _check_rag_db_deadline(deadline_monotonic)
             return [self._memory_event_model(row) for row in rows]
 
     def save_comparison(self, workspace_id: str, user_id: str, name: str, paper_ids: list[str], result: list[dict], *, source_set_id: str | None = None, citation_snapshot: list[dict] | None = None, human_judgment: str = "unreviewed", judgment_reason: str = "") -> SavedComparison:
@@ -3534,19 +3630,26 @@ class PaperStore:
 
     def get_source_materials(
         self, workspace_id: str, source_version_ids: list[str], source_span_ids: list[str],
+        *, deadline_monotonic: float | None = None, statement_timeout_seconds: float = 5.0,
     ) -> tuple[dict[str, SourceVersion], dict[str, SourceSpan]]:
         """Resolve graph provenance in two bounded queries instead of per hit."""
         version_ids = list(dict.fromkeys(source_version_ids))
         span_ids = list(dict.fromkeys(source_span_ids))
         with self.session_factory() as session:
-            versions = session.scalars(select(SourceVersionRecord).where(
+            _configure_rag_statement_timeout(
+                session, deadline_monotonic=deadline_monotonic,
+                statement_timeout_seconds=statement_timeout_seconds,
+            )
+            versions = _rag_db_call(lambda: session.scalars(select(SourceVersionRecord).where(
                 SourceVersionRecord.workspace_id == workspace_id,
                 SourceVersionRecord.id.in_(version_ids),
-            )).all() if version_ids else []
-            spans = session.scalars(select(SourceSpanRecord).where(
+            )).all()) if version_ids else []
+            _check_rag_db_deadline(deadline_monotonic)
+            spans = _rag_db_call(lambda: session.scalars(select(SourceSpanRecord).where(
                 SourceSpanRecord.workspace_id == workspace_id,
                 SourceSpanRecord.id.in_(span_ids),
-            )).all() if span_ids else []
+            )).all()) if span_ids else []
+            _check_rag_db_deadline(deadline_monotonic)
             return (
                 {row.id: _source_version_model(row) for row in versions},
                 {row.id: _source_span_model(row) for row in spans},
@@ -3556,6 +3659,7 @@ class PaperStore:
         self, workspace_id: str, paper_pages: dict[str, set[int | None]], *,
         paper_ids: list[str] | None = None, year_from: int | None = None,
         year_to: int | None = None, chunk_limit: int = 200,
+        deadline_monotonic: float | None = None, statement_timeout_seconds: float = 5.0,
     ) -> list[Paper]:
         """Load exact-page chunks for bounded graph hits, independent of lexical RAG candidates."""
         requested = list(paper_pages)[:200]
@@ -3572,6 +3676,10 @@ class PaperStore:
                 ChunkRecord.page.in_(list(pages)[:32]) if pages else ChunkRecord.id.is_not(None),
             ))
         with self.session_factory() as session:
+            _configure_rag_statement_timeout(
+                session, deadline_monotonic=deadline_monotonic,
+                statement_timeout_seconds=statement_timeout_seconds,
+            )
             statement = select(PaperRecord, ChunkRecord).join(
                 ChunkRecord, ChunkRecord.paper_id == PaperRecord.id,
             ).where(
@@ -3584,9 +3692,10 @@ class PaperStore:
                 statement = statement.where(or_(PaperRecord.year.is_(None), PaperRecord.year >= year_from))
             if year_to is not None:
                 statement = statement.where(or_(PaperRecord.year.is_(None), PaperRecord.year <= year_to))
-            rows = session.execute(statement.order_by(
+            rows = _rag_db_call(lambda: session.execute(statement.order_by(
                 PaperRecord.id, ChunkRecord.page, ChunkRecord.id,
-            ).limit(max(1, min(chunk_limit, 200)))).all()
+            ).limit(max(1, min(chunk_limit, 200)))).all())
+            _check_rag_db_deadline(deadline_monotonic)
             grouped: dict[str, tuple[PaperRecord, list[Chunk]]] = {}
             for paper, chunk in rows:
                 grouped.setdefault(paper.id, (paper, []))[1].append(Chunk(
@@ -3768,6 +3877,7 @@ class PaperStore:
     def retrieve_knowledge_subgraph(
         self, workspace_id: str, query: str, *, seed_limit: int = 12,
         edge_limit: int = 200, evidence_limit: int = 400,
+        deadline_monotonic: float | None = None, statement_timeout_seconds: float = 5.0,
     ) -> tuple[list[KnowledgeNode], list[KnowledgeEdge]]:
         """Return a hard-bounded two-hop graph slice for request-time retrieval."""
         seed_limit = max(1, min(seed_limit, 32))
@@ -3781,7 +3891,11 @@ class PaperStore:
             for term in terms
         ]
         with self.session_factory() as session:
-            self._require_workspace(session, workspace_id)
+            _configure_rag_statement_timeout(
+                session, deadline_monotonic=deadline_monotonic,
+                statement_timeout_seconds=statement_timeout_seconds,
+            )
+            _rag_db_call(lambda: self._require_workspace(session, workspace_id))
             content_searchable = func.lower(KnowledgeNodeRecord.content)
             content_score = sum((
                 case((content_searchable.like(f"%{term}%", escape="\\"), 1), else_=0)
@@ -3796,7 +3910,7 @@ class PaperStore:
                     case((evidence_searchable.like(f"%{term}%", escape="\\"), 1), else_=0)
                     for term in escaped_terms
                 ), start=case((EvidenceRefRecord.id.is_not(None), 0), else_=0))
-                evidence_seed_ids = list(session.scalars(
+                evidence_seed_ids = list(_rag_db_call(lambda: session.scalars(
                     select(KnowledgeNodeRecord.id)
                     .join(EvidenceRefRecord, EvidenceRefRecord.knowledge_node_id == KnowledgeNodeRecord.id)
                     .where(
@@ -3807,7 +3921,8 @@ class PaperStore:
                     .group_by(KnowledgeNodeRecord.id)
                     .order_by(func.max(evidence_score).desc(), KnowledgeNodeRecord.id)
                     .limit(seed_limit)
-                ).all())
+                ).all()))
+                _check_rag_db_deadline(deadline_monotonic)
             remaining_seed_count = seed_limit - len(evidence_seed_ids)
             content_statement = select(KnowledgeNodeRecord.id).where(
                 KnowledgeNodeRecord.workspace_id == workspace_id,
@@ -3817,10 +3932,11 @@ class PaperStore:
                 content_statement = content_statement.where(
                     KnowledgeNodeRecord.id.not_in(evidence_seed_ids)
                 )
-            content_seed_ids = list(session.scalars(
+            content_seed_ids = list(_rag_db_call(lambda: session.scalars(
                 content_statement.order_by(content_score.desc(), KnowledgeNodeRecord.id)
                 .limit(max(0, remaining_seed_count))
-            ).all()) if remaining_seed_count else []
+            ).all())) if remaining_seed_count else []
+            _check_rag_db_deadline(deadline_monotonic)
             seed_ids = [*evidence_seed_ids, *content_seed_ids]
             if not seed_ids:
                 return [], []
@@ -3829,51 +3945,59 @@ class PaperStore:
                 KnowledgeEdgeRecord.workspace_id == workspace_id,
                 KnowledgeEdgeRecord.status.in_({"active", "verified"}),
             )
-            first = session.scalars(edge_base.where(or_(
+            first = _rag_db_call(lambda: session.scalars(edge_base.where(or_(
                 KnowledgeEdgeRecord.source_node_id.in_(seed_ids),
                 KnowledgeEdgeRecord.target_node_id.in_(seed_ids),
-            )).order_by(KnowledgeEdgeRecord.id).limit(edge_limit)).all()
+            )).order_by(KnowledgeEdgeRecord.id).limit(edge_limit)).all())
+            _check_rag_db_deadline(deadline_monotonic)
             frontier = list(dict.fromkeys(
                 node_id for row in first
                 for node_id in (row.source_node_id, row.target_node_id)
                 if node_id not in seed_ids
             ))[:edge_limit]
             remaining = edge_limit - len(first)
-            second = session.scalars(edge_base.where(
+            second = _rag_db_call(lambda: session.scalars(edge_base.where(
                 KnowledgeEdgeRecord.source_node_id.in_(frontier)
-            ).order_by(KnowledgeEdgeRecord.id).limit(remaining)).all() if frontier and remaining else []
+            ).order_by(KnowledgeEdgeRecord.id).limit(remaining)).all()) if frontier and remaining else []
+            _check_rag_db_deadline(deadline_monotonic)
             edges_by_id = {row.id: row for row in [*first, *second]}
             edge_rows = list(edges_by_id.values())[:edge_limit]
             node_ids = list(dict.fromkeys([
                 *seed_ids,
                 *(node_id for row in edge_rows for node_id in (row.source_node_id, row.target_node_id)),
             ]))[: seed_limit + edge_limit * 2]
-            node_rows = session.scalars(select(KnowledgeNodeRecord).where(
+            node_rows = _rag_db_call(lambda: session.scalars(select(KnowledgeNodeRecord).where(
                 KnowledgeNodeRecord.workspace_id == workspace_id,
                 KnowledgeNodeRecord.id.in_(node_ids),
                 KnowledgeNodeRecord.status.in_({"active", "verified"}),
-            )).all()
+            )).all())
+            _check_rag_db_deadline(deadline_monotonic)
             # Edge evidence (especially contradictions) gets a reserved first
             # share, then nodes use the remainder. This is one shared budget,
             # not two independent limits that could hydrate 2x the contract.
             edge_budget = max(1, evidence_limit // 2)
             contradiction_ids = [row.id for row in edge_rows if row.relation == "contradicts"]
             other_edge_ids = [row.id for row in edge_rows if row.relation != "contradicts"]
-            edge_evidence = self._edge_evidence_map(
+            edge_evidence = _rag_db_call(lambda: self._edge_evidence_map(
                 session, contradiction_ids, limit=edge_budget,
-            ) if contradiction_ids else {}
+            )) if contradiction_ids else {}
+            _check_rag_db_deadline(deadline_monotonic)
             contradiction_count = sum(len(items) for items in edge_evidence.values())
             if other_edge_ids and contradiction_count < edge_budget:
-                other_evidence = self._edge_evidence_map(
+                other_evidence = _rag_db_call(lambda: self._edge_evidence_map(
                     session, other_edge_ids, limit=edge_budget - contradiction_count,
-                )
+                ))
+                _check_rag_db_deadline(deadline_monotonic)
                 edge_evidence.update(other_evidence)
             loaded_edge_evidence = sum(len(items) for items in edge_evidence.values())
             remaining_evidence = evidence_limit - loaded_edge_evidence
             node_evidence = (
-                self._node_evidence_map(session, node_ids, limit=remaining_evidence)
+                _rag_db_call(lambda: self._node_evidence_map(
+                    session, node_ids, limit=remaining_evidence,
+                ))
                 if remaining_evidence > 0 else {node_id: [] for node_id in node_ids}
             )
+            _check_rag_db_deadline(deadline_monotonic)
             return (
                 [_knowledge_node_model(row, node_evidence.get(row.id, [])) for row in node_rows],
                 [_knowledge_edge_model(row, edge_evidence.get(row.id, [])) for row in edge_rows],

@@ -106,7 +106,7 @@ export function ResearchWorkspace({ workspaceId, papers, canWrite, exportPaperId
 
   if (loading) return <div role="status" className="py-24 text-center text-sm text-[#68736f]">研究ワークスペースを読み込んでいます…</div>;
 
-  return <section className="rise"><div className="mb-8"><p className="mb-2 text-xs font-bold uppercase tracking-[.2em] text-[#a06a28]">Research workspace</p><h1 className="serif text-4xl font-semibold md:text-5xl">調査の続きを、整理して残す。</h1><p className="mt-3 text-sm text-[#68736f]">タグ、検索履歴、保存した比較と文献エクスポートをまとめて管理します。</p>{!canWrite && <p className="mt-4 rounded-xl bg-amber-50 p-3 text-xs text-amber-800">viewer権限のため閲覧のみ可能です。</p>}</div>
+  return <section className="rise"><div className="mb-8"><p className="mb-2 text-xs font-bold tracking-[.2em] text-[#a06a28]">研究ワークスペース</p><h1 className="serif text-4xl font-semibold md:text-5xl">調査の続きを、整理して残す。</h1><p className="mt-3 text-sm text-[#68736f]">タグ、検索履歴、保存した比較と文献エクスポートをまとめて管理します。</p>{!canWrite && <p className="mt-4 rounded-xl bg-amber-50 p-3 text-xs text-amber-800">閲覧者権限のため、内容の確認のみ可能です。</p>}</div>
     {error && <div role="alert" className="mb-6 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">{error}</div>}
     <ResearchPipeline canWrite={canWrite}/>
     <CollaborativeReviews workspaceId={workspaceId} canWrite={canWrite}/>

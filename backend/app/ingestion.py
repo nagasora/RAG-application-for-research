@@ -7,6 +7,7 @@ from typing import Callable
 
 from .extraction import DocumentExtractor, ExtractionConfig
 from .models import Paper
+from .openai_client import classify_openai_error, get_openai_adapter
 from .rag import chunk_pages, embedding_config
 from .storage import OriginalStorage
 from .store import PaperStore, ResourceConflictError
@@ -102,35 +103,29 @@ def _openai_embedding_batch(texts: list[str], model: str) -> list[list[float]]:
         from .rag import embed_texts
 
         return embed_texts(texts, force_local=True)
-    from openai import OpenAI
-
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise RuntimeError("OPENAI_API_KEY is not configured")
-    response = OpenAI(
-        api_key=api_key,
-        timeout=float(os.getenv("EMBEDDING_TIMEOUT_SECONDS", "15")),
-        max_retries=0,
-    ).embeddings.create(model=model, input=texts)
-    return [list(item.embedding) for item in sorted(response.data, key=lambda item: item.index)]
+    return get_openai_adapter().create_embeddings(
+        texts,
+        model=model,
+        timeout_seconds=float(os.getenv("EMBEDDING_TIMEOUT_SECONDS", "15")),
+        max_retries=1,
+    )
 
 
 def _embedding_failure_code(exc: BaseException, provider: str) -> str:
     if provider == "openai" and not os.getenv("OPENAI_API_KEY"):
         return "api_key_missing"
-    status = getattr(exc, "status_code", None)
-    if status == 401:
+    category = classify_openai_error(exc)
+    if category == "authentication_failed":
         return "authentication_failed"
-    if status == 403:
+    if category == "permission_denied":
         return "permission_denied"
-    if status == 404:
+    if category == "model_not_found":
         return "model_not_found"
-    if status == 429:
+    if category == "rate_limited":
         return "rate_limited"
-    name = exc.__class__.__name__.lower()
-    if "timeout" in name:
+    if category in {"timeout", "request_timeout", "deadline_exceeded"}:
         return "api_timeout"
-    if "connection" in name:
+    if category == "connection_error":
         return "network_error"
     if isinstance(exc, ResourceConflictError):
         return "lease_superseded"

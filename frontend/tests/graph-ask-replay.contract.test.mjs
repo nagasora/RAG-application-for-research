@@ -30,5 +30,7 @@ test("manual question replacement and conversation changes clear graph provenanc
   assert.match(ask, /onClick=\{\(\) => replaceQuery\(text\)\}/);
   const selectConversation = ask.slice(ask.indexOf("const selectConversation"), ask.indexOf("const refreshList"));
   assert.match(selectConversation, /setGraphSeed\(null\)/);
-  assert.match(ask, /if \(replay\) \{ setQuery\(replay\.query\); setGraphSeed\(replay\.graphSeed \?\? null\);/);
+  assert.match(ask, /if \(!replay \|\| appliedReplayRevisionRef\.current === replay\.revision\) return/);
+  assert.match(ask, /setQuery\(replay\.query\);\s+setSelected\(replay\.paperIds\.filter/);
+  assert.match(ask, /setGraphSeed\(replay\.graphSeed \?\? null\)/);
 });

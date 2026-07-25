@@ -1,7 +1,10 @@
 from fastapi.testclient import TestClient
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
+import pytest
 from sqlalchemy import create_engine, event
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 
 from app import main
@@ -36,6 +39,58 @@ def _paper(user, workspace, paper_id, *, year=2024, chunks=1, text="bounded retr
     )
 
 
+class _PostgresTimeoutSession:
+    def __init__(self, error):
+        self.error = error
+        self.execute_calls = 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def get_bind(self):
+        return SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+
+    def execute(self, _statement, _params=None):
+        self.execute_calls += 1
+        if self.execute_calls == 1:  # transaction-local set_config
+            return None
+        raise self.error
+
+
+def _mock_pg_operational_error(sqlstate: str) -> OperationalError:
+    class PsycopgError(Exception):
+        pass
+
+    original = PsycopgError("canceling statement due to statement timeout")
+    original.sqlstate = sqlstate
+    return OperationalError("SELECT papers", {}, original)
+
+
+def test_postgres_statement_timeout_sqlstate_maps_to_rag_timeout_contract():
+    wrapped = _mock_pg_operational_error("57014")
+    session = _PostgresTimeoutSession(wrapped)
+    store = PaperStore(session_factory=lambda: session)
+
+    with pytest.raises(TimeoutError, match="rag database deadline exceeded") as caught:
+        store.search_chunk_candidates("workspace", "bounded retrieval")
+
+    assert caught.value.__cause__ is wrapped
+    assert session.execute_calls == 2
+
+
+def test_non_timeout_postgres_operational_error_is_not_reclassified():
+    wrapped = _mock_pg_operational_error("40001")
+    store = PaperStore(session_factory=lambda: _PostgresTimeoutSession(wrapped))
+
+    with pytest.raises(OperationalError) as caught:
+        store.search_chunk_candidates("workspace", "bounded retrieval")
+
+    assert caught.value is wrapped
+
+
 def test_candidate_query_is_scoped_bounded_and_has_portable_fallback(tmp_path):
     store, _ = _setup(tmp_path)
     alice, workspace = store.ensure_user(Principal(issuer="test", subject="alice"))
@@ -46,7 +101,8 @@ def test_candidate_query_is_scoped_bounded_and_has_portable_fallback(tmp_path):
 
     bounded = store.search_chunk_candidates(workspace.id, "bounded retrieval", limit=20)
     bounded_chunks = [chunk for paper in bounded for chunk in paper.chunks]
-    assert len(bounded_chunks) == 80
+    # CI-028 reserves generation time by hard-capping the request-time DB pool.
+    assert len(bounded_chunks) == 32
     assert {paper.id for paper in bounded} == {"a-paper"}
 
     scoped = store.search_chunk_candidates(
@@ -205,9 +261,9 @@ def test_graph_page_chunk_is_loaded_independently_of_lexical_pool(tmp_path, monk
     captured = []
     original = store.get_source_materials
 
-    def bounded_materials(workspace_id, version_ids, span_ids):
+    def bounded_materials(workspace_id, version_ids, span_ids, **kwargs):
         captured.append((len(version_ids), len(span_ids)))
-        return original(workspace_id, version_ids, span_ids)
+        return original(workspace_id, version_ids, span_ids, **kwargs)
 
     monkeypatch.setattr(store, "get_source_materials", bounded_materials)
     result = main._graph_citation_candidates(

@@ -1074,6 +1074,9 @@ class SearchRequest(BaseModel):
     # Kept for request compatibility only; authorization always uses the authenticated principal.
     user_id: str | None = None
     query: str = Field(min_length=2, max_length=4000)
+    # The API layer returns stable, machine-readable CI-028 errors for the
+    # required 1..5 source scope. Keep DTO validation permissive enough for the
+    # route to distinguish an empty selection from an oversized one.
     paper_ids: list[str] = Field(default_factory=list, max_length=500)
     year_from: int | None = None
     year_to: int | None = None
