@@ -194,6 +194,7 @@ def citations_from(
             section=chunk.section,
             excerpt=_evidence_excerpt(chunk.text, query),
             score=round(score, 4),
+            evidence_scope="abstract" if paper.content_scope == "abstract_only" else "full_text",
             source_kind="paper_chunk",
             retrieval_channels=["paper"],
         )

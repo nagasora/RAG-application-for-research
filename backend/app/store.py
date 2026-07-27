@@ -17,7 +17,7 @@ from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
 from .database import (
-    Base, BeliefEventRecord, CanvasLayoutRecord, ChunkEmbeddingRecord, ChunkRecord, DocumentElementRecord, ExperimentPlanRecord, HypothesisCardRecord, DiscoveryItemRecord, IdeaRecord, ResearchActionRecord,
+    Base, BeliefEventRecord, CanvasLayoutRecord, ChunkEmbeddingRecord, ChunkRecord, DocumentElementRecord, ExperimentPlanRecord, HypothesisCardRecord, DiscoveryItemRecord, PaperExternalIdentifierRecord, IdeaRecord, ResearchActionRecord,
     EmbeddingJobRecord, EvidenceRefRecord, IngestionJobRecord, KnowledgeEdgeRecord, KnowledgeEdgeStatusEventRecord,
     KnowledgeNodeRecord, NodeFeedbackRecord, NoteRecord, PaperDecisionRecord, PaperPageRecord, PaperRecord,
     PaperTagRecord, ReasoningRunInputRecord, ReasoningRunOutputRecord, ReasoningRunRecord,
@@ -240,6 +240,7 @@ def _to_model(record: PaperRecord) -> Paper:
         abstract=record.abstract,
         source=record.source,
         external_id=record.external_id,
+        content_scope=record.content_scope,
         status=record.status,
         page_count=record.page_count,
         created_at=record.created_at.isoformat(),
@@ -269,6 +270,7 @@ def _record_from_model(paper: Paper) -> PaperRecord:
         abstract=paper.abstract,
         source=paper.source,
         external_id=paper.external_id,
+        content_scope=paper.content_scope,
         status=paper.status,
         page_count=paper.page_count,
         created_at=_parse_created_at(paper.created_at),
@@ -576,13 +578,13 @@ class PaperStore:
             return [self._belief_event_model(row) for row in rows if row.belief_key not in rejected and (not terms or any(term in row.content.casefold() for term in terms))][:limit]
     @staticmethod
     def _discovery_item_model(record: DiscoveryItemRecord) -> DiscoveryItem:
-        return DiscoveryItem(id=record.id, workspace_id=record.workspace_id, created_by=record.created_by, provider=record.provider, provider_paper_id=record.provider_paper_id, classification=record.classification, review_status=record.review_status, title=record.title, abstract=record.abstract, source_quote=record.source_quote, source_url=record.source_url, license=record.license, rate_limit_policy=record.rate_limit_policy, snapshot=dict(record.snapshot or {}), fetched_at=record.fetched_at.isoformat(), created_at=record.created_at.isoformat())
+        return DiscoveryItem(id=record.id, workspace_id=record.workspace_id, created_by=record.created_by, paper_id=record.paper_id, provider=record.provider, provider_paper_id=record.provider_paper_id, classification=record.classification, review_status=record.review_status, title=record.title, abstract=record.abstract, source_quote=record.source_quote, source_url=record.source_url, license=record.license, rate_limit_policy=record.rate_limit_policy, snapshot=dict(record.snapshot or {}), search_context=dict(record.search_context or {}), fetched_at=record.fetched_at.isoformat(), created_at=record.created_at.isoformat())
 
     def create_discovery_item(self, workspace_id: str, created_by: str, body: DiscoveryItemCreate) -> DiscoveryItem:
         now = datetime.now(timezone.utc)
         with self.session_factory.begin() as session:
             self._require_workspace(session, workspace_id)
-            record = DiscoveryItemRecord(id=str(uuid4()), workspace_id=workspace_id, created_by=created_by, provider=body.provider, provider_paper_id=body.provider_paper_id, classification=body.classification, review_status="pending", title=body.title, abstract=body.abstract, source_quote=body.source_quote, source_url=body.source_url, license=body.license, rate_limit_policy=body.rate_limit_policy, snapshot=body.snapshot, fetched_at=now, created_at=now)
+            record = DiscoveryItemRecord(id=str(uuid4()), workspace_id=workspace_id, created_by=created_by, paper_id=None, provider=body.provider, provider_paper_id=body.provider_paper_id, classification=body.classification, review_status="pending", title=body.title, abstract=body.abstract, source_quote=body.source_quote, source_url=body.source_url, license=body.license, rate_limit_policy=body.rate_limit_policy, snapshot=body.snapshot, search_context={}, fetched_at=now, created_at=now)
             session.add(record); session.flush()
             return self._discovery_item_model(record)
 
@@ -2109,7 +2111,7 @@ class PaperStore:
                 created_by=paper.created_by, title=paper.title,
                 authors=list(paper.authors or []), year=paper.year,
                 abstract=paper.abstract, source=paper.source,
-                external_id=paper.external_id, status=paper.status,
+                external_id=paper.external_id, content_scope=paper.content_scope, status=paper.status,
                 page_count=paper.page_count, created_at=paper.created_at.isoformat(),
                 chunks=chunks, content_hash=paper.content_hash,
                 error_message=paper.error_message, storage_key=paper.storage_key,
@@ -2204,6 +2206,7 @@ class PaperStore:
             record.abstract = paper.abstract
             record.source = paper.source
             record.external_id = paper.external_id
+            record.content_scope = paper.content_scope
             record.status = paper.status
             record.page_count = paper.page_count
             record.error_message = None
@@ -2246,18 +2249,106 @@ class PaperStore:
                 record.byte_size = None
         return self.get(paper_id)
 
+    @staticmethod
+    def _canonical_external_identifier(provider: str, identifier: str) -> tuple[str, str]:
+        normalized_provider = provider.strip().casefold()
+        normalized_identifier = identifier.strip().casefold()
+        if normalized_provider == "doi":
+            for prefix in ("doi:", "https://doi.org/", "http://doi.org/"):
+                if normalized_identifier.startswith(prefix):
+                    normalized_identifier = normalized_identifier[len(prefix):]
+                    break
+            normalized_identifier = normalized_identifier.rstrip("/")
+        elif normalized_provider == "arxiv":
+            for prefix in ("arxiv:", "https://arxiv.org/abs/", "http://arxiv.org/abs/"):
+                if normalized_identifier.startswith(prefix):
+                    normalized_identifier = normalized_identifier[len(prefix):]
+                    break
+            normalized_identifier = normalized_identifier.split("?", 1)[0]
+            base, marker, version = normalized_identifier.rpartition("v")
+            if marker and version.isdigit():
+                normalized_identifier = base
+        return normalized_provider, normalized_identifier
+
+    @classmethod
+    def _external_identifiers(cls, values: list[tuple[str, str]] | None) -> list[tuple[str, str]]:
+        result: list[tuple[str, str]] = []
+        for provider, identifier in values or []:
+            normalized = cls._canonical_external_identifier(provider, identifier)
+            if normalized[0] and normalized[1] and normalized not in result:
+                result.append(normalized)
+        return result
+
+    @staticmethod
+    def _existing_external_paper(
+        session: Session, workspace_id: str, identifiers: list[tuple[str, str]],
+    ) -> PaperRecord | None:
+        if not identifiers:
+            return None
+        clauses = [
+            and_(PaperExternalIdentifierRecord.provider == provider, PaperExternalIdentifierRecord.identifier == identifier)
+            for provider, identifier in identifiers
+        ]
+        return session.scalar(
+            select(PaperRecord)
+            .join(PaperExternalIdentifierRecord, PaperExternalIdentifierRecord.paper_id == PaperRecord.id)
+            .where(PaperRecord.workspace_id == workspace_id, or_(*clauses))
+            .options(selectinload(PaperRecord.chunks))
+        )
+
+    @staticmethod
+    def _add_external_identifiers(
+        session: Session, *, workspace_id: str, paper_id: str, identifiers: list[tuple[str, str]], now: datetime,
+    ) -> None:
+        session.add_all([
+            PaperExternalIdentifierRecord(
+                id=str(uuid4()), workspace_id=workspace_id, paper_id=paper_id,
+                provider=provider, identifier=identifier, created_at=now,
+            )
+            for provider, identifier in identifiers
+        ])
+
+    def find_paper_by_external_identifiers(
+        self, workspace_id: str, identifiers: list[tuple[str, str]],
+    ) -> Paper | None:
+        normalized = self._external_identifiers(identifiers)
+        with self.session_factory() as session:
+            record = self._existing_external_paper(session, workspace_id, normalized)
+            return _to_model(record) if record is not None else None
+
     def upsert(
         self, paper: Paper, embedding_model: str | None = None,
         embedding_provider: str | None = None,
+        external_identifiers: list[tuple[str, str]] | None = None,
+        external_metadata_snapshot: dict | None = None,
+        external_metadata_provider: str | None = None,
+        external_metadata_id: str | None = None,
     ) -> Paper:
         """Compatibility path for external imports; insert atomically and deduplicate by hash."""
+        identifiers = self._external_identifiers(external_identifiers)
         existing = self.get_by_hash(paper.workspace_id, paper.content_hash or "") if paper.content_hash else None
+        if existing:
+            raise DuplicatePaperError(existing)
+        existing = self.find_paper_by_external_identifiers(paper.workspace_id, identifiers)
         if existing:
             raise DuplicatePaperError(existing)
         paper.status = "ready"
         try:
             with self.session_factory.begin() as session:
                 session.add(_record_from_model(paper))
+                self._add_external_identifiers(
+                    session, workspace_id=paper.workspace_id, paper_id=paper.id,
+                    identifiers=identifiers, now=datetime.now(timezone.utc),
+                )
+                if external_metadata_snapshot is not None:
+                    self._ensure_external_metadata_source(
+                        session,
+                        paper=paper,
+                        provider=(external_metadata_provider or (identifiers[0][0] if identifiers else "external")),
+                        provider_paper_id=(external_metadata_id or paper.external_id or paper.id),
+                        snapshot=external_metadata_snapshot,
+                        now=datetime.now(timezone.utc),
+                    )
                 _queue_embedding_job(
                     session, paper_id=paper.id, workspace_id=paper.workspace_id,
                     provider=embedding_provider or os.getenv("EMBEDDING_PROVIDER", "openai"),
@@ -2270,6 +2361,120 @@ class PaperStore:
                 raise DuplicatePaperError(duplicate) from exc
             raise
         return paper
+
+    @staticmethod
+    def _ensure_external_metadata_source(
+        session: Session, *, paper: Paper, provider_paper_id: str,
+        snapshot: dict, now: datetime, provider: str = "semantic_scholar",
+    ) -> None:
+        """Anchor an imported abstract to the exact provider metadata snapshot."""
+        serialized = json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        content_hash = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+        normalized_provider = provider.strip().casefold() or "external"
+        locator = f"{normalized_provider}:{provider_paper_id}"
+        existing = session.scalar(select(SourceVersionRecord.id).where(
+            SourceVersionRecord.workspace_id == paper.workspace_id,
+            SourceVersionRecord.kind == "external_metadata",
+            SourceVersionRecord.locator == locator,
+            SourceVersionRecord.content_hash == content_hash,
+        ))
+        if existing is not None:
+            return
+        source = SourceVersionRecord(
+            id=str(uuid4()), workspace_id=paper.workspace_id, paper_id=paper.id,
+            kind="external_metadata", locator=locator, content_hash=content_hash,
+            metadata_json={
+                "provider": normalized_provider, "provider_paper_id": provider_paper_id,
+                "content_scope": "abstract_only", "evidence_scope": "abstract",
+                "fetched_at": now.isoformat(),
+                "license": str(snapshot.get("license") or "unknown"),
+                "rate_limit_policy": str(snapshot.get("rate_limit_policy") or ""),
+                "snapshot": snapshot,
+            },
+            created_at=now,
+        )
+        session.add(source)
+        if paper.abstract:
+            session.add(SourceSpanRecord(
+                id=str(uuid4()), workspace_id=paper.workspace_id, source_version_id=source.id,
+                page=1, locator_json={"paper_id": paper.id, "content_scope": "abstract_only"},
+                text=paper.abstract, created_at=now,
+            ))
+
+    def import_discovery_paper(
+        self, *, workspace_id: str, created_by: str, paper: Paper,
+        provider_paper_id: str, external_identifiers: list[tuple[str, str]],
+        snapshot: dict, search_context: dict, embedding_provider: str, embedding_model: str,
+    ) -> tuple[Paper, DiscoveryItem, bool]:
+        """Atomically persist a selected abstract and its accepted discovery record."""
+        identifiers = self._external_identifiers(external_identifiers)
+        now = datetime.now(timezone.utc)
+        try:
+            with self.session_factory.begin() as session:
+                self._require_workspace(session, workspace_id)
+                existing = self._existing_external_paper(session, workspace_id, identifiers)
+                if existing is not None:
+                    item = session.scalar(
+                        select(DiscoveryItemRecord)
+                        .where(
+                            DiscoveryItemRecord.workspace_id == workspace_id,
+                            DiscoveryItemRecord.paper_id == existing.id,
+                            DiscoveryItemRecord.provider == "semantic_scholar",
+                        )
+                        .order_by(DiscoveryItemRecord.created_at.desc())
+                    )
+                    if item is None:
+                        item = DiscoveryItemRecord(
+                            id=str(uuid4()), workspace_id=workspace_id, created_by=created_by,
+                            paper_id=existing.id, provider="semantic_scholar", provider_paper_id=provider_paper_id,
+                            classification="unclassified", review_status="accepted", title=existing.title,
+                            abstract=existing.abstract, source_quote="", source_url=str(snapshot.get("url") or ""),
+                            license="semantic_scholar_api", rate_limit_policy="api_key_intro_1_rps",
+                            snapshot=snapshot, search_context=search_context, fetched_at=now, created_at=now,
+                        )
+                        session.add(item)
+                        session.flush()
+                    self._ensure_external_metadata_source(
+                        session, paper=_to_model(existing), provider_paper_id=provider_paper_id,
+                        snapshot=snapshot, now=now,
+                    )
+                    return _to_model(existing), self._discovery_item_model(item), True
+                session.add(_record_from_model(paper))
+                self._add_external_identifiers(
+                    session, workspace_id=workspace_id, paper_id=paper.id, identifiers=identifiers, now=now,
+                )
+                item = DiscoveryItemRecord(
+                    id=str(uuid4()), workspace_id=workspace_id, created_by=created_by, paper_id=paper.id,
+                    provider="semantic_scholar", provider_paper_id=provider_paper_id,
+                    classification="unclassified", review_status="accepted", title=paper.title,
+                    abstract=paper.abstract, source_quote="", source_url=str(snapshot.get("url") or ""),
+                    license="semantic_scholar_api", rate_limit_policy="api_key_intro_1_rps",
+                    snapshot=snapshot, search_context=search_context, fetched_at=now, created_at=now,
+                )
+                session.add(item)
+                self._ensure_external_metadata_source(
+                    session, paper=paper, provider_paper_id=provider_paper_id,
+                    snapshot=snapshot, now=now,
+                )
+                _queue_embedding_job(
+                    session, paper_id=paper.id, workspace_id=workspace_id,
+                    provider=embedding_provider, model=embedding_model,
+                    total_chunks=len(paper.chunks),
+                )
+                session.flush()
+                return paper, self._discovery_item_model(item), False
+        except IntegrityError as exc:
+            existing = self.find_paper_by_external_identifiers(workspace_id, identifiers)
+            if existing is not None:
+                # A concurrent import won the identity. Retry as a duplicate to
+                # create/retrieve the corresponding accepted discovery record.
+                return self.import_discovery_paper(
+                    workspace_id=workspace_id, created_by=created_by, paper=paper,
+                    provider_paper_id=provider_paper_id, external_identifiers=identifiers,
+                    snapshot=snapshot, search_context=search_context,
+                    embedding_provider=embedding_provider, embedding_model=embedding_model,
+                )
+            raise exc
 
     def get(self, paper_id: str) -> Paper:
         with self.session_factory() as session:
@@ -3707,7 +3912,7 @@ class PaperStore:
                 created_by=paper.created_by, title=paper.title,
                 authors=list(paper.authors or []), year=paper.year,
                 abstract=paper.abstract, source=paper.source,
-                external_id=paper.external_id, status=paper.status,
+                external_id=paper.external_id, content_scope=paper.content_scope, status=paper.status,
                 page_count=paper.page_count, created_at=paper.created_at.isoformat(),
                 chunks=chunks, content_hash=paper.content_hash,
                 error_message=paper.error_message, storage_key=paper.storage_key,

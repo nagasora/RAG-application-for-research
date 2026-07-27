@@ -71,6 +71,7 @@ Focusは同時に最大3件とする。次回実装では、原則として上�
 
 <!-- FOCUS_START -->
 - CI-022: 初回利用者が研究ワークフロー全体をUIで確認できるようにする。
+- CI-031: 外部論文を検索し、要旨の出所を保ったままLibraryへ明示的に採用できるようにする。
 <!-- FOCUS_END -->
 
 ## 優先バックログ
@@ -110,6 +111,7 @@ Focusは同時に最大3件とする。次回実装では、原則として上�
 | CI-028 | P0 | done | agentic-rag | 選択した1〜5件の論文だけを対象に、生成時間を確保しながら45秒以内に回答または説明付き抽出結果を返す | CI-003, CI-014, CI-019, CI-023 | 2026-07-22 | D-20260722-12 | source scope、DB/LLM期限、PG 57014、キャンセル境界を実装。backend 227件成功。再構築コンテナでadapter・45秒・生成予約30秒・3000 tokens・API 200を確認 |
 | CI-029 | P1 | done | frontend | 会話をスクロールしても研究対話、検索対象、入力欄、最新回答の根拠へ常にアクセスでき、自然な日本語で状態を理解できる | CI-006, CI-022, CI-023, CI-028 | 2026-07-22 | D-20260722-12 | 固定3ペイン、responsive drawer、1〜5件選択、日本語copyを実装。frontend 68件・型検査・production build・5 viewport・Escape/focus復元・design QA成功 |
 | CI-030 | P1 | done | project-navigation | 複数の研究プロジェクトを作成・切替・名前変更でき、論文・対話・グラフ・下書きが混ざらず、再読込後も直前の選択を安全に再開できる | CI-016 | 2026-07-22 | D-20260722-13 | workspace境界を再利用して切替・検索・作成・名前変更、利用者別復元、状態分離を実装。backend認可16件、frontend 72件・型検査・production build、再構築後API/Web 200、独立レビューP0/P1なしを確認 |
+| CI-031 | P1 | done | external-discovery | Semantic Scholarから外部論文を検索し、取得時点と要旨のみの範囲を失わず、選択した候補だけをLibraryへ採用できる | CI-012, CI-013 | 2026-07-27 | D-20260727-14 | Backend全回帰分割242件と最終Discovery 14件、Frontend 80件・型検査・production build、実OpenAPI生成を確認。独立レビューP0/P1/P2なし |
 <!-- BACKLOG_TABLE_END -->
 
 ## 主要項目の受入条件と評価指標
@@ -229,6 +231,14 @@ Focusは同時に最大3件とする。次回実装では、原則として上�
 - 切替時は進行中の要求を中止し、論文検索、選択、根拠、アイデア下書き、再embedding状態を旧プロジェクトから持ち越さない。
 - 全API要求は選択中のworkspace IDを認可境界へ渡し、アクセス権を失った保存済みIDは個人プロジェクトへ安全に戻す。
 - 最後に開いたアクセス可能なプロジェクトを再読込後に復元し、A/Bプロジェクト間の論文が相互に表示されないことを回帰テストで確認する。
+
+### CI-031 外部論文サーチ
+
+- Semantic Scholarをキーワード、年範囲、関連度・新着・引用数で検索し、20件単位で候補を確認できる。
+- 検索結果は自動採用せず、owner/editorが明示選択した1〜20件だけを要旨付きでLibraryへ登録する。
+- provider、取得時刻、license、rate limit policy、応答snapshot、検索条件を保存し、DOI・arXiv・Semantic Scholar IDで重複登録を防ぐ。
+- 要旨だけの論文は `abstract_only` として、PDFページではなく「外部要旨」をEvidenceに表示する。
+- viewer、別workspace、provider rate limit・timeout・部分失敗・再送をAPIとUIの両方で安全に扱う。
 
 ## 調査ログ
 

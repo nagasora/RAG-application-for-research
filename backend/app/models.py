@@ -30,6 +30,7 @@ class Paper(BaseModel):
     abstract: str = ""
     source: str = "upload"
     external_id: str | None = None
+    content_scope: Literal["full_text", "abstract_only"] = "full_text"
     status: Literal["ready", "processing", "failed"] = "ready"
     page_count: int = 0
     created_at: str = Field(default_factory=utc_now)
@@ -49,6 +50,7 @@ class PaperSummary(BaseModel):
     abstract: str
     source: str
     external_id: str | None
+    content_scope: Literal["full_text", "abstract_only"] = "full_text"
     status: str
     page_count: int
     chunk_count: int
@@ -229,7 +231,7 @@ class HypothesisCardStatusUpdate(BaseModel):
 class DiscoveryItemCreate(BaseModel):
     provider: Literal["semantic_scholar"] = "semantic_scholar"
     provider_paper_id: str = Field(min_length=1, max_length=256)
-    classification: Literal["supports", "contradicts", "boundary_condition", "method_alternative", "duplicate"]
+    classification: Literal["supports", "contradicts", "boundary_condition", "method_alternative", "duplicate", "unclassified"] = "unclassified"
     title: str = Field(min_length=1, max_length=20_000)
     abstract: str = ""
     source_quote: str = ""
@@ -243,6 +245,8 @@ class DiscoveryItem(DiscoveryItemCreate):
     id: str
     workspace_id: str
     created_by: str | None = None
+    paper_id: str | None = None
+    search_context: dict = Field(default_factory=dict)
     review_status: Literal["pending", "accepted", "rejected"] = "pending"
     fetched_at: str
     created_at: str
@@ -250,6 +254,81 @@ class DiscoveryItem(DiscoveryItemCreate):
 
 class DiscoveryReviewUpdate(BaseModel):
     review_status: Literal["accepted", "rejected"]
+
+
+class DiscoverySearchRequest(BaseModel):
+    query: str = Field(min_length=2, max_length=4_000)
+    year_from: int | None = Field(default=None, ge=1800, le=2200)
+    year_to: int | None = Field(default=None, ge=1800, le=2200)
+    sort: Literal["relevance", "newest", "citation_count"] = "relevance"
+    cursor: str | None = Field(default=None, max_length=2_000)
+
+    @model_validator(mode="after")
+    def valid_year_range(self):
+        if self.year_from is not None and self.year_to is not None and self.year_from > self.year_to:
+            raise ValueError("year_from must not exceed year_to")
+        return self
+
+
+class DiscoverySearchContext(BaseModel):
+    query: str = Field(min_length=2, max_length=4_000)
+    year_from: int | None = Field(default=None, ge=1800, le=2200)
+    year_to: int | None = Field(default=None, ge=1800, le=2200)
+    sort: Literal["relevance", "newest", "citation_count"] = "relevance"
+
+    @model_validator(mode="after")
+    def valid_year_range(self):
+        if self.year_from is not None and self.year_to is not None and self.year_from > self.year_to:
+            raise ValueError("year_from must not exceed year_to")
+        return self
+
+
+class DiscoverySearchItem(BaseModel):
+    provider_paper_id: str
+    title: str
+    authors: list[str] = Field(default_factory=list)
+    year: int | None = None
+    publication_date: str | None = None
+    venue: str | None = None
+    abstract: str = ""
+    citation_count: int = Field(default=0, ge=0)
+    external_ids: dict[str, str] = Field(default_factory=dict)
+    source_url: str = ""
+    existing_paper_id: str | None = None
+    content_scope: Literal["abstract_only"] = "abstract_only"
+
+
+class DiscoverySearchResponse(BaseModel):
+    provider: Literal["semantic_scholar"] = "semantic_scholar"
+    fetched_at: str
+    total_estimate: int | None = Field(default=None, ge=0)
+    next_cursor: str | None = None
+    items: list[DiscoverySearchItem] = Field(default_factory=list)
+
+
+class DiscoveryImportRequest(BaseModel):
+    provider_paper_ids: list[str] = Field(min_length=1, max_length=20)
+    search_context: DiscoverySearchContext
+
+    @field_validator("provider_paper_ids")
+    @classmethod
+    def unique_provider_ids(cls, values: list[str]) -> list[str]:
+        normalized = [value.strip() for value in values]
+        if not all(normalized) or len(set(normalized)) != len(normalized):
+            raise ValueError("provider_paper_ids must be unique non-empty values")
+        return normalized
+
+
+class DiscoveryImportItem(BaseModel):
+    provider_paper_id: str
+    status: Literal["imported", "duplicate", "failed"]
+    paper_id: str | None = None
+    discovery_item_id: str | None = None
+    error: str | None = None
+
+
+class DiscoveryImportResponse(BaseModel):
+    items: list[DiscoveryImportItem] = Field(default_factory=list)
 
 
 class BeliefEventCreate(BaseModel):
@@ -1095,6 +1174,7 @@ class Citation(BaseModel):
     section: str
     excerpt: str
     score: float
+    evidence_scope: Literal["full_text", "abstract"] = "full_text"
     # Existing paper citations keep the original required fields above.  The
     # optional provenance fields let graph-backed evidence travel through the
     # same API and AgenticRAG pipeline without breaking older clients.

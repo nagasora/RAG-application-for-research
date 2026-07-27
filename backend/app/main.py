@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import io
 import csv
 import hashlib
@@ -13,6 +14,7 @@ import time
 import xml.etree.ElementTree as ET
 from xml.sax.saxutils import escape as xml_escape
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 from threading import Event, Lock
@@ -20,6 +22,7 @@ from typing import Callable, Literal
 from uuid import uuid4
 
 import httpx
+from cryptography.fernet import Fernet, InvalidToken
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -44,7 +47,7 @@ from .models import (
     NodeFeedbackCreate, ReasoningRun, ReasoningRunCreate, SourceSpan,
     SourceImportCreate, SourceImportResult, SourceVersion, SourceVersionCreate,
     HypothesisCard, HypothesisCardCreate, HypothesisCardStatusUpdate,
-    DiscoveryItem, DiscoveryItemCreate, DiscoveryReviewUpdate,
+    DiscoveryImportItem, DiscoveryImportRequest, DiscoveryImportResponse, DiscoveryItem, DiscoveryItemCreate, DiscoveryReviewUpdate, DiscoverySearchItem, DiscoverySearchRequest, DiscoverySearchResponse,
     BeliefEvent, BeliefEventCreate, ExperimentPlan, ExperimentPlanCreate, ExperimentPlanSnapshot, ExperimentResultCreate, Idea, IdeaCreate, IdeaUpdate, ResearchAction, ResearchActionCreate, ResearchActionUpdate,
     ConversationGraphExportCreate, GraphIdeaCandidate, ReviewAssignmentUpdate, ReviewCandidate, ReviewCommentCreate, ReviewDecisionCreate, ReviewThread, ReviewThreadCreate,
 )
@@ -56,6 +59,7 @@ from .rag import (
 )
 from .ingestion import process_embedding_job, process_ingestion_job
 from .storage import ImmutableObjectExists, LocalOriginalStorage, OriginalStorage, storage_from_environment
+from .semantic_scholar import PROVIDER as SEMANTIC_SCHOLAR_PROVIDER, SemanticScholarError, fetch_paper as fetch_semantic_scholar_paper, search_papers as search_semantic_scholar_papers
 from .openai_client import OpenAIDeadlineExceeded, classify_openai_error, get_openai_adapter
 from .store import (
     DuplicatePaperError, PaperNotFoundError, PaperStore, ResourceConflictError,
@@ -369,6 +373,92 @@ def get_workspace_context(
 def require_workspace_write(context: WorkspaceContext) -> None:
     if context.workspace.role not in {"owner", "editor"}:
         raise HTTPException(status_code=403, detail="workspace write access is required")
+
+
+def _discovery_cursor_cipher() -> Fernet:
+    configured = os.getenv("DISCOVERY_CURSOR_SECRET", "").strip()
+    if not configured and os.getenv("AUTH_MODE", "dev").strip().casefold() == "oidc":
+        raise RuntimeError("DISCOVERY_CURSOR_SECRET is required when AUTH_MODE=oidc")
+    material = configured or "paperpilot-local-discovery-cursor-v1"
+    key = base64.urlsafe_b64encode(hashlib.sha256(material.encode("utf-8")).digest())
+    return Fernet(key)
+
+
+def _discovery_criteria_hash(body: DiscoverySearchRequest) -> str:
+    criteria = json.dumps({
+        "query": body.query.strip(), "year_from": body.year_from,
+        "year_to": body.year_to, "sort": body.sort,
+    }, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return hashlib.sha256(criteria).hexdigest()
+
+
+def _discovery_cursor(body: DiscoverySearchRequest, *, offset: int | None = None, token: str | None = None) -> str:
+    mode = "relevance" if body.sort == "relevance" else "bulk"
+    payload = json.dumps({
+        "mode": mode, "offset": offset, "token": token,
+        "criteria_hash": _discovery_criteria_hash(body),
+    }, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return f"v1.{_discovery_cursor_cipher().encrypt(payload).decode('ascii')}"
+
+
+def _discovery_position(body: DiscoverySearchRequest) -> tuple[int, str | None]:
+    if not body.cursor:
+        return 0, None
+    try:
+        version, encoded = body.cursor.split(".", 1)
+        if version != "v1":
+            raise ValueError("unsupported cursor version")
+        payload = json.loads(_discovery_cursor_cipher().decrypt(encoded.encode("ascii"), ttl=3600))
+        mode = "relevance" if body.sort == "relevance" else "bulk"
+        if not isinstance(payload, dict) or payload.get("mode") != mode:
+            raise ValueError("invalid cursor payload")
+        if payload.get("criteria_hash") != _discovery_criteria_hash(body):
+            raise ValueError("cursor does not match search")
+        if mode == "relevance":
+            if not isinstance(payload.get("offset"), int) or payload["offset"] < 0:
+                raise ValueError("invalid relevance cursor")
+            return payload["offset"], None
+        if not isinstance(payload.get("token"), str) or not payload["token"]:
+            raise ValueError("invalid bulk cursor")
+        return 0, payload["token"]
+    except (InvalidToken, UnicodeError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=422, detail={"code": "invalid_discovery_cursor", "message": "検索カーソルが無効です。"}) from exc
+
+
+def _semantic_error_response(exc: SemanticScholarError) -> HTTPException:
+    if exc.code == "rate_limited":
+        return HTTPException(status_code=429, detail={"code": "external_provider_rate_limited", "message": "論文検索サービスの利用上限に達しました。しばらくしてから再試行してください。"})
+    return HTTPException(status_code=503, detail={"code": "external_provider_unavailable", "message": "論文検索サービスを利用できません。"})
+
+
+def _semantic_external_ids(snapshot: dict) -> dict[str, str]:
+    raw_identifiers = snapshot.get("externalIds")
+    if raw_identifiers is None:
+        raw_identifiers = {}
+    if not isinstance(raw_identifiers, dict):
+        raise ValueError("provider externalIds must be an object")
+    identifiers = {
+        str(key).casefold(): str(value).strip()
+        for key, value in raw_identifiers.items()
+        if isinstance(key, str) and isinstance(value, (str, int)) and str(value).strip()
+    }
+    paper_id = str(snapshot.get("paperId") or "").strip()
+    if paper_id:
+        identifiers[SEMANTIC_SCHOLAR_PROVIDER] = paper_id
+    return identifiers
+
+
+def _semantic_authors(snapshot: dict) -> list[str]:
+    raw_authors = snapshot.get("authors")
+    if raw_authors is None:
+        raw_authors = []
+    if not isinstance(raw_authors, list):
+        raise ValueError("provider authors must be a list")
+    return [
+        str(author.get("name") or "").strip()
+        for author in raw_authors
+        if isinstance(author, dict) and str(author.get("name") or "").strip()
+    ]
 
 app = FastAPI(title="PaperPilot API", version="0.1.0")
 app.add_middleware(
@@ -1126,34 +1216,67 @@ def add_external_paper(
     context: WorkspaceContext = Depends(get_workspace_context),
 ):
     require_workspace_write(context)
-    title, authors, year, abstract = body.title, body.authors, body.year, body.abstract
+    title: str | None = None
+    authors: list[str] = []
+    year: int | None = None
+    abstract = ""
     identifier = body.identifier.strip()
+    arxiv_id = re.sub(r"^(arxiv:|https?://arxiv.org/abs/)", "", identifier, flags=re.I)
+    doi_id = re.sub(r"^(doi:|https?://doi.org/)", "", identifier, flags=re.I)
+    is_arxiv = bool(re.match(r"^\d{4}\.\d+(v\d+)?$", arxiv_id, re.I))
+    is_doi = doi_id.lower().startswith("10.")
+    if not is_arxiv and not is_doi:
+        raise HTTPException(status_code=422, detail="identifier must be an arXiv ID or DOI")
+    external_provider = "arxiv" if is_arxiv else "doi"
+    metadata_provider = "arxiv"
+    metadata_id = arxiv_id
+    provider_snapshot: dict = {}
+    external_identifiers: list[tuple[str, str]] = []
     try:
-        arxiv_id = re.sub(r"^(arxiv:|https?://arxiv.org/abs/)", "", identifier, flags=re.I)
-        if re.match(r"^\d{4}\.\d+(v\d+)?$", arxiv_id, re.I):
+        if is_arxiv:
             response = httpx.get("https://export.arxiv.org/api/query", params={"id_list": arxiv_id}, timeout=15)
             response.raise_for_status()
             entry = ET.fromstring(response.text).find("{http://www.w3.org/2005/Atom}entry")
-            if entry is not None:
-                title = title or (entry.findtext("{http://www.w3.org/2005/Atom}title") or "").strip()
-                abstract = abstract or (entry.findtext("{http://www.w3.org/2005/Atom}summary") or "").strip()
-                authors = authors or [node.findtext("{http://www.w3.org/2005/Atom}name") or "" for node in entry.findall("{http://www.w3.org/2005/Atom}author")]
-                published = entry.findtext("{http://www.w3.org/2005/Atom}published") or ""
-                year = year or (int(published[:4]) if published[:4].isdigit() else None)
-        elif identifier.lower().startswith("10."):
-            response = httpx.get(
-                f"https://api.semanticscholar.org/graph/v1/paper/DOI:{identifier}",
-                params={"fields": "title,authors,year,abstract"}, timeout=15,
-            )
-            response.raise_for_status()
-            data = response.json()
-            title = title or data.get("title")
-            abstract = abstract or data.get("abstract") or ""
-            authors = authors or [author.get("name", "") for author in data.get("authors", [])]
-            year = year or data.get("year")
-    except (httpx.HTTPError, ET.ParseError, ValueError):
-        pass
-    title = title or f"External paper: {identifier}"
+            if entry is None:
+                raise ValueError("arXiv response is missing an entry")
+            provider_title = (entry.findtext("{http://www.w3.org/2005/Atom}title") or "").strip()
+            if not provider_title:
+                raise ValueError("arXiv response is missing a title")
+            provider_abstract = (entry.findtext("{http://www.w3.org/2005/Atom}summary") or "").strip()
+            provider_authors = [
+                node.findtext("{http://www.w3.org/2005/Atom}name") or ""
+                for node in entry.findall("{http://www.w3.org/2005/Atom}author")
+            ]
+            published = entry.findtext("{http://www.w3.org/2005/Atom}published") or ""
+            provider_year = int(published[:4]) if published[:4].isdigit() else None
+            title = provider_title
+            abstract = provider_abstract
+            authors = provider_authors
+            year = provider_year
+            provider_snapshot = {
+                "paperId": arxiv_id, "title": provider_title, "authors": provider_authors,
+                "year": provider_year, "abstract": provider_abstract,
+                "externalIds": {"ArXiv": arxiv_id},
+            }
+            external_identifiers = [("arxiv", arxiv_id)]
+        else:
+            data = fetch_semantic_scholar_paper(f"DOI:{doi_id}")
+            if not str(data.get("paperId") or "").strip() or not str(data.get("title") or "").strip():
+                raise ValueError("Semantic Scholar response is missing identity or title")
+            provider_ids = _semantic_external_ids(data)
+            title = str(data.get("title") or "").strip()
+            abstract = str(data.get("abstract") or "")
+            authors = _semantic_authors(data)
+            year = data.get("year") if isinstance(data.get("year"), int) else None
+            metadata_provider = SEMANTIC_SCHOLAR_PROVIDER
+            metadata_id = str(data.get("paperId") or f"DOI:{doi_id}")
+            provider_snapshot = data
+            external_identifiers = list(provider_ids.items())
+            external_identifiers.append(("doi", doi_id))
+    except (httpx.HTTPError, ET.ParseError, SemanticScholarError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail="external paper metadata could not be retrieved") from exc
+    if not title:
+        raise HTTPException(status_code=502, detail="external paper metadata could not be retrieved")
     paper = Paper(
         user_id=context.user.subject,
         workspace_id=context.workspace.id,
@@ -1162,8 +1285,9 @@ def add_external_paper(
         authors=authors,
         year=year,
         abstract=abstract,
-        source="arXiv" if "arxiv" in body.identifier.lower() or re.match(r"^\d{4}\.\d+", body.identifier) else "DOI",
+        source="arXiv" if external_provider == "arxiv" else "DOI",
         external_id=identifier,
+        content_scope="abstract_only",
         page_count=1 if abstract else 0,
         content_hash=hashlib.sha256(f"external:{identifier.lower()}".encode("utf-8")).hexdigest(),
     )
@@ -1173,6 +1297,19 @@ def add_external_paper(
         embedding_provider, configured_model = embedding_config()
         store.upsert(
             paper, embedding_model=configured_model, embedding_provider=embedding_provider,
+            external_identifiers=external_identifiers,
+            external_metadata_provider=metadata_provider,
+            external_metadata_id=metadata_id,
+            external_metadata_snapshot={
+                "provider": metadata_provider,
+                "provider_paper_id": metadata_id,
+                "license": "semantic_scholar_api" if metadata_provider == SEMANTIC_SCHOLAR_PROVIDER else "provider_metadata",
+                "rate_limit_policy": "api_key_intro_1_rps" if metadata_provider == SEMANTIC_SCHOLAR_PROVIDER else "provider_default",
+                "provider_snapshot": provider_snapshot,
+                "effective_metadata": {
+                    "title": title, "authors": authors, "year": year, "abstract": abstract,
+                },
+            },
         )
     except DuplicatePaperError as exc:
         return summary(exc.paper)
@@ -1438,6 +1575,11 @@ def _paper_backed_graph_citation(
         extraction_quality=evidence.extraction_quality,
         retrieval_reason=retrieval_reason, source_quote=quote,
         retrieval_stance=retrieval_stance,
+        evidence_scope=(
+            "abstract"
+            if paper.content_scope == "abstract_only" or version.metadata.get("evidence_scope") == "abstract"
+            else "full_text"
+        ),
     )
 
 
@@ -2725,6 +2867,121 @@ def get_hypothesis_card(card_id: str, store: PaperStore = Depends(get_store), co
 @app.get("/api/discovery/review-queue", response_model=list[DiscoveryItem])
 def list_discovery_review_queue(store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
     return store.list_discovery_items(context.workspace.id)
+
+
+@app.post("/api/discovery/search", response_model=DiscoverySearchResponse)
+def search_discovery_papers(
+    body: DiscoverySearchRequest, store: PaperStore = Depends(get_store),
+    context: WorkspaceContext = Depends(get_workspace_context),
+):
+    """Search provider metadata; returned abstracts are not full-text evidence."""
+    require_workspace_write(context)
+    offset, cursor_token = _discovery_position(body)
+    try:
+        payload = search_semantic_scholar_papers(
+            body.query.strip(), offset=offset, limit=20, sort=body.sort,
+            cursor_token=cursor_token, year_from=body.year_from, year_to=body.year_to,
+        )
+    except SemanticScholarError as exc:
+        raise _semantic_error_response(exc) from exc
+    fetched_at = datetime.now(timezone.utc).isoformat()
+    items: list[DiscoverySearchItem] = []
+    try:
+        for snapshot in payload.get("data", []):
+            if not isinstance(snapshot, dict):
+                raise ValueError("provider search item must be an object")
+            provider_paper_id = str(snapshot.get("paperId") or "").strip()
+            title = str(snapshot.get("title") or "").strip()
+            if not provider_paper_id or not title:
+                raise ValueError("provider search item is missing identity or title")
+            external_ids = _semantic_external_ids(snapshot)
+            existing = store.find_paper_by_external_identifiers(
+                context.workspace.id, list(external_ids.items()),
+            )
+            citation_count = snapshot.get("citationCount")
+            items.append(DiscoverySearchItem(
+                provider_paper_id=provider_paper_id, title=title,
+                authors=_semantic_authors(snapshot),
+                year=snapshot.get("year") if isinstance(snapshot.get("year"), int) else None,
+                publication_date=str(snapshot.get("publicationDate")) if snapshot.get("publicationDate") else None,
+                venue=str(snapshot.get("venue")) if snapshot.get("venue") else None,
+                abstract=str(snapshot.get("abstract") or ""),
+                citation_count=citation_count if isinstance(citation_count, int) and citation_count >= 0 else 0,
+                external_ids=external_ids, source_url=str(snapshot.get("url") or ""),
+                existing_paper_id=existing.id if existing else None,
+            ))
+    except (TypeError, ValueError) as exc:
+        raise _semantic_error_response(SemanticScholarError("invalid_response")) from exc
+    total = payload.get("total")
+    total_estimate = total if isinstance(total, int) and total >= 0 else None
+    consumed = len(payload.get("data", []))
+    next_cursor = None
+    if body.sort == "relevance":
+        if consumed == 20 and (total_estimate is None or offset + consumed < total_estimate):
+            next_cursor = _discovery_cursor(body, offset=offset + consumed)
+    elif consumed and isinstance(payload.get("token"), str) and payload["token"]:
+        next_cursor = _discovery_cursor(body, token=payload["token"])
+    return DiscoverySearchResponse(
+        fetched_at=fetched_at, total_estimate=total_estimate, next_cursor=next_cursor, items=items,
+    )
+
+
+@app.post("/api/discovery/imports", response_model=DiscoveryImportResponse)
+def import_discovery_papers(
+    body: DiscoveryImportRequest, store: PaperStore = Depends(get_store),
+    context: WorkspaceContext = Depends(get_workspace_context),
+):
+    """Import explicitly selected provider abstracts with a durable accepted audit record."""
+    require_workspace_write(context)
+    results: list[DiscoveryImportItem] = []
+    search_context = body.search_context.model_dump(mode="json")
+    embedding_provider, configured_embedding_model = embedding_config()
+    for requested_id in body.provider_paper_ids:
+        try:
+            snapshot = fetch_semantic_scholar_paper(requested_id)
+            canonical_id = str(snapshot.get("paperId") or requested_id).strip()
+            title = str(snapshot.get("title") or "").strip()
+            if not canonical_id or not title:
+                raise ValueError("provider response is missing a paper identity or title")
+            abstract = str(snapshot.get("abstract") or "")
+            external_ids = _semantic_external_ids(snapshot)
+            external_ids.setdefault(SEMANTIC_SCHOLAR_PROVIDER, canonical_id)
+            primary_external_id = external_ids.get("doi") or canonical_id
+            paper = Paper(
+                user_id=context.user.subject, workspace_id=context.workspace.id,
+                created_by=context.user.id, title=title, authors=_semantic_authors(snapshot),
+                year=snapshot.get("year") if isinstance(snapshot.get("year"), int) else None,
+                abstract=abstract, source="Semantic Scholar", external_id=primary_external_id,
+                content_scope="abstract_only", page_count=1 if abstract else 0,
+                content_hash=hashlib.sha256(
+                    f"semantic_scholar:{canonical_id.casefold()}".encode("utf-8")
+                ).hexdigest(),
+            )
+            if abstract:
+                paper.chunks = chunk_pages([(1, abstract)], paper.id)
+            stored, discovery_item, duplicate = store.import_discovery_paper(
+                workspace_id=context.workspace.id, created_by=context.user.id, paper=paper,
+                provider_paper_id=canonical_id, external_identifiers=list(external_ids.items()),
+                snapshot=snapshot, search_context=search_context,
+                embedding_provider=embedding_provider, embedding_model=configured_embedding_model,
+            )
+            results.append(DiscoveryImportItem(
+                provider_paper_id=requested_id,
+                status="duplicate" if duplicate else "imported", paper_id=stored.id,
+                discovery_item_id=discovery_item.id,
+            ))
+        except SemanticScholarError as exc:
+            # Batch imports deliberately retain successful selections.  A safe,
+            # per-item failure lets the researcher retry only the failed paper.
+            results.append(DiscoveryImportItem(
+                provider_paper_id=requested_id, status="failed",
+                error="external_provider_rate_limited" if exc.code == "rate_limited" else "external_provider_unavailable",
+            ))
+        except (ValueError, TypeError):
+            results.append(DiscoveryImportItem(
+                provider_paper_id=requested_id, status="failed", error="invalid_provider_response",
+            ))
+    return DiscoveryImportResponse(items=results)
 
 
 @app.get("/api/beliefs", response_model=list[BeliefEvent])

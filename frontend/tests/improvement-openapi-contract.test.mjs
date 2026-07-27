@@ -115,6 +115,25 @@ test("discovery review and operational readiness remain typed", () => {
   );
 });
 
+test("external discovery search and abstract imports remain generated and bounded", () => {
+  assert.equal(
+    requestSchema(spec.paths["/api/discovery/search"].post).$ref,
+    "#/components/schemas/DiscoverySearchRequest",
+  );
+  assert.equal(
+    jsonSchema(spec.paths["/api/discovery/search"].post).$ref,
+    "#/components/schemas/DiscoverySearchResponse",
+  );
+  assert.equal(
+    requestSchema(spec.paths["/api/discovery/imports"].post).$ref,
+    "#/components/schemas/DiscoveryImportRequest",
+  );
+  assert.equal(spec.components.schemas.DiscoveryImportRequest.properties.provider_paper_ids.maxItems, 20);
+  assert.deepEqual(spec.components.schemas.DiscoverySearchRequest.properties.sort.enum, ["relevance", "newest", "citation_count"]);
+  assert.deepEqual(spec.components.schemas.Citation.properties.evidence_scope.enum, ["full_text", "abstract"]);
+  assert.deepEqual(spec.components.schemas.PaperSummary.properties.content_scope.enum, ["full_text", "abstract_only"]);
+});
+
 test("citation provenance distinguishes graph contradictions without weakening paper locators", () => {
   const citation = spec.components.schemas.Citation;
   assert.deepEqual(citation.properties.source_kind.enum, ["paper_chunk", "graph_node", "graph_edge"]);

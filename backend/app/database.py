@@ -295,6 +295,7 @@ class PaperRecord(Base):
     abstract: Mapped[str] = mapped_column(Text, nullable=False, default="")
     source: Mapped[str] = mapped_column(String(32), nullable=False, default="upload")
     external_id: Mapped[str | None] = mapped_column(Text)
+    content_scope: Mapped[str] = mapped_column(String(32), nullable=False, default="full_text")
     status: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
     page_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -614,6 +615,7 @@ class DiscoveryItemRecord(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
     created_by: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    paper_id: Mapped[str | None] = mapped_column(ForeignKey("papers.id", ondelete="SET NULL"), index=True)
     provider: Mapped[str] = mapped_column(String(64), nullable=False)
     provider_paper_id: Mapped[str] = mapped_column(String(256), nullable=False)
     classification: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -625,7 +627,23 @@ class DiscoveryItemRecord(Base):
     license: Mapped[str] = mapped_column(String(128), nullable=False, default="unknown")
     rate_limit_policy: Mapped[str] = mapped_column(String(128), nullable=False, default="")
     snapshot: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    search_context: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class PaperExternalIdentifierRecord(Base):
+    __tablename__ = "paper_external_identifiers"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "provider", "identifier", name="uq_paper_external_identifier_workspace"),
+        Index("ix_paper_external_identifiers_paper", "paper_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    paper_id: Mapped[str] = mapped_column(ForeignKey("papers.id", ondelete="CASCADE"), nullable=False)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    identifier: Mapped[str] = mapped_column(String(512), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 

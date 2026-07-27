@@ -91,6 +91,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/discovery/imports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import Discovery Papers
+         * @description Import explicitly selected provider abstracts with a durable accepted audit record.
+         */
+        post: operations["import_discovery_papers_api_discovery_imports_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/discovery/items": {
         parameters: {
             query?: never;
@@ -136,6 +156,26 @@ export interface paths {
         get: operations["list_discovery_review_queue_api_discovery_review_queue_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/discovery/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Search Discovery Papers
+         * @description Search provider metadata; returned abstracts are not full-text evidence.
+         */
+        post: operations["search_discovery_papers_api_discovery_search_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1759,6 +1799,12 @@ export interface components {
             chunk_id: string;
             /** Evidence Role */
             evidence_role?: ("supports" | "contradicts" | "context" | "mentions") | null;
+            /**
+             * Evidence Scope
+             * @default full_text
+             * @enum {string}
+             */
+            evidence_scope: "full_text" | "abstract";
             /** Excerpt */
             excerpt: string;
             /** Extraction Quality */
@@ -1874,6 +1920,33 @@ export interface components {
             /** Source Span Id */
             source_span_id: string;
         };
+        /** DiscoveryImportItem */
+        DiscoveryImportItem: {
+            /** Discovery Item Id */
+            discovery_item_id?: string | null;
+            /** Error */
+            error?: string | null;
+            /** Paper Id */
+            paper_id?: string | null;
+            /** Provider Paper Id */
+            provider_paper_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "imported" | "duplicate" | "failed";
+        };
+        /** DiscoveryImportRequest */
+        DiscoveryImportRequest: {
+            /** Provider Paper Ids */
+            provider_paper_ids: string[];
+            search_context: components["schemas"]["DiscoverySearchContext"];
+        };
+        /** DiscoveryImportResponse */
+        DiscoveryImportResponse: {
+            /** Items */
+            items?: components["schemas"]["DiscoveryImportItem"][];
+        };
         /** DiscoveryItem */
         DiscoveryItem: {
             /**
@@ -1883,9 +1956,10 @@ export interface components {
             abstract: string;
             /**
              * Classification
+             * @default unclassified
              * @enum {string}
              */
-            classification: "supports" | "contradicts" | "boundary_condition" | "method_alternative" | "duplicate";
+            classification: "supports" | "contradicts" | "boundary_condition" | "method_alternative" | "duplicate" | "unclassified";
             /** Created At */
             created_at: string;
             /** Created By */
@@ -1899,6 +1973,8 @@ export interface components {
              * @default unknown
              */
             license: string;
+            /** Paper Id */
+            paper_id?: string | null;
             /**
              * Provider
              * @default semantic_scholar
@@ -1918,6 +1994,10 @@ export interface components {
              * @enum {string}
              */
             review_status: "pending" | "accepted" | "rejected";
+            /** Search Context */
+            search_context?: {
+                [key: string]: unknown;
+            };
             /** Snapshot */
             snapshot?: {
                 [key: string]: unknown;
@@ -1946,9 +2026,10 @@ export interface components {
             abstract: string;
             /**
              * Classification
+             * @default unclassified
              * @enum {string}
              */
-            classification: "supports" | "contradicts" | "boundary_condition" | "method_alternative" | "duplicate";
+            classification: "supports" | "contradicts" | "boundary_condition" | "method_alternative" | "duplicate" | "unclassified";
             /**
              * License
              * @default unknown
@@ -1991,6 +2072,97 @@ export interface components {
              * @enum {string}
              */
             review_status: "accepted" | "rejected";
+        };
+        /** DiscoverySearchContext */
+        DiscoverySearchContext: {
+            /** Query */
+            query: string;
+            /**
+             * Sort
+             * @default relevance
+             * @enum {string}
+             */
+            sort: "relevance" | "newest" | "citation_count";
+            /** Year From */
+            year_from?: number | null;
+            /** Year To */
+            year_to?: number | null;
+        };
+        /** DiscoverySearchItem */
+        DiscoverySearchItem: {
+            /**
+             * Abstract
+             * @default
+             */
+            abstract: string;
+            /** Authors */
+            authors?: string[];
+            /**
+             * Citation Count
+             * @default 0
+             */
+            citation_count: number;
+            /**
+             * Content Scope
+             * @default abstract_only
+             * @constant
+             */
+            content_scope: "abstract_only";
+            /** Existing Paper Id */
+            existing_paper_id?: string | null;
+            /** External Ids */
+            external_ids?: {
+                [key: string]: string;
+            };
+            /** Provider Paper Id */
+            provider_paper_id: string;
+            /** Publication Date */
+            publication_date?: string | null;
+            /**
+             * Source Url
+             * @default
+             */
+            source_url: string;
+            /** Title */
+            title: string;
+            /** Venue */
+            venue?: string | null;
+            /** Year */
+            year?: number | null;
+        };
+        /** DiscoverySearchRequest */
+        DiscoverySearchRequest: {
+            /** Cursor */
+            cursor?: string | null;
+            /** Query */
+            query: string;
+            /**
+             * Sort
+             * @default relevance
+             * @enum {string}
+             */
+            sort: "relevance" | "newest" | "citation_count";
+            /** Year From */
+            year_from?: number | null;
+            /** Year To */
+            year_to?: number | null;
+        };
+        /** DiscoverySearchResponse */
+        DiscoverySearchResponse: {
+            /** Fetched At */
+            fetched_at: string;
+            /** Items */
+            items?: components["schemas"]["DiscoverySearchItem"][];
+            /** Next Cursor */
+            next_cursor?: string | null;
+            /**
+             * Provider
+             * @default semantic_scholar
+             * @constant
+             */
+            provider: "semantic_scholar";
+            /** Total Estimate */
+            total_estimate?: number | null;
         };
         /** DocumentElement */
         DocumentElement: {
@@ -2903,10 +3075,10 @@ export interface components {
             created_at: string;
             /** Id */
             id: string;
-            /** Paper Id */
-            paper_id: string | null;
             /** Origin Kind */
             origin_kind?: "mind_map" | null;
+            /** Paper Id */
+            paper_id: string | null;
             /** Title */
             title: string;
             /** Updated At */
@@ -2916,10 +3088,10 @@ export interface components {
         NoteCreate: {
             /** Content */
             content: string;
-            /** Paper Id */
-            paper_id?: string | null;
             /** Origin Kind */
             origin_kind?: "mind_map" | null;
+            /** Paper Id */
+            paper_id?: string | null;
             /** Title */
             title: string;
         };
@@ -2993,6 +3165,12 @@ export interface components {
             byte_size?: number | null;
             /** Chunk Count */
             chunk_count: number;
+            /**
+             * Content Scope
+             * @default full_text
+             * @enum {string}
+             */
+            content_scope: "full_text" | "abstract_only";
             /** Created At */
             created_at: string;
             /** Error Message */
@@ -3043,6 +3221,12 @@ export interface components {
             authors: string[];
             /** Chunk Count */
             chunk_count: number;
+            /**
+             * Content Scope
+             * @default full_text
+             * @enum {string}
+             */
+            content_scope: "full_text" | "abstract_only";
             /** Created At */
             created_at: string;
             decision: components["schemas"]["PaperDecision"];
@@ -3136,6 +3320,12 @@ export interface components {
             authors: string[];
             /** Chunk Count */
             chunk_count: number;
+            /**
+             * Content Scope
+             * @default full_text
+             * @enum {string}
+             */
+            content_scope: "full_text" | "abstract_only";
             /** Created At */
             created_at: string;
             /** Error Message */
@@ -4489,6 +4679,39 @@ export interface operations {
             };
         };
     };
+    import_discovery_papers_api_discovery_imports_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiscoveryImportRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoveryImportResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     create_discovery_item_api_discovery_items_post: {
         parameters: {
             query?: never;
@@ -4573,6 +4796,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DiscoveryItem"][];
+                };
+            };
+        };
+    };
+    search_discovery_papers_api_discovery_search_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiscoverySearchRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoverySearchResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -5722,8 +5978,8 @@ export interface operations {
     list_notes_api_notes_get: {
         parameters: {
             query?: {
-                origin_kind?: "mind_map" | null;
                 paper_id?: string | null;
+                origin_kind?: "mind_map" | null;
             };
             header?: never;
             path?: never;

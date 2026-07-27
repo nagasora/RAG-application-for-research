@@ -41,6 +41,13 @@ R2/S3 と OIDC の設定は `.env.example` に残しており、外部環境を�
 その論文だけを対象にします。レスポンスのjob statusが `succeeded` になってからAskを
 実行してください。APIキーはこのAPIやjob statusのレスポンスには含まれません。
 
+Libraryの外部論文検索はSemantic Scholarを使用します。`SEMANTIC_SCHOLAR_API_KEY`
+は任意で、未設定時は共有anonymous quotaを使用します。キーはAPIコンテナだけへ設定し、
+フロントエンド、レスポンス、ログ、コミットへ含めないでください。外部検索と要旨登録は
+owner/editorに限定され、providerのrate limitや障害時にはPaperを作成しません。
+本番ではページングcursorの暗号化・改変検知に使う`DISCOVERY_CURSOR_SECRET`も、全API
+replicaで共通のランダム値として設定してください。OIDC環境では必須です。
+
 ---
 
 The backend requires an explicit PostgreSQL connection. It never silently falls back to SQLite.

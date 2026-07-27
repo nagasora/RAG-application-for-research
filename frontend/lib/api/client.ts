@@ -81,6 +81,11 @@ export type GraphIdeaCandidate = components["schemas"]["GraphIdeaCandidate"];
 export type ConversationGraphExportCreate = components["schemas"]["ConversationGraphExportCreate"];
 export type ForwardPropagationCreate = components["schemas"]["ForwardPropagationCreate"];
 export type ForwardPropagationResult = components["schemas"]["ForwardPropagationResult"];
+export type DiscoverySearchRequest = components["schemas"]["DiscoverySearchRequest"];
+export type DiscoverySearchResponse = components["schemas"]["DiscoverySearchResponse"];
+export type DiscoverySearchItem = components["schemas"]["DiscoverySearchItem"];
+export type DiscoveryImportRequest = components["schemas"]["DiscoveryImportRequest"];
+export type DiscoveryImportResponse = components["schemas"]["DiscoveryImportResponse"];
 
 export type ResearchMessagePageOptions = { limit?: number; beforeOrdinal?: number | null };
 export type ResearchMemoryPageOptions = ResearchMessagePageOptions & { kind?: ResearchMemoryKind | null };
@@ -172,6 +177,14 @@ export async function listLibraryPapers(
 
 export async function listSourceSetSummaries(signal?: AbortSignal): Promise<SourceSetSummary[]> {
   return unwrap(await api.GET("/api/source-sets", { signal }), "コレクションを取得できませんでした");
+}
+
+export async function searchExternalPapers(body: DiscoverySearchRequest, signal?: AbortSignal): Promise<DiscoverySearchResponse> {
+  return unwrap(await api.POST("/api/discovery/search", { body, signal }), "外部論文を検索できませんでした");
+}
+
+export async function importExternalAbstracts(body: DiscoveryImportRequest, signal?: AbortSignal): Promise<DiscoveryImportResponse> {
+  return unwrap(await api.POST("/api/discovery/imports", { body, signal }), "要旨をライブラリへ追加できませんでした");
 }
 
 export async function listIdeas(signal?: AbortSignal): Promise<Idea[]> {

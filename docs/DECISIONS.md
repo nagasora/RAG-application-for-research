@@ -141,6 +141,16 @@
 - Consequences: DB migrationやAPI契約変更なしで複数研究を分離できる。選択状態は端末ごとなので別端末では個人プロジェクトから始まる場合があり、共有プロジェクトの作成・メンバー管理権限は既存workspace roleに従う。
 - Date: 2026-07-22
 
+## D-20260727-14 外部検索結果は明示採用時に要旨の出所と範囲を固定する
+
+- Status: accepted
+- Linked items: CI-031
+- Context: 外部検索結果をそのまま全文論文としてLibraryへ入れると、providerのlive応答が変化した際に取得内容を再現できず、要旨をPDF本文やページ根拠のように誤認させる。既存のarXiv/DOI登録はprovider失敗時にも空のPaperを作成し得て、識別子表記差による重複も防げない。
+- Decision: 初期providerをSemantic Scholarに限定し、検索結果は一時表示だけにする。owner/editorが明示選択した候補だけを再取得してLibraryへ採用し、provider、取得時刻、license、rate limit policy、検索条件、応答snapshotをaccepted DiscoveryItemとしてPaperへ接続する。DOI・arXiv・Semantic Scholar IDをworkspace内で正規化して重複を防ぎ、要旨だけのPaperとCitationは`abstract_only` / `abstract`としてPDFページと区別する。provider失敗時はPaperを作らない。
+- Alternatives: 検索結果を全件pending queueへ保存する、検索結果を即時自動採用する、公開PDFも自動取得する、OpenAIで検索語を翻訳する。
+- Consequences: 採用操作時にproviderを再照会するため失敗や部分成功が起こり得るが、利用者が選んだ内容だけが監査可能な研究資産になる。全文根拠が必要な論文は別途原本ファイルを登録する。
+- Date: 2026-07-27
+
 ## 追記テンプレート
 
 ```text

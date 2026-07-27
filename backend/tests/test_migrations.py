@@ -69,6 +69,42 @@ def test_initial_migration_builds_current_schema(tmp_path, monkeypatch):
     assert review_foreign_keys[("evidence_ref_id",)] == ("evidence_refs", "RESTRICT")
 
 
+def test_discovery_search_migration_backfills_normalized_external_identity(tmp_path, monkeypatch):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    backend = Path(__file__).resolve().parents[1]
+    database_url = f"sqlite:///{tmp_path / 'discovery-migration.db'}"
+    config = Config(str(backend / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", database_url)
+    command.upgrade(config, "20260721_0028")
+    engine = create_engine(database_url)
+    with engine.begin() as connection:
+        connection.execute(text("""
+            INSERT INTO users (id,issuer,subject,email,display_name,created_at)
+            VALUES ('u','test','legacy',NULL,NULL,'2026-07-21 00:00:00')
+        """))
+        connection.execute(text("""
+            INSERT INTO workspaces (id,name,is_personal,personal_owner_id,created_by,created_at)
+            VALUES ('w','Legacy',0,NULL,'u','2026-07-21 00:00:00')
+        """))
+        connection.execute(text("""
+            INSERT INTO papers
+            (id,workspace_id,created_by,user_id,title,authors,year,abstract,source,external_id,status,page_count,created_at,content_hash,error_message,storage_key,mime_type,byte_size)
+            VALUES ('p','w','u','legacy','Legacy','[]',2024,'Abstract','DOI','https://doi.org/10.1000/ABC/','ready',1,'2026-07-21 00:00:00','legacy-hash',NULL,NULL,NULL,NULL)
+        """))
+    command.upgrade(config, "head")
+    with engine.connect() as connection:
+        paper = connection.execute(text("SELECT content_scope FROM papers WHERE id='p'")).scalar_one()
+        identity = connection.execute(text("SELECT provider,identifier FROM paper_external_identifiers WHERE paper_id='p'")).one()
+        discovery_columns = {item["name"] for item in inspect(engine).get_columns("discovery_items")}
+    assert paper == "abstract_only"
+    assert identity == ("doi", "10.1000/abc")
+    assert {"paper_id", "search_context"} <= discovery_columns
+    command.downgrade(config, "20260721_0028")
+    downgraded = inspect(create_engine(database_url))
+    assert "paper_external_identifiers" not in downgraded.get_table_names()
+    assert "content_scope" not in {item["name"] for item in downgraded.get_columns("papers")}
+
+
 def test_workspace_migration_backfills_legacy_papers(tmp_path, monkeypatch):
     monkeypatch.delenv("DATABASE_URL", raising=False)
     backend = Path(__file__).resolve().parents[1]

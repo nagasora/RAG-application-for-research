@@ -16,7 +16,7 @@
 - inline または Celery + Redis による取り込みジョブと進捗表示
 - PDF / TXT / Markdown の原本保存、ページ・チャンク・引用根拠ビューア
 - OpenAPIから生成するTypeScript API型と統一エラー処理
-- キーワード検索、根拠付き回答、論文比較、Research Gap抽出
+- Semantic Scholar外部論文検索、キーワード検索、根拠付き回答、論文比較、Research Gap抽出
 - タグ、論文ノート、検索履歴、比較結果保存
 - BibTeX / RIS / CSVエクスポート
 - オプションの日本語・英語OCR、表の構造化、図・caption抽出
@@ -50,6 +50,7 @@ python -m uvicorn app.main:app --reload --port 8000
 ```
 
 `.env.example` はローカル用に `AUTH_MODE=dev` を指定します。本番環境では `AUTH_MODE=oidc` とし、issuer、audience、JWKS URLを設定してください。OCRは既定で無効です。
+外部論文検索はAPIキーなしでも利用できます。専用枠を使う場合だけ、バックエンドの`.env`へ`SEMANTIC_SCHOLAR_API_KEY`を設定してください。
 
 ### 3. フロントエンド
 

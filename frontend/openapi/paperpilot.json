@@ -443,6 +443,15 @@
             ],
             "title": "Evidence Role"
           },
+          "evidence_scope": {
+            "default": "full_text",
+            "enum": [
+              "full_text",
+              "abstract"
+            ],
+            "title": "Evidence Scope",
+            "type": "string"
+          },
           "excerpt": {
             "title": "Excerpt",
             "type": "string"
@@ -772,6 +781,97 @@
         "title": "ConversationGraphExportCreate",
         "type": "object"
       },
+      "DiscoveryImportItem": {
+        "properties": {
+          "discovery_item_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Discovery Item Id"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "paper_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paper Id"
+          },
+          "provider_paper_id": {
+            "title": "Provider Paper Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "imported",
+              "duplicate",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider_paper_id",
+          "status"
+        ],
+        "title": "DiscoveryImportItem",
+        "type": "object"
+      },
+      "DiscoveryImportRequest": {
+        "properties": {
+          "provider_paper_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Provider Paper Ids",
+            "type": "array"
+          },
+          "search_context": {
+            "$ref": "#/components/schemas/DiscoverySearchContext"
+          }
+        },
+        "required": [
+          "provider_paper_ids",
+          "search_context"
+        ],
+        "title": "DiscoveryImportRequest",
+        "type": "object"
+      },
+      "DiscoveryImportResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DiscoveryImportItem"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "title": "DiscoveryImportResponse",
+        "type": "object"
+      },
       "DiscoveryItem": {
         "properties": {
           "abstract": {
@@ -780,12 +880,14 @@
             "type": "string"
           },
           "classification": {
+            "default": "unclassified",
             "enum": [
               "supports",
               "contradicts",
               "boundary_condition",
               "method_alternative",
-              "duplicate"
+              "duplicate",
+              "unclassified"
             ],
             "title": "Classification",
             "type": "string"
@@ -818,6 +920,17 @@
             "title": "License",
             "type": "string"
           },
+          "paper_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paper Id"
+          },
           "provider": {
             "const": "semantic_scholar",
             "default": "semantic_scholar",
@@ -844,6 +957,11 @@
             ],
             "title": "Review Status",
             "type": "string"
+          },
+          "search_context": {
+            "additionalProperties": true,
+            "title": "Search Context",
+            "type": "object"
           },
           "snapshot": {
             "additionalProperties": true,
@@ -873,7 +991,6 @@
         },
         "required": [
           "provider_paper_id",
-          "classification",
           "title",
           "id",
           "workspace_id",
@@ -891,12 +1008,14 @@
             "type": "string"
           },
           "classification": {
+            "default": "unclassified",
             "enum": [
               "supports",
               "contradicts",
               "boundary_condition",
               "method_alternative",
-              "duplicate"
+              "duplicate",
+              "unclassified"
             ],
             "title": "Classification",
             "type": "string"
@@ -947,7 +1066,6 @@
         },
         "required": [
           "provider_paper_id",
-          "classification",
           "title"
         ],
         "title": "DiscoveryItemCreate",
@@ -968,6 +1086,267 @@
           "review_status"
         ],
         "title": "DiscoveryReviewUpdate",
+        "type": "object"
+      },
+      "DiscoverySearchContext": {
+        "properties": {
+          "query": {
+            "maxLength": 4000,
+            "minLength": 2,
+            "title": "Query",
+            "type": "string"
+          },
+          "sort": {
+            "default": "relevance",
+            "enum": [
+              "relevance",
+              "newest",
+              "citation_count"
+            ],
+            "title": "Sort",
+            "type": "string"
+          },
+          "year_from": {
+            "anyOf": [
+              {
+                "maximum": 2200.0,
+                "minimum": 1800.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year From"
+          },
+          "year_to": {
+            "anyOf": [
+              {
+                "maximum": 2200.0,
+                "minimum": 1800.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year To"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "title": "DiscoverySearchContext",
+        "type": "object"
+      },
+      "DiscoverySearchItem": {
+        "properties": {
+          "abstract": {
+            "default": "",
+            "title": "Abstract",
+            "type": "string"
+          },
+          "authors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Authors",
+            "type": "array"
+          },
+          "citation_count": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Citation Count",
+            "type": "integer"
+          },
+          "content_scope": {
+            "const": "abstract_only",
+            "default": "abstract_only",
+            "title": "Content Scope",
+            "type": "string"
+          },
+          "existing_paper_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Existing Paper Id"
+          },
+          "external_ids": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "External Ids",
+            "type": "object"
+          },
+          "provider_paper_id": {
+            "title": "Provider Paper Id",
+            "type": "string"
+          },
+          "publication_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publication Date"
+          },
+          "source_url": {
+            "default": "",
+            "title": "Source Url",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "venue": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Venue"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          }
+        },
+        "required": [
+          "provider_paper_id",
+          "title"
+        ],
+        "title": "DiscoverySearchItem",
+        "type": "object"
+      },
+      "DiscoverySearchRequest": {
+        "properties": {
+          "cursor": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cursor"
+          },
+          "query": {
+            "maxLength": 4000,
+            "minLength": 2,
+            "title": "Query",
+            "type": "string"
+          },
+          "sort": {
+            "default": "relevance",
+            "enum": [
+              "relevance",
+              "newest",
+              "citation_count"
+            ],
+            "title": "Sort",
+            "type": "string"
+          },
+          "year_from": {
+            "anyOf": [
+              {
+                "maximum": 2200.0,
+                "minimum": 1800.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year From"
+          },
+          "year_to": {
+            "anyOf": [
+              {
+                "maximum": 2200.0,
+                "minimum": 1800.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year To"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "title": "DiscoverySearchRequest",
+        "type": "object"
+      },
+      "DiscoverySearchResponse": {
+        "properties": {
+          "fetched_at": {
+            "title": "Fetched At",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DiscoverySearchItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "provider": {
+            "const": "semantic_scholar",
+            "default": "semantic_scholar",
+            "title": "Provider",
+            "type": "string"
+          },
+          "total_estimate": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Estimate"
+          }
+        },
+        "required": [
+          "fetched_at"
+        ],
+        "title": "DiscoverySearchResponse",
         "type": "object"
       },
       "DocumentElement": {
@@ -3229,6 +3608,18 @@
             "title": "Id",
             "type": "string"
           },
+          "origin_kind": {
+            "anyOf": [
+              {
+                "const": "mind_map",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Origin Kind"
+          },
           "paper_id": {
             "anyOf": [
               {
@@ -3267,6 +3658,18 @@
             "maxLength": 100000,
             "title": "Content",
             "type": "string"
+          },
+          "origin_kind": {
+            "anyOf": [
+              {
+                "const": "mind_map",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Origin Kind"
           },
           "paper_id": {
             "anyOf": [
@@ -3469,6 +3872,15 @@
             "title": "Chunk Count",
             "type": "integer"
           },
+          "content_scope": {
+            "default": "full_text",
+            "enum": [
+              "full_text",
+              "abstract_only"
+            ],
+            "title": "Content Scope",
+            "type": "string"
+          },
           "created_at": {
             "title": "Created At",
             "type": "string"
@@ -3615,6 +4027,15 @@
           "chunk_count": {
             "title": "Chunk Count",
             "type": "integer"
+          },
+          "content_scope": {
+            "default": "full_text",
+            "enum": [
+              "full_text",
+              "abstract_only"
+            ],
+            "title": "Content Scope",
+            "type": "string"
           },
           "created_at": {
             "title": "Created At",
@@ -3870,6 +4291,15 @@
           "chunk_count": {
             "title": "Chunk Count",
             "type": "integer"
+          },
+          "content_scope": {
+            "default": "full_text",
+            "enum": [
+              "full_text",
+              "abstract_only"
+            ],
+            "title": "Content Scope",
+            "type": "string"
           },
           "created_at": {
             "title": "Created At",
@@ -7302,6 +7732,45 @@
         "summary": "Delete Comparison"
       }
     },
+    "/api/discovery/imports": {
+      "post": {
+        "description": "Import explicitly selected provider abstracts with a durable accepted audit record.",
+        "operationId": "import_discovery_papers_api_discovery_imports_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiscoveryImportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscoveryImportResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Import Discovery Papers"
+      }
+    },
     "/api/discovery/items": {
       "post": {
         "operationId": "create_discovery_item_api_discovery_items_post",
@@ -7409,6 +7878,45 @@
           }
         },
         "summary": "List Discovery Review Queue"
+      }
+    },
+    "/api/discovery/search": {
+      "post": {
+        "description": "Search provider metadata; returned abstracts are not full-text evidence.",
+        "operationId": "search_discovery_papers_api_discovery_search_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiscoverySearchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscoverySearchResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Search Discovery Papers"
       }
     },
     "/api/embeddings/reindex": {
@@ -8992,6 +9500,23 @@
                 }
               ],
               "title": "Paper Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "origin_kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "const": "mind_map",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Origin Kind"
             }
           }
         ],

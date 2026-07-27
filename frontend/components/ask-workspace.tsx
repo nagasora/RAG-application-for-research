@@ -134,8 +134,12 @@ function isNegativeCitation(citation: Citation) {
   return citation.retrieval_stance === "negative" || citation.evidence_role === "contradicts";
 }
 
+function isAbstractCitation(citation: Citation) {
+  return citation.evidence_scope === "abstract";
+}
+
 function canOpenPaperEvidence(citation: Citation) {
-  return citation.paper_id.trim().length > 0 && citation.chunk_id.trim().length > 0
+  return !isAbstractCitation(citation) && citation.paper_id.trim().length > 0 && citation.chunk_id.trim().length > 0
     && Number.isInteger(citation.page) && citation.page >= 1;
 }
 
@@ -146,6 +150,7 @@ function citationKey(citation: Citation) {
 function CitationBadges({ citation }: { citation: Citation }) {
   const negative = isNegativeCitation(citation);
   return <span className="inline-flex flex-wrap items-center gap-1">
+    {isAbstractCitation(citation) && <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[9px] font-bold text-amber-800">外部要旨</span>}
     {isGraphCitation(citation) && <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[9px] font-bold text-sky-800">知識グラフ由来</span>}
     {negative && <span className="rounded-full bg-red-50 px-2 py-0.5 text-[9px] font-bold text-red-800">反証根拠</span>}
     {!negative && citation.retrieval_stance === "positive" && isGraphCitation(citation) && <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] font-bold text-emerald-800">支持根拠</span>}
@@ -175,10 +180,10 @@ function CitationCard({ citation, openEvidence, compact = false }: {
   const content = <>
     <div className="flex items-start gap-2">
       <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-[#164f3b] text-[9px] font-bold text-white">{citation.index}</span>
-      <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-1"><p className="min-w-0 flex-1 truncate text-xs font-semibold text-[#26342e]">{citation.paper_title}</p><CitationBadges citation={citation}/></div><p className="mt-0.5 text-[10px] font-semibold text-[#a06a28]">抽出箇所: {citation.section} · p. {citation.page}</p></div>
+      <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-1"><p className="min-w-0 flex-1 truncate text-xs font-semibold text-[#26342e]">{citation.paper_title}</p><CitationBadges citation={citation}/></div><p className="mt-0.5 text-[10px] font-semibold text-[#a06a28]">{isAbstractCitation(citation) ? "外部要旨からの抜粋" : `抽出箇所: ${citation.section} · p. ${citation.page}`}</p></div>
       {openable && <ChevronRightIcon className="mt-1 h-3.5 w-3.5 shrink-0 text-[#35634f]"/>}
     </div>
-    <p className="mt-2 text-[10px] font-bold text-[#68736f]">{citation.source_quote ? "検索に使用した抜粋" : "原文抜粋"}</p>
+    <p className="mt-2 text-[10px] font-bold text-[#68736f]">{isAbstractCitation(citation) ? "要旨抜粋" : citation.source_quote ? "検索に使用した抜粋" : "原文抜粋"}</p>
     <p className={`mt-1 text-[11px] leading-5 text-[#52605b] ${compact ? "line-clamp-4" : "line-clamp-3"}`}>{citation.excerpt}</p>
     <CitationProvenance citation={citation}/>
     {openable && <span className="mt-2 inline-flex items-center gap-1 text-[10px] font-bold text-[#35634f]">対応する原文ページを確認<ChevronRightIcon className="h-3 w-3"/></span>}
@@ -219,7 +224,7 @@ function AnswerWithCitations({ text, citations, openEvidence }: { text: string; 
             const graph = isGraphCitation(citation); const contradictory = isNegativeCitation(citation);
             const className = `mx-0.5 inline-flex items-center gap-1 rounded px-1.5 py-0.5 align-baseline text-xs font-bold focus-visible:outline focus-visible:outline-2 ${contradictory ? "bg-red-100 text-red-800 focus-visible:outline-red-700" : "bg-[#dfeee6] text-[#164f3b] focus-visible:outline-[#164f3b]"}`;
             const label = <>{children}{graph && <span className="text-[8px]">グラフ</span>}{contradictory && <span className="rounded bg-white/70 px-1 text-[8px]">反証</span>}</>;
-            if (!canOpenPaperEvidence(citation)) return <span className={className} title="対応する原文ページがないグラフ根拠です">{label}</span>;
+            if (!canOpenPaperEvidence(citation)) return <span className={className} title={isAbstractCitation(citation) ? "外部要旨の根拠です。原文ページはありません。" : "対応する原文ページがないグラフ根拠です"}>{label}</span>;
             return <button type="button" onClick={() => openEvidence({ paperId:citation.paper_id, paperTitle:citation.paper_title, page:citation.page, chunkId:citation.chunk_id })} aria-label={`引用${citation.index}: ${citation.paper_title} ${citation.page}ページを開く`} className={`${className} hover:brightness-95`} title={`${citation.paper_title} p.${citation.page}`}>{label}</button>;
           }
           return <a href={href} target="_blank" rel="noreferrer noopener" className="font-semibold text-[#176143] underline decoration-[#8cb9a4] underline-offset-4">{children}</a>;
