@@ -1,5 +1,7 @@
 from fastapi.testclient import TestClient
 import asyncio
+import threading
+import time
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -8,8 +10,8 @@ from app import main
 from app.agentic_rag import AgenticRAGResult
 from app.database import Base
 from app.models import (
-    Chunk, Paper, Principal, ResearchConversation, ResearchMemoryEvent,
-    SearchRequest, User, Workspace,
+    Chunk, Paper, Principal, ResearchActionCreate, ResearchConversation, ResearchMemoryEvent,
+    SearchRequest, SearchResponse, User, Workspace,
 )
 from app.storage import LocalOriginalStorage
 from app.store import PaperStore
@@ -38,10 +40,11 @@ def test_memory_context_builder_is_bounded_and_uses_relevant_store_slice():
     )
 
     class MemoryStore:
-        def search_research_memory(self, workspace_id, conversation_id, query, *, limit):
+        def search_research_memory(self, workspace_id, conversation_id, query, *, limit, **kwargs):
             assert (workspace_id, conversation_id, query, limit) == (
                 "workspace", "conversation", "retrieval", 8,
             )
+            assert kwargs["deadline_monotonic"] > 0
             return [ResearchMemoryEvent(
                 id="memory", conversation_id=conversation_id,
                 source_message_id="message", ordinal=1, kind="hypothesis",
@@ -126,6 +129,100 @@ def test_assets_are_workspace_scoped_and_viewer_is_read_only(tmp_path):
         main.app.dependency_overrides.clear()
 
 
+def test_cancelled_answer_never_persists_late_conversation_or_history(tmp_path, monkeypatch):
+    store = setup_app(tmp_path)
+    user, workspace = store.ensure_user(Principal(issuer="test", subject="cancelled-answer"))
+    paper = Paper(
+        user_id="cancelled-answer", workspace_id=workspace.id, created_by=user.id,
+        title="Evidence", status="ready", content_hash="cancelled-answer-paper",
+    )
+    paper.chunks = [Chunk(
+        paper_id=paper.id, page=1, section="Results", text="retrieval evidence",
+    )]
+    store.upsert(paper, embedding_provider="local", embedding_model="local-test")
+    conversation = store.create_conversation(workspace.id, user.id, "Cancelled")
+    calls: list[str] = []
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(store, "record_research_exchange", lambda *args, **kwargs: calls.append("conversation"))
+    monkeypatch.setattr(main, "_persist_search_history_best_effort", lambda *args, **kwargs: calls.append("history"))
+    cancelled = threading.Event(); cancelled.set()
+
+    response = main._answer(
+        SearchRequest(query="retrieval evidence", paper_ids=[paper.id], conversation_id=conversation.id),
+        store, main.WorkspaceContext(user=user, workspace=workspace), cancel_event=cancelled,
+    )
+
+    assert response.answer
+    assert calls == []
+    main.app.dependency_overrides.clear()
+
+
+def test_mind_map_notes_have_a_structured_origin_and_can_be_filtered(tmp_path):
+    setup_app(tmp_path)
+    try:
+        with TestClient(main.app) as client:
+            mind_map = client.post(
+                "/api/notes", headers=headers("alice"),
+                json={"title": "Map note", "content": "grounded detail", "origin_kind": "mind_map"},
+            )
+            ordinary = client.post(
+                "/api/notes", headers=headers("alice"),
+                json={"title": "Ordinary note", "content": "general detail"},
+            )
+            filtered = client.get("/api/notes?origin_kind=mind_map", headers=headers("alice"))
+
+        assert mind_map.status_code == 201
+        assert mind_map.json()["origin_kind"] == "mind_map"
+        assert ordinary.status_code == 201 and ordinary.json()["origin_kind"] is None
+        assert filtered.status_code == 200
+        assert [item["id"] for item in filtered.json()] == [mind_map.json()["id"]]
+    finally:
+        main.app.dependency_overrides.clear()
+
+
+def test_mind_map_task_extraction_is_idempotent_for_serial_and_parallel_calls(tmp_path):
+    store = setup_app(tmp_path)
+    user, workspace = store.ensure_user(Principal(issuer="test", subject="mind-map-action"))
+    node = store.create_knowledge_node(
+        workspace.id, node_type="idea", content="Investigate mechanism", created_by=user.id,
+    )
+    body = ResearchActionCreate(
+        title="Validate the mechanism", origin_node_id=node.id,
+        generation_metadata={"source": "mind_map_task_extraction_v1", "ordinal": 0},
+    )
+
+    first = store.create_research_action(workspace.id, user.id, body)
+    second = store.create_research_action(workspace.id, user.id, body)
+    assert first.id == second.id
+
+    parallel_body = ResearchActionCreate(
+        title="Independently validate the mechanism", origin_node_id=node.id,
+        generation_metadata={"source": "mind_map_task_extraction_v1", "ordinal": 1},
+    )
+
+    barrier = threading.Barrier(2)
+    created: list[str] = []
+    failures: list[Exception] = []
+
+    def create_from_another_tab() -> None:
+        try:
+            barrier.wait(timeout=5)
+            created.append(store.create_research_action(workspace.id, user.id, parallel_body).id)
+        except Exception as exc:  # pragma: no cover - assertion below exposes failures
+            failures.append(exc)
+
+    threads = [threading.Thread(target=create_from_another_tab) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert not failures
+    assert len(created) == 2 and created[0] == created[1]
+    assert {action.id for action in store.list_research_actions(workspace.id)} == {first.id, created[0]}
+    main.app.dependency_overrides.clear()
+
+
 def test_search_history_saved_comparison_and_exports(tmp_path):
     setup_app(tmp_path)
     try:
@@ -193,13 +290,17 @@ def test_research_conversation_replays_completed_explore_response_metadata(tmp_p
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     try:
         with TestClient(main.app) as client:
+            paper = client.post(
+                "/api/papers/upload", headers=headers("alice"),
+                files={"files": ("explore.txt", b"Evidence for mechanism exploration.", "text/plain")},
+            ).json()[0]["paper"]
             conversation = client.post(
                 "/api/research/conversations", headers=headers("alice"),
                 json={"title": "Explore replay"},
             ).json()
             run = client.post(
                 "/api/research/runs", headers=headers("alice"),
-                json={"purpose": "explore replay metadata"},
+                json={"purpose": "explore replay metadata", "source_paper_ids": [paper["id"]]},
             ).json()
             response = client.post(
                 "/api/search", headers=headers("alice"),
@@ -208,6 +309,7 @@ def test_research_conversation_replays_completed_explore_response_metadata(tmp_p
                     "conversation_id": conversation["id"],
                     "interaction_mode": "explore",
                     "research_run_id": run["id"],
+                    "paper_ids": [paper["id"]],
                 },
             )
             messages = client.get(
@@ -236,6 +338,90 @@ def test_research_conversation_replays_completed_explore_response_metadata(tmp_p
         assert stored.interaction_mode == "explore"
         assert stored.draft is True
         assert [claim.model_dump(mode="json") for claim in stored.claims] == live["claims"]
+    finally:
+        main.app.dependency_overrides.clear()
+
+
+def test_ci028_source_scope_errors_and_research_run_match_before_stream(tmp_path, monkeypatch):
+    store = setup_app(tmp_path)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    user, workspace = store.ensure_user(Principal(issuer="paperpilot-dev", subject="alice"))
+    papers = []
+    for index in range(2):
+        paper = Paper(
+            id=f"scope-paper-{index}", user_id="alice", workspace_id=workspace.id,
+            created_by=user.id, title=f"Scope {index}", status="ready",
+            content_hash=str(index + 1) * 64,
+            chunks=[Chunk(
+                id=f"scope-chunk-{index}", paper_id=f"scope-paper-{index}",
+                page=1, section="Results", text=f"scope evidence {index}",
+            )],
+        )
+        store.upsert(paper)
+        papers.append(paper)
+    run = store.create_research_run(
+        workspace.id, user.id, source_paper_ids=[papers[0].id], purpose="CI-028 scope",
+    )
+    try:
+        with TestClient(main.app) as client:
+            missing = client.post(
+                "/api/search/preview", headers=headers("alice"), json={"query": "scope evidence"},
+            )
+            oversized = client.post(
+                "/api/search", headers=headers("alice"),
+                json={"query": "scope evidence", "paper_ids": [f"paper-{i}" for i in range(6)]},
+            )
+            mismatch_body = {
+                "query": "scope evidence", "paper_ids": [papers[1].id],
+                "research_run_id": run.id,
+            }
+            mismatch = client.post("/api/search", headers=headers("alice"), json=mismatch_body)
+            stream_mismatch = client.post(
+                "/api/search/stream", headers=headers("alice"), json=mismatch_body,
+            )
+            matching_preview = client.post(
+                "/api/search/preview", headers=headers("alice"),
+                json={
+                    "query": "scope evidence", "paper_ids": [papers[0].id],
+                    "research_run_id": run.id,
+                },
+            )
+
+        assert missing.status_code == 422
+        assert missing.json()["detail"]["code"] == "source_scope_required"
+        assert oversized.status_code == 422
+        assert oversized.json()["detail"]["code"] == "source_scope_too_large"
+        assert mismatch.status_code == 409
+        assert mismatch.json()["detail"]["code"] == "research_run_scope_mismatch"
+        assert stream_mismatch.status_code == 409
+        assert stream_mismatch.json()["detail"]["code"] == "research_run_scope_mismatch"
+        assert matching_preview.status_code == 200
+        assert {item["paper_id"] for item in matching_preview.json()["citations"]} == {papers[0].id}
+    finally:
+        main.app.dependency_overrides.clear()
+
+
+def test_ci028_database_timeout_keeps_extractive_fallback_contract(tmp_path, monkeypatch):
+    store = setup_app(tmp_path)
+    user, workspace = store.ensure_user(Principal(issuer="paperpilot-dev", subject="alice"))
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(
+        store, "search_chunk_candidates",
+        lambda *args, **kwargs: (_ for _ in ()).throw(TimeoutError("late database")),
+    )
+    try:
+        with TestClient(main.app) as client:
+            response = client.post(
+                "/api/search", headers=headers("alice"),
+                json={"query": "timed retrieval", "paper_ids": ["selected-paper"]},
+            )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["generation_mode"] == "local_fallback"
+        assert payload["fallback_reason"] == "deadline_exceeded"
+        assert payload["llm_attempted"] is False
+        assert payload["citations"] == []
+        assert "根拠を見つけられませんでした" in payload["answer"]
     finally:
         main.app.dependency_overrides.clear()
 
@@ -472,7 +658,8 @@ def test_search_reports_safe_model_failure_code(tmp_path, monkeypatch):
         assert response.json()["generation_mode"] == "local_fallback"
         assert response.json()["fallback_reason"] == "model_not_found"
         assert "response body" not in response.text
-        assert status.json()["last_failure_code"] == "model_not_found"
+        # Provider failures are intentionally not shared across workspaces.
+        assert status.json()["last_failure_code"] is None
     finally:
         main._set_last_llm_failure(None)
         main.app.dependency_overrides.clear()
@@ -491,7 +678,7 @@ def test_search_stream_opens_before_running_blocking_generation():
             ),
         )
         response = await main.answer_stream(
-            SearchRequest(query="stream response"), object(), context,
+            SearchRequest(query="stream response", paper_ids=["paper"]), object(), context,
         )
         iterator = response.body_iterator
         first = await anext(iterator)
@@ -499,3 +686,118 @@ def test_search_stream_opens_before_running_blocking_generation():
         return first
 
     assert asyncio.run(scenario()) == ": stream-open\n\n"
+
+
+def test_heartbeat_cancellation_blocks_every_later_model_dispatch(tmp_path, monkeypatch):
+    store = setup_app(tmp_path)
+    user, workspace = store.ensure_user(Principal(issuer="paperpilot-dev", subject="alice"))
+    paper = Paper(
+        id="cancel-scope-paper", user_id="alice", workspace_id=workspace.id,
+        created_by=user.id, title="Cancellation scope", status="ready",
+        content_hash="c" * 64,
+        chunks=[Chunk(
+            id="cancel-scope-chunk", paper_id="cancel-scope-paper", page=1,
+            text="cancellation evidence",
+        )],
+    )
+    store.upsert(paper)
+    run = store.create_research_run(
+        workspace.id, user.id, source_paper_ids=[paper.id], purpose="cancel boundary",
+    )
+    model_dispatches: list[float] = []
+    worker_checked_boundary = threading.Event()
+    monkeypatch.setattr(main, "RAG_HEARTBEAT_SECONDS", 0.01)
+    monkeypatch.setattr(
+        main, "_build_agentic_chat_model",
+        lambda timeout_seconds=18.0: model_dispatches.append(timeout_seconds),
+    )
+
+    def blocked_answer(body, _store, _context, *, deadline, cancel_event, **_kwargs):
+        assert cancel_event.wait(timeout=2.0)
+        try:
+            main._run_agentic_rag(
+                body, lambda *_args: [], None, "", deadline, lambda _stage: None,
+                cancel_event=cancel_event,
+            )
+        except Exception:
+            pass
+        finally:
+            worker_checked_boundary.set()
+        return SearchResponse(
+            answer="抽出結果", citations=[], fallback_reason="deadline_exceeded",
+        )
+
+    monkeypatch.setattr(main, "_answer", blocked_answer)
+
+    async def scenario():
+        context = main.WorkspaceContext(user=user, workspace=workspace)
+        response = await main.answer_stream(
+            SearchRequest(
+                query="cancel later calls", paper_ids=[paper.id], research_run_id=run.id,
+            ),
+            store, context,
+        )
+        iterator = response.body_iterator
+        assert await anext(iterator) == ": stream-open\n\n"
+        assert "accepted" in await anext(iterator)
+        assert '"type": "run"' in await anext(iterator)
+        store.cancel_research_run(workspace.id, run.id)
+        cancelled = await anext(iterator)
+        await iterator.aclose()
+        return cancelled
+
+    cancelled = asyncio.run(scenario())
+    assert '"type": "cancelled"' in cancelled
+    assert worker_checked_boundary.wait(timeout=2.0)
+    assert model_dispatches == []
+
+
+def test_natural_stream_deadline_persists_extractive_fallback_and_run(tmp_path, monkeypatch):
+    store = setup_app(tmp_path)
+    user, workspace = store.ensure_user(Principal(issuer="paperpilot-dev", subject="deadline-user"))
+    paper = Paper(
+        id="deadline-scope-paper", user_id="deadline-user", workspace_id=workspace.id,
+        created_by=user.id, title="Deadline scope", status="ready",
+        content_hash="d" * 64,
+        chunks=[Chunk(
+            id="deadline-scope-chunk", paper_id="deadline-scope-paper", page=1,
+            text="deadline evidence remains available as an extractive fallback",
+        )],
+    )
+    store.upsert(paper)
+    conversation = store.create_conversation(workspace.id, user.id, "Deadline fallback")
+    run = store.create_research_run(
+        workspace.id, user.id, source_paper_ids=[paper.id], purpose="deadline fallback",
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(main, "RAG_REQUEST_DEADLINE_SECONDS", 0.02)
+    monkeypatch.setattr(main, "RAG_HEARTBEAT_SECONDS", 0.005)
+
+    def delayed_candidates(*_args, **_kwargs):
+        time.sleep(0.04)
+        return [paper]
+
+    monkeypatch.setattr(store, "search_chunk_candidates", delayed_candidates)
+
+    async def scenario():
+        response = await main.answer_stream(
+            SearchRequest(
+                query="deadline evidence", paper_ids=[paper.id],
+                conversation_id=conversation.id, research_run_id=run.id,
+            ),
+            store, main.WorkspaceContext(user=user, workspace=workspace),
+        )
+        parts: list[str] = []
+        async for part in response.body_iterator:
+            parts.append(part)
+        return "".join(parts)
+
+    stream = asyncio.run(scenario())
+    assert '"fallback_reason": "deadline_exceeded"' in stream
+    assert '"type":"done"' in stream
+    detail = store.get_conversation(workspace.id, conversation.id)
+    assert detail.message_count == 2
+    assert detail.messages[-1].role == "assistant"
+    assert detail.messages[-1].research_run_id == run.id
+    assert "deadline evidence" in detail.messages[-1].content
+    assert store.get_research_run(workspace.id, run.id).status == "succeeded"

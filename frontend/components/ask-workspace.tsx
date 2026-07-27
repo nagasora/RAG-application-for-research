@@ -2,7 +2,7 @@
 
 import {
   Bars3Icon, CheckCircleIcon, ChevronRightIcon, ClockIcon, CpuChipIcon,
-  CircleStackIcon, DocumentTextIcon, PlusIcon, SparklesIcon, StopIcon, XMarkIcon,
+  CircleStackIcon, DocumentTextIcon, MagnifyingGlassIcon, PlusIcon, SparklesIcon, StopIcon, XMarkIcon,
 } from "@heroicons/react/24/outline";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
@@ -12,20 +12,26 @@ import remarkMath from "remark-math";
 
 import type { EvidenceTarget } from "@/components/evidence-viewer";
 import {
-  cancelResearchRun, createIdea, createResearchConversation, createResearchRun, exportConversationGraphDrafts, getLLMStatus, getResearchConversation, importGraphSource, listGraphIdeaCandidates, listResearchConversations, previewSearch,
+  cancelResearchRun, createIdea, createResearchConversation, createResearchRun, exportConversationGraphDrafts, getLLMStatus, getResearchConversation, getResearchRun, importGraphSource, listGraphIdeaCandidates, listResearchConversations, previewSearch,
   type AnswerClaim, type Citation, type GraphIdeaCandidate, type LLMStatus, type Paper, type ResearchConversation, type ResearchConversationDetail, type ResearchMessage, type SearchRequest,
 } from "@/lib/api/client";
 import { apiErrorMessage, toApiError } from "@/lib/api/error";
 import { normalizeResearchMarkdown } from "@/lib/markdown";
 import { SEARCH_STAGES, streamSearch, type SearchStage, type SearchStreamMeta } from "@/lib/api/search-stream";
 import { remarkCitationLinks } from "@/lib/remark-citations.mjs";
+import { UI_COPY } from "@/lib/copy";
 
 type Replay = { query: string; paperIds: string[]; revision: number; graphSeed?: { nodeId: string; content: string; intent: "explore" | "challenge" | "design" } } | null;
 type Phase = "idle" | "planning" | "answering" | "syncing";
 type EditorInteractionMode = Exclude<SearchRequest["interaction_mode"], "evidence">;
 type ClaimClassification = "evidence_backed" | "inference" | "general_knowledge" | "hypothesis" | "unverified";
-const SOURCE_STORAGE_PREFIX = "paperpilot.project-sources.";
 const DRAWER_FOCUSABLE = "button:not([disabled]), a[href], input:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex='-1'])";
+const MAX_SOURCE_PAPERS = 5;
+const SEARCH_RESULT_LIMIT = 8;
+const HISTORY_STATIC_MEDIA_QUERY = "(min-width: 1280px)";
+const EVIDENCE_STATIC_MEDIA_QUERY = "(min-width: 1536px)";
+const TIMEOUT_CODES = new Set(["api_timeout", "model_timeout", "deadline_exceeded", "verification_skipped_timeout", "http_504"]);
+type AskAttempt = { query: string; paperIds: string[]; interactionMode: EditorInteractionMode; graphSeed: NonNullable<Replay>["graphSeed"] | null };
 
 const EDITOR_INTERACTION_MODES: ReadonlyArray<{
   id: EditorInteractionMode;
@@ -60,6 +66,18 @@ function ideaKindForClaim(claim: AnswerClaim) {
   return claim.classification === "inference" ? "interpretation" as const : "hypothesis" as const;
 }
 
+function graphDraftApiKind(kind: "idea" | "hypothesis" | "constraint" | "experiment") {
+  // The graph export API intentionally has no generic "idea" node type. Keep
+  // researcher-authored ideas as manual proposals, while preserving the more
+  // specific choices as review-pending graph node types.
+  return ({
+    idea: "manual",
+    hypothesis: "hypothesis",
+    constraint: "assumption",
+    experiment: "planned_test",
+  } as const)[kind];
+}
+
 function ideaClaimKey(messageId: string, claimId: string) {
   return `${messageId}:${claimId}`;
 }
@@ -73,19 +91,19 @@ const MEMORY_KIND_LABEL: Record<GraphIdeaCandidate["kind"], string> = {
   hypothesis:"仮説", assumption:"前提", unresolved_question:"未解決点", planned_test:"検証案",
 };
 const STAGE_LABELS: Record<SearchStage, string> = {
-  accepted: "質問を受け付けました",
-  embedding: "質問と論文をベクトル化しています",
-  retrieving: "プロジェクト知識ベースから根拠を検索しています",
-  planning: "検索結果を評価し、回答方針を組み立てています",
-  generating: "論文根拠とLLM知識を統合しています",
-  auditing: "主張と引用元を照合しています",
-  saving: "回答と研究メモリを保存しています",
+  accepted: "質問を受け付けました。回答を準備しています",
+  embedding: "質問と論文を解析しています",
+  retrieving: "関連する論文と根拠を探しています",
+  planning: "検索結果を整理し、回答の方針を組み立てています",
+  generating: "論文の根拠をもとに回答を作成しています",
+  auditing: "回答の主張と引用元を確認しています",
+  saving: "回答と研究メモを保存しています",
 };
 
 const FALLBACK_LABELS: Record<string, string> = {
   api_key_missing: "APIキーがバックエンドに反映されていません",
-  dependency_missing: "Agentic RAGの依存関係が不足しています",
-  no_evidence: "検索できる論文根拠がありません",
+  dependency_missing: "検索に必要な機能を利用できません",
+  no_evidence: "質問に一致する論文の根拠が見つかりません",
   authentication_failed: "APIキーの認証に失敗しました",
   permission_denied: "モデルの利用権限がありません",
   model_not_found: "指定モデルを利用できません",
@@ -96,16 +114,16 @@ const FALLBACK_LABELS: Record<string, string> = {
   deadline_exceeded: "根拠検証が制限時間を超えました",
   network_error: "OpenAI APIへ接続できません",
   provider_unavailable: "OpenAI APIが一時的に利用できません",
-  citation_validation_failed: "引用番号の検証を通過しませんでした",
-  grounding_audit_failed: "根拠監査を通過しませんでした",
-  verification_skipped_timeout: "追加の根拠監査が制限時間内に完了しませんでした",
-  model_call_failed: "LLMの追加処理を完了できませんでした",
-  repair_failed: "引用の修復を完了できませんでした",
-  grounding_failed: "根拠監査を通過しませんでした",
+  citation_validation_failed: "引用元を確認できませんでした",
+  grounding_audit_failed: "回答と根拠の対応を確認できませんでした",
+  verification_skipped_timeout: "追加の根拠確認が時間内に完了しませんでした",
+  model_call_failed: "回答の作成を完了できませんでした",
+  repair_failed: "引用の調整を完了できませんでした",
+  grounding_failed: "回答と根拠の対応を確認できませんでした",
 };
 
 function fallbackLabel(code?: string | null) {
-  return code ? (FALLBACK_LABELS[code] ?? "LLM生成を完了できませんでした") : "";
+  return code ? (FALLBACK_LABELS[code] ?? "回答を作成できませんでした") : "";
 }
 
 function isGraphCitation(citation: Citation) {
@@ -141,8 +159,8 @@ function CitationProvenance({ citation }: { citation: Citation }) {
   return <div className="mt-2 rounded-lg bg-[#f2f6f4] px-2.5 py-2 text-[10px] leading-4 text-[#52605b]">
     {citation.source_quote && <p><span className="font-bold">原典引用:</span> {citation.source_quote}</p>}
     <p className={citation.source_quote ? "mt-1" : ""}>
-      <span className="font-bold">Provenance:</span> {citation.source_kind === "graph_edge" ? "graph edge" : "graph node"}
-      {citation.retrieval_stance ? ` · stance ${citation.retrieval_stance}` : ""}
+      <span className="font-bold">出所:</span> {citation.source_kind === "graph_edge" ? "知識グラフの関係" : "知識グラフの項目"}
+      {citation.retrieval_stance ? ` · ${citation.retrieval_stance === "positive" ? "支持" : citation.retrieval_stance === "negative" ? "反証" : "中立"}` : ""}
       {channels.length ? ` · ${channels.join(" / ")}` : ""}
       {citation.extraction_quality ? ` · 抽出品質 ${citation.extraction_quality}` : ""}
     </p>
@@ -200,7 +218,7 @@ function AnswerWithCitations({ text, citations, openEvidence }: { text: string; 
           if (citation) {
             const graph = isGraphCitation(citation); const contradictory = isNegativeCitation(citation);
             const className = `mx-0.5 inline-flex items-center gap-1 rounded px-1.5 py-0.5 align-baseline text-xs font-bold focus-visible:outline focus-visible:outline-2 ${contradictory ? "bg-red-100 text-red-800 focus-visible:outline-red-700" : "bg-[#dfeee6] text-[#164f3b] focus-visible:outline-[#164f3b]"}`;
-            const label = <>{children}{graph && <span className="text-[8px] uppercase">graph</span>}{contradictory && <span className="rounded bg-white/70 px-1 text-[8px]">反証</span>}</>;
+            const label = <>{children}{graph && <span className="text-[8px]">グラフ</span>}{contradictory && <span className="rounded bg-white/70 px-1 text-[8px]">反証</span>}</>;
             if (!canOpenPaperEvidence(citation)) return <span className={className} title="対応する原文ページがないグラフ根拠です">{label}</span>;
             return <button type="button" onClick={() => openEvidence({ paperId:citation.paper_id, paperTitle:citation.paper_title, page:citation.page, chunkId:citation.chunk_id })} aria-label={`引用${citation.index}: ${citation.paper_title} ${citation.page}ページを開く`} className={`${className} hover:brightness-95`} title={`${citation.paper_title} p.${citation.page}`}>{label}</button>;
           }
@@ -242,13 +260,13 @@ function IdeaInboxActions({ message, canWrite, saveStates, saveErrors, saveClaim
   if (!canWrite || !message.research_run_id) return null;
   const candidates = (message.claims ?? []).filter(isIdeaCandidateClaim);
   if (!candidates.length) return null;
-  return <section className="ml-11 mt-3 rounded-2xl border border-[#d9e5dd] bg-[#f7faf7] p-3" aria-label="Idea Inbox候補">
-    <p className="text-[11px] font-bold text-[#35634f]">未検証の主張を Idea Inbox へ</p>
+  return <section className="ml-11 mt-3 rounded-2xl border border-[#d9e5dd] bg-[#f7faf7] p-3" aria-label="アイデア受信箱の候補">
+    <p className="text-[11px] font-bold text-[#35634f]">未検証の主張をアイデア受信箱へ</p>
     <p className="mt-1 text-[10px] leading-4 text-[#68736f]">候補は未検証のまま保存されます。根拠・反証・検証方法を確認してから昇格してください。</p>
     <div className="mt-2 space-y-2">{candidates.map(claim => {
       const key = ideaClaimKey(message.id, claim.claim_id);
       const state = saveStates[key];
-      return <div key={claim.claim_id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-white px-3 py-2"><p className="min-w-0 flex-1 text-[11px] leading-5 text-[#40534a]">{claim.text}</p><div className="shrink-0"><button type="button" disabled={state === "saving" || state === "saved"} onClick={() => void saveClaim(message, claim)} className="rounded-full border border-[#9ab7a7] px-3 py-1.5 text-[10px] font-bold text-[#24523e] hover:bg-[#edf5f0] disabled:cursor-not-allowed disabled:opacity-55">{state === "saving" ? "保存中…" : state === "saved" ? "Inboxへ保存済み" : "Idea Inboxへ"}</button>{state === "error" && <p role="alert" className="mt-1 max-w-44 text-[10px] leading-4 text-red-700">{saveErrors[key] || "保存に失敗しました。再試行できます。"}</p>}{state === "saved" && <p role="status" className="mt-1 text-[10px] text-[#35634f]">Idea Inboxへ保存しました。</p>}</div></div>;
+      return <div key={claim.claim_id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-white px-3 py-2"><p className="min-w-0 flex-1 text-[11px] leading-5 text-[#40534a]">{claim.text}</p><div className="shrink-0"><button type="button" disabled={state === "saving" || state === "saved"} onClick={() => void saveClaim(message, claim)} className="rounded-full border border-[#9ab7a7] px-3 py-1.5 text-[10px] font-bold text-[#24523e] hover:bg-[#edf5f0] disabled:cursor-not-allowed disabled:opacity-55">{state === "saving" ? "保存中…" : state === "saved" ? "保存済み" : "アイデアとして保存"}</button>{state === "error" && <p role="alert" className="mt-1 max-w-44 text-[10px] leading-4 text-red-700">{saveErrors[key] || "保存に失敗しました。再試行できます。"}</p>}{state === "saved" && <p role="status" className="mt-1 text-[10px] text-[#35634f]">アイデア受信箱へ保存しました。</p>}</div></div>;
     })}</div>
   </section>;
 }
@@ -269,16 +287,16 @@ function SearchProgress({ label, stage, stageIndex }: { label: string; stage: Se
   return <div role="status" aria-live="polite" className="border-b border-[#cfe0d7] bg-[#edf6f1] px-4 py-2 md:px-6"><div className="flex items-center justify-between gap-3"><span className="flex min-w-0 items-center gap-2 truncate text-[11px] font-semibold text-[#23513e]"><span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-emerald-500"/><span className="truncate">{label}</span></span>{stage && <span className="shrink-0 text-[10px] font-bold tabular-nums text-[#688277]">{stageIndex + 1} / {SEARCH_STAGES.length}</span>}</div>{stage && <div className="mt-1.5 grid grid-cols-7 gap-1" aria-hidden="true">{SEARCH_STAGES.map((item, index) => <span key={item} className={`h-1 rounded-full transition-colors ${index <= stageIndex ? "bg-[#3d8062]" : "bg-[#cbdad2]"}`}/>)}</div>}</div>;
 }
 
-function CitationEvidencePanel({ evidence, grounded, openEvidence }: {
-  evidence: Citation[]; grounded: boolean; openEvidence: (target: EvidenceTarget) => void;
+function CitationEvidencePanel({ evidence, grounded, openEvidence, className = "" }: {
+  evidence: Citation[]; grounded: boolean; openEvidence: (target: EvidenceTarget) => void; className?: string;
 }) {
-  return <aside className="hidden min-h-0 overflow-y-auto border-l border-[#deddd5] bg-[#f3f3ef] p-4 xl:block" aria-label="最新回答の根拠"><div className="mb-4 flex items-center justify-between"><h2 className="text-xs font-bold uppercase tracking-[.14em] text-[#52605b]">Evidence</h2><span className="rounded-full bg-white px-2 py-1 text-[10px] text-[#7a837f]">{evidence.length}件</span></div><div className="space-y-3">{evidence.map(citation => <CitationCard key={citationKey(citation)} citation={citation} openEvidence={openEvidence} compact/>)}{!evidence.length && <div className="rounded-2xl border border-dashed border-[#ccd1cc] p-5 text-center"><DocumentTextIcon className="mx-auto h-5 w-5 text-[#89918e]"/><p className="mt-2 text-xs leading-5 text-[#7a837f]">回答に引用が付くと、根拠の出所と原文がここに表示されます。</p></div>}</div>{grounded && <div className="mt-4 flex items-center gap-2 rounded-xl bg-[#e1eee7] p-3 text-xs text-[#23513e]"><CheckCircleIcon className="h-4 w-4"/>根拠参照の整合性を検証済み</div>}</aside>;
+  return <aside className={`min-h-0 overflow-y-auto border-l border-[#deddd5] bg-[#f3f3ef] p-4 ${className}`} aria-label="最新回答の根拠"><div className="mb-4 flex items-center justify-between"><h2 className="text-xs font-bold tracking-[.14em] text-[#52605b]">{UI_COPY.ask.evidence}</h2><span className="rounded-full bg-white px-2 py-1 text-[10px] text-[#7a837f]">{evidence.length}件</span></div><div className="space-y-3">{evidence.map(citation => <CitationCard key={citationKey(citation)} citation={citation} openEvidence={openEvidence} compact/>)}{!evidence.length && <div className="rounded-2xl border border-dashed border-[#ccd1cc] p-5 text-center"><DocumentTextIcon className="mx-auto h-5 w-5 text-[#89918e]"/><p className="mt-2 text-xs leading-5 text-[#7a837f]">回答に引用が付くと、根拠の出所と原文がここに表示されます。</p></div>}</div>{grounded && <div className="mt-4 flex items-center gap-2 rounded-xl bg-[#e1eee7] p-3 text-xs text-[#23513e]"><CheckCircleIcon className="h-4 w-4"/>回答の主張と引用元の対応を確認済み</div>}</aside>;
 }
 
 function AnswerEvidenceList({ citations, openEvidence }: { citations: Citation[]; openEvidence: (target: EvidenceTarget) => void }) {
-  return <section className="ml-11 mt-4 rounded-2xl border border-[#d8ded9] bg-[#f7faf7] p-3" aria-label="この回答でRAGが使用した根拠">
-    <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-2 text-xs font-bold text-[#35634f]"><DocumentTextIcon className="h-4 w-4"/>この回答でRAGが使用した根拠</div><span className="shrink-0 rounded-full bg-white px-2 py-1 text-[10px] font-semibold text-[#68736f]">{citations.length}件</span></div>
-    {citations.length ? <div className="mt-3 grid gap-2 lg:grid-cols-2">{citations.map(citation => <CitationCard key={citationKey(citation)} citation={citation} openEvidence={openEvidence}/>)}</div> : <div className="mt-3 rounded-xl border border-dashed border-[#cbd3cc] bg-white/70 p-3 text-xs leading-5 text-[#68736f]">この回答には、RAGが使用した根拠はありません。一般知識またはローカル回答として扱い、原典の根拠にはしないでください。</div>}
+  return <section className="ml-11 mt-4 rounded-2xl border border-[#d8ded9] bg-[#f7faf7] p-3" aria-label="この回答で参照した論文の根拠">
+    <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-2 text-xs font-bold text-[#35634f]"><DocumentTextIcon className="h-4 w-4"/>この回答で参照した論文の根拠</div><span className="shrink-0 rounded-full bg-white px-2 py-1 text-[10px] font-semibold text-[#68736f]">{citations.length}件</span></div>
+    {citations.length ? <div className="mt-3 grid gap-2 lg:grid-cols-2">{citations.map(citation => <CitationCard key={citationKey(citation)} citation={citation} openEvidence={openEvidence}/>)}</div> : <div className="mt-3 rounded-xl border border-dashed border-[#cbd3cc] bg-white/70 p-3 text-xs leading-5 text-[#68736f]">この回答には、論文から検索した根拠がありません。一般知識または端末内の簡易回答として扱い、原典の根拠にはしないでください。</div>}
   </section>;
 }
 
@@ -308,6 +326,10 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
   const [error, setError] = useState("");
   const [syncNotice, setSyncNotice] = useState("");
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
+  const [sourceQuery, setSourceQuery] = useState("");
+  const [sourceNotice, setSourceNotice] = useState("");
+  const [timeoutRetry, setTimeoutRetry] = useState<AskAttempt | null>(null);
   const [graphMessage, setGraphMessage] = useState<ResearchMessage | null>(null);
   const [graphCandidates, setGraphCandidates] = useState<GraphIdeaCandidate[]>([]);
   const [selectedGraphCandidateIds, setSelectedGraphCandidateIds] = useState<string[]>([]);
@@ -321,16 +343,39 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
   const [graphNotice, setGraphNotice] = useState("");
   const [ideaSaveStates, setIdeaSaveStates] = useState<Record<string, "saving" | "saved" | "error">>({});
   const [ideaSaveErrors, setIdeaSaveErrors] = useState<Record<string, string>>({});
-  const sourceSelectionRestoredRef = useRef(false);
   const streamAbortRef = useRef<AbortController | null>(null);
   const interruptionAbortRef = useRef<AbortController | null>(null);
   const detailAbortRef = useRef<AbortController | null>(null);
   const messageEndRef = useRef<HTMLDivElement>(null);
   const historyButtonRef = useRef<HTMLButtonElement>(null);
   const drawerRef = useRef<HTMLDivElement>(null);
+  const evidenceButtonRef = useRef<HTMLButtonElement>(null);
+  const evidenceDrawerRef = useRef<HTMLDivElement>(null);
   const graphExportingRef = useRef(false);
   const graphSavedMemoryRef = useRef(new Set<string>());
+  const readyIdsRef = useRef(readyIds);
+  const sourceChoiceRevisionRef = useRef(0);
+  const sourceRestoreRevisionRef = useRef(0);
+  const appliedReplayRevisionRef = useRef<number | null>(null);
+  readyIdsRef.current = readyIds;
   const busy = phase !== "idle" || interruptionSyncing || detailLoading;
+  const filteredReadyPapers = useMemo(() => {
+    const normalized = sourceQuery.trim().toLocaleLowerCase("ja-JP");
+    if (!normalized) return readyPapers;
+    return readyPapers.filter(paper => `${paper.title} ${paper.authors.join(" ")}`.toLocaleLowerCase("ja-JP").includes(normalized));
+  }, [readyPapers, sourceQuery]);
+
+  const updateSources = (ids: string[]) => {
+    if (busy) return;
+    const normalized = [...new Set(ids)].filter(id => readyIds.has(id));
+    if (normalized.length > MAX_SOURCE_PAPERS) {
+      setSourceNotice(UI_COPY.ask.sourceMaximum);
+      return;
+    }
+    sourceChoiceRevisionRef.current += 1;
+    setSourceNotice("");
+    setSelected(normalized);
+  };
 
   const replaceQuery = (nextQuery: string) => {
     setQuery(nextQuery);
@@ -339,12 +384,14 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
 
   const selectConversation = (conversationId: string) => {
     if (busy || conversationId === activeIdRef.current) return;
+    sourceChoiceRevisionRef.current += 1;
+    sourceRestoreRevisionRef.current += 1;
     activeIdRef.current = conversationId;
     setActiveId(conversationId);
     setLastMeta(null);
     setGraphSeed(null);
     setLiveQuestion(""); setLiveAnswer(""); setLiveCitations([]);
-    setHistoryOpen(false); setError(""); setSyncNotice("");
+    setSelected([]); setHistoryOpen(false); setEvidenceOpen(false); setError(""); setSyncNotice(""); setSourceNotice(""); setTimeoutRetry(null);
   };
 
   const refreshList = async (preferred?: string, signal?: AbortSignal) => {
@@ -377,11 +424,30 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
     detailAbortRef.current?.abort();
     if (!activeId) { setDetail(null); setDetailLoading(false); return; }
     const requestedId = activeId;
+    const restoreRevision = ++sourceRestoreRevisionRef.current;
+    const choiceRevision = sourceChoiceRevisionRef.current;
+    const readyIdsAtSelection = readyIdsRef.current;
+    const canRestoreSources = (controller: AbortController) => !controller.signal.aborted
+      && activeIdRef.current === requestedId
+      && sourceRestoreRevisionRef.current === restoreRevision
+      && sourceChoiceRevisionRef.current === choiceRevision;
     const controller = new AbortController(); detailAbortRef.current = controller;
     setDetail(null); setDetailLoading(true); setError(""); setLastMeta(null);
     getResearchConversation(requestedId, controller.signal)
-      .then(nextDetail => {
-        if (!controller.signal.aborted && activeIdRef.current === requestedId) setDetail(nextDetail);
+      .then(async nextDetail => {
+        if (controller.signal.aborted || activeIdRef.current !== requestedId) return;
+        setDetail(nextDetail);
+        const latestRunId = [...(nextDetail.messages ?? [])].reverse().find(message => message.research_run_id)?.research_run_id;
+        if (!latestRunId) { if (canRestoreSources(controller)) setSelected([]); return; }
+        try {
+          const latestRun = await getResearchRun(latestRunId, controller.signal);
+          if (canRestoreSources(controller)) {
+            setSelected((latestRun.source_paper_ids ?? []).filter(id => readyIdsAtSelection.has(id)).slice(0, MAX_SOURCE_PAPERS));
+          }
+        } catch (runError) {
+          const normalized = toApiError(runError, "検索する論文を復元できませんでした");
+          if (canRestoreSources(controller) && normalized.code !== "aborted") setSourceNotice("前回検索した論文を復元できませんでした。論文を選び直してください。");
+        }
       })
       .catch(requestError => {
         const normalized = toApiError(requestError, "研究対話を開けませんでした");
@@ -392,21 +458,23 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
   }, [activeId]);
 
   useEffect(() => {
-    if (sourceSelectionRestoredRef.current || papers.length === 0) return;
-    let restored: string[] = replay ? replay.paperIds.filter(id => readyIds.has(id)) : [];
-    if (!replay) try {
-      const stored: unknown = JSON.parse(window.localStorage.getItem(`${SOURCE_STORAGE_PREFIX}${workspaceId}`) ?? "[]");
-      if (Array.isArray(stored)) restored = stored.filter((id): id is string => typeof id === "string" && readyIds.has(id));
-    } catch { /* malformed or unavailable browser storage falls back to all ready papers */ }
-    sourceSelectionRestoredRef.current = true;
-    setSelected(restored);
-  }, [papers.length, readyIds, replay, setSelected, workspaceId]);
-  useEffect(() => {
-    if (!sourceSelectionRestoredRef.current) return;
-    const normalized = selected.filter(id => readyIds.has(id));
-    if (normalized.length !== selected.length) { setSelected(normalized); return; }
-    try { window.localStorage.setItem(`${SOURCE_STORAGE_PREFIX}${workspaceId}`, JSON.stringify(normalized)); } catch { /* no-op */ }
-  }, [readyIds, selected, setSelected, workspaceId]);
+    const historyStatic = window.matchMedia(HISTORY_STATIC_MEDIA_QUERY);
+    const evidenceStatic = window.matchMedia(EVIDENCE_STATIC_MEDIA_QUERY);
+    const deactivateHistoryDrawer = (event: MediaQueryListEvent | MediaQueryList) => {
+      if (event.matches) setHistoryOpen(false);
+    };
+    const deactivateEvidenceDrawer = (event: MediaQueryListEvent | MediaQueryList) => {
+      if (event.matches) setEvidenceOpen(false);
+    };
+    deactivateHistoryDrawer(historyStatic);
+    deactivateEvidenceDrawer(evidenceStatic);
+    historyStatic.addEventListener("change", deactivateHistoryDrawer);
+    evidenceStatic.addEventListener("change", deactivateEvidenceDrawer);
+    return () => {
+      historyStatic.removeEventListener("change", deactivateHistoryDrawer);
+      evidenceStatic.removeEventListener("change", deactivateEvidenceDrawer);
+    };
+  }, []);
 
   useEffect(() => {
     if (!historyOpen) return;
@@ -427,10 +495,42 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
     return () => {
       document.removeEventListener("keydown", onKeyDown);
       document.body.style.overflow = previousOverflow;
-      (previouslyFocused ?? historyButtonRef.current)?.focus();
+      if (!window.matchMedia(HISTORY_STATIC_MEDIA_QUERY).matches) (previouslyFocused ?? historyButtonRef.current)?.focus();
     };
   }, [historyOpen]);
-  useEffect(() => { if (replay) { setQuery(replay.query); setGraphSeed(replay.graphSeed ?? null); if (replay.graphSeed) setInteractionMode(replay.graphSeed.intent); onReplayConsumed?.(); } }, [onReplayConsumed, replay?.revision]);
+  useEffect(() => {
+    if (!evidenceOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    document.body.style.overflow = "hidden";
+    window.requestAnimationFrame(() => evidenceDrawerRef.current?.querySelector<HTMLElement>(DRAWER_FOCUSABLE)?.focus());
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); setEvidenceOpen(false); return; }
+      if (event.key !== "Tab" || !evidenceDrawerRef.current) return;
+      const focusable = Array.from(evidenceDrawerRef.current.querySelectorAll<HTMLElement>(DRAWER_FOCUSABLE));
+      if (!focusable.length) { event.preventDefault(); return; }
+      const first = focusable[0]; const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = previousOverflow;
+      if (!window.matchMedia(EVIDENCE_STATIC_MEDIA_QUERY).matches) (previouslyFocused ?? evidenceButtonRef.current)?.focus();
+    };
+  }, [evidenceOpen]);
+  useEffect(() => {
+    if (!replay || appliedReplayRevisionRef.current === replay.revision) return;
+    appliedReplayRevisionRef.current = replay.revision;
+    sourceChoiceRevisionRef.current += 1;
+    sourceRestoreRevisionRef.current += 1;
+    setQuery(replay.query);
+    setSelected(replay.paperIds.filter(id => readyIdsRef.current.has(id)).slice(0, MAX_SOURCE_PAPERS));
+    setGraphSeed(replay.graphSeed ?? null);
+    if (replay.graphSeed) setInteractionMode(replay.graphSeed.intent);
+    onReplayConsumed?.();
+  }, [replay?.revision]);
   useEffect(() => { messageEndRef.current?.scrollIntoView({ block:"end", behavior:"smooth" }); }, [detail?.messages?.length, liveAnswer, liveQuestion]);
 
   const startNew = () => {
@@ -439,22 +539,31 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
     // submitted question below creates it, allowing the server to derive a
     // useful title from the actual research topic.
     detailAbortRef.current?.abort();
+    sourceChoiceRevisionRef.current += 1;
+    sourceRestoreRevisionRef.current += 1;
     activeIdRef.current = null;
     setActiveId(null); setDetail(null); setQuery(""); setGraphSeed(null); setLastMeta(null);
     setLiveQuestion(""); setLiveAnswer(""); setLiveCitations([]);
-    setError(""); setSyncNotice(""); setHistoryOpen(false);
+    setSelected([]); setError(""); setSyncNotice(""); setSourceNotice(""); setTimeoutRetry(null); setHistoryOpen(false); setEvidenceOpen(false);
   };
 
-  const ask = async (event: FormEvent) => {
-    event.preventDefault();
-    const prompt = query.trim();
+  const ask = async (event?: FormEvent, retry?: AskAttempt) => {
+    event?.preventDefault();
+    const prompt = retry?.query ?? query.trim();
+    const paperIds = retry?.paperIds ?? [...selected];
+    const attemptMode = retry?.interactionMode ?? interactionMode;
+    const attemptGraphSeed = retry?.graphSeed ?? graphSeed;
     if (busy) return;
     if (Array.from(prompt).length < 2) { setError("質問は2文字以上で入力してください。"); return; }
+    if (paperIds.length < 1) { setError(UI_COPY.ask.sourceEmpty); return; }
+    if (paperIds.length > MAX_SOURCE_PAPERS) { setError(UI_COPY.ask.sourceMaximum); return; }
+    const attempt: AskAttempt = { query:prompt, paperIds:[...paperIds], interactionMode:attemptMode, graphSeed:attemptGraphSeed };
+    setTimeoutRetry(null);
     if (!canWrite) {
       setError(""); setSyncNotice(""); setLiveQuestion(prompt); setLiveAnswer(""); setLiveCitations([]);
       setPhase("planning");
       try {
-        const result = await previewSearch({ query:prompt, paper_ids:selected, limit:10, interaction_mode:"evidence" });
+        const result = await previewSearch({ query:prompt, paper_ids:paperIds, limit:SEARCH_RESULT_LIMIT, interaction_mode:"evidence" });
         setLiveCitations(result.citations);
         setSyncNotice(result.citations.length ? "原文根拠を表示しています。viewer権限ではLLM回答は生成されません。" : "一致する原文根拠は見つかりませんでした。");
         setQuery("");
@@ -473,13 +582,13 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
     let researchRunId: string | null = null;
     let streamCompleted = false;
     let streamCancelled = false;
-    const runGraphSeed = graphSeed;
+    const runGraphSeed = attemptGraphSeed;
     try {
       const researchRun = await createResearchRun({
-        source_paper_ids:selected.length ? selected : readyPapers.map(paper => paper.id),
+        source_paper_ids:paperIds,
         purpose:prompt,
         success_criteria:"質問に対する根拠付き回答を記録する",
-        plan:{ origin:"ask_workspace", interaction_mode:interactionMode, ...(runGraphSeed ? { graph_seed:{ node_id:runGraphSeed.nodeId, content:runGraphSeed.content, intent:runGraphSeed.intent } } : {}) },
+        plan:{ origin:"ask_workspace", interaction_mode:attemptMode, ...(runGraphSeed ? { graph_seed:{ node_id:runGraphSeed.nodeId, content:runGraphSeed.content, intent:runGraphSeed.intent } } : {}) },
         model:llmStatus?.model ?? "",
         prompt_version:"ask-workspace-v1",
       }, controller.signal);
@@ -494,11 +603,11 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
           throw conversationError;
         }
       }
-      for await (const streamEvent of streamSearch({ query:prompt, paper_ids:selected, limit:10, conversation_id:conversationId, research_run_id:researchRun.id, interaction_mode:interactionMode }, controller.signal)) {
+      for await (const streamEvent of streamSearch({ query:prompt, paper_ids:paperIds, limit:SEARCH_RESULT_LIMIT, conversation_id:conversationId, research_run_id:researchRun.id, interaction_mode:attemptMode }, controller.signal)) {
         if (streamEvent.type === "token") { setPhase("answering"); setLiveAnswer(current => current + streamEvent.value); }
         if (streamEvent.type === "citations") setLiveCitations(streamEvent.value);
         if (streamEvent.type === "stage") setSearchStage(streamEvent.value);
-        if (streamEvent.type === "meta") setLastMeta(streamEvent.value);
+        if (streamEvent.type === "meta") { setLastMeta(streamEvent.value); if (streamEvent.value.fallback_reason && TIMEOUT_CODES.has(streamEvent.value.fallback_reason)) setTimeoutRetry(attempt); }
         if (streamEvent.type === "done") streamCompleted = true;
         if (streamEvent.type === "cancelled") { streamCompleted = true; streamCancelled = true; }
       }
@@ -522,7 +631,9 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
       const normalized = toApiError(requestError, "回答を生成できませんでした");
       if (normalized.code === "aborted") {
         setSyncNotice("回答表示を中断しました。現在のAPIではサーバー側で完了した回答が履歴に保存される場合があります。");
-      } else if (!streamCompleted) setError(normalized.message);
+      } else if (!streamCompleted && TIMEOUT_CODES.has(normalized.code)) {
+        setError(""); setSyncNotice(""); setTimeoutRetry(attempt);
+      } else if (!streamCompleted) setError(apiErrorMessage(normalized, "回答を生成できませんでした"));
     } finally {
       if (streamAbortRef.current === controller) { streamAbortRef.current = null; setPhase("idle"); setSearchStage(null); }
     }
@@ -612,6 +723,7 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
     const draft = graphDraft.trim();
     if (!candidates.length && !draft) return;
     graphExportingRef.current = true; setGraphSaving(true); setGraphError(""); setGraphNotice("");
+    let saveStage: "source" | "export" = "source";
     try {
       // Preserve the assistant turn as an immutable chat Source. It is provenance for
       // an idea, never a substitute for the cited paper evidence in that turn.
@@ -625,15 +737,21 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
       if (!evidenceSpan) throw new Error("会話の根拠Spanを作成できませんでした");
       const drafts = [
         ...candidates.map(candidate => ({ candidate_id:candidate.id, content:candidate.content, kind:candidate.kind, derived_from_memory:candidate.derived_from_memory })),
-        ...(draft ? [{ candidate_id:`manual:${await sha256Hex(draft)}`, content:draft, kind:"manual" as const, derived_from_memory:false }] : []),
+        ...(draft ? [{
+          candidate_id:`manual:${graphDraftKind}:${await sha256Hex(draft)}`, content:draft,
+          kind:graphDraftApiKind(graphDraftKind), derived_from_memory:false,
+        }] : []),
       ];
+      saveStage = "export";
       await exportConversationGraphDrafts(conversationId, graphMessage.id, { source_span_id:evidenceSpan.id, drafts });
       candidates.forEach(candidate => graphSavedMemoryRef.current.add(candidate.id));
       setSelectedGraphCandidateIds([]);
       setGraphDraft("");
       setGraphNotice(`${candidates.length + (draft ? 1 : 0)}件をレビュー待ちとして知識グラフへ保存しました。会話由来の未検証メモであり、論文事実としては扱われません。`);
     } catch (requestError) {
-      setGraphError(apiErrorMessage(requestError, "知識グラフへ保存できませんでした"));
+      const normalized = toApiError(requestError, "知識グラフへ保存できませんでした");
+      const stageLabel = saveStage === "source" ? "会話の根拠を保存" : "レビュー候補をグラフへ保存";
+      setGraphError(`${stageLabel}に失敗しました。${apiErrorMessage(normalized, "もう一度お試しください。")}`);
     } finally { graphExportingRef.current = false; setGraphSaving(false); }
   };
 
@@ -646,7 +764,7 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
   const memoryText = detail?.summary?.trim() ?? "";
   const phaseLabel = interruptionSyncing ? "中断後のサーバー処理と会話履歴を同期しています" : searchStage ? STAGE_LABELS[searchStage] : phase === "planning" ? "質問を分析し、検索計画を立てています" : phase === "answering" ? "論文を照合しながら回答しています" : phase === "syncing" ? "会話と記憶を保存しています" : "";
   const stageIndex = searchStage ? SEARCH_STAGES.indexOf(searchStage) : -1;
-  const sourceScopeLabel = selected.length ? `指定した${selected.length}件を検索` : `準備完了の全${readyPapers.length}件を検索`;
+  const sourceScopeLabel = selected.length ? `選択中 ${selected.length} / ${MAX_SOURCE_PAPERS}件` : "論文が未選択です";
   const llmFailure = lastMeta?.fallback_reason
     ? fallbackLabel(lastMeta.fallback_reason)
     : llmStatus?.last_failure_code ? fallbackLabel(llmStatus.last_failure_code) : "";
@@ -662,39 +780,42 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
         : !llmStatus.agentic_dependencies_available ? "LLM未接続 · 依存関係不足"
           : llmFailure ? `LLMエラー · ${llmFailure}` : `${llmStatus.model} · 接続設定済み`
       : "LLM状態を確認中";
-  const fallbackNotice = lastMeta && !lastMeta.grounded && lastMeta.fallback_reason
+  const fallbackNotice = lastMeta && !lastMeta.grounded && lastMeta.fallback_reason && !TIMEOUT_CODES.has(lastMeta.fallback_reason)
     ? `${fallbackLabel(lastMeta.fallback_reason)}。${lastMeta.generation_mode === "local_fallback" ? "論文から抽出したローカル回答を表示しています。" : "回答は根拠検証を通過していません。"}`
     : "";
 
-  return <section className="rise -mx-5 -my-8 min-h-[calc(100vh-5.5rem)] lg:-mx-10 lg:-my-12">
-    <div className="grid min-h-[calc(100vh-5.5rem)] bg-[#f7f6f1] lg:grid-cols-[280px_minmax(0,1fr)]">
-      <aside className={`${historyOpen ? "fixed inset-0 z-[90] isolate flex" : "hidden"} min-h-0 lg:static lg:flex lg:flex-col`} aria-label="研究ナビゲーション">
-        {historyOpen && <button type="button" aria-label="会話履歴を閉じる" className="absolute inset-0 bg-[#07110d]/80 backdrop-blur-[3px] lg:hidden" onClick={() => setHistoryOpen(false)}/>}
-        <div ref={drawerRef} role={historyOpen ? "dialog" : undefined} aria-modal={historyOpen ? true : undefined} aria-label={historyOpen ? "研究対話履歴とプロジェクト知識ベース" : undefined} className="relative z-[1] flex h-[100dvh] min-h-0 w-[88vw] max-w-[340px] flex-col overflow-hidden border-r border-white/10 bg-[#10231b] text-white shadow-[28px_0_70px_rgba(0,0,0,.42)] lg:h-[calc(100vh-5.5rem)] lg:w-auto lg:max-w-none lg:shadow-none">
-          <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-4 py-4"><div><p className="text-[10px] font-bold uppercase tracking-[.2em] text-[#91ad9f]">Research cockpit</p><p className="mt-1 text-sm font-semibold text-white">研究ナビゲーション</p></div><button type="button" onClick={() => setHistoryOpen(false)} aria-label="研究ナビゲーションを閉じる" className="grid h-9 w-9 place-items-center rounded-full border border-white/15 text-[#d8e6df] hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white lg:hidden"><XMarkIcon className="h-5 w-5"/></button></div>
+  return <section className="rise h-full min-h-0 overflow-hidden">
+    <div className="grid h-full min-h-0 bg-[#f7f6f1] xl:grid-cols-[280px_minmax(0,1fr)]">
+      <aside className={`${historyOpen ? "fixed inset-0 z-[90] isolate flex" : "hidden"} min-h-0 xl:static xl:flex xl:flex-col`} aria-label="研究ナビゲーション">
+        {historyOpen && <button type="button" aria-label="会話履歴を閉じる" className="absolute inset-0 bg-[#07110d]/80 backdrop-blur-[3px] xl:hidden" onClick={() => setHistoryOpen(false)}/>}
+        <div ref={drawerRef} role={historyOpen ? "dialog" : undefined} aria-modal={historyOpen ? true : undefined} aria-label={historyOpen ? "研究対話と検索する論文" : undefined} className="relative z-[1] flex h-[100dvh] min-h-0 w-[88vw] max-w-[340px] flex-col overflow-hidden border-r border-white/10 bg-[#10231b] pb-[env(safe-area-inset-bottom)] text-white shadow-[28px_0_70px_rgba(0,0,0,.42)] xl:h-full xl:w-auto xl:max-w-none xl:pb-0 xl:shadow-none">
+          <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-4 py-4"><div><p className="text-[10px] font-bold tracking-[.2em] text-[#91ad9f]">{UI_COPY.ask.cockpit}</p><p className="mt-1 text-sm font-semibold text-white">研究ナビゲーション</p></div><button type="button" onClick={() => setHistoryOpen(false)} aria-label="研究ナビゲーションを閉じる" className="grid h-9 w-9 place-items-center rounded-full border border-white/15 text-[#d8e6df] hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white xl:hidden"><XMarkIcon className="h-5 w-5"/></button></div>
           <div className="flex min-h-0 flex-1 flex-col p-4">
             <button type="button" onClick={startNew} disabled={!canWrite || busy} className="flex w-full shrink-0 items-center justify-center gap-2 rounded-xl border border-[#78a58f]/60 bg-[#e8f3ed] px-4 py-3 text-sm font-semibold text-[#123d2d] shadow-lg shadow-black/15 disabled:opacity-40"><PlusIcon className="h-4 w-4"/>新しい研究対話</button>
-            <div className="mt-5 flex shrink-0 items-center justify-between px-2"><p className="text-[10px] font-bold uppercase tracking-[.18em] text-[#91ad9f]">Conversation history</p><span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] text-[#b9cec3]">{conversations.length}件</span></div>
+            <div className="mt-5 flex shrink-0 items-center justify-between px-2"><p className="text-[10px] font-bold tracking-[.18em] text-[#91ad9f]">{UI_COPY.ask.conversations}</p><span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] text-[#b9cec3]">{conversations.length}件</span></div>
             <div className="mt-2 min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain pr-1 [scrollbar-color:#5f7f70_transparent]" aria-label="会話履歴の一覧" tabIndex={0}>
               {conversations.map(item => <button type="button" key={item.id} disabled={busy} onClick={() => selectConversation(item.id)} aria-current={activeId === item.id ? "page" : undefined} className={`w-full rounded-xl border px-3 py-3 text-left transition disabled:cursor-not-allowed ${activeId === item.id ? "border-[#739d89]/60 bg-[#254438] text-white shadow-lg shadow-black/15" : "border-transparent text-[#c3d2ca] hover:border-white/10 hover:bg-white/[.07]"}`}><span className="block truncate text-sm font-semibold">{item.title}</span><span className={`mt-1 flex items-center gap-1 text-[10px] ${activeId === item.id ? "text-[#a9cbbb]" : "text-[#789387]"}`}><ClockIcon className="h-3 w-3"/>{relativeDate(item.updated_at)}</span></button>)}
               {!conversations.length && <p className="px-3 py-6 text-center text-xs leading-5 text-[#91ad9f]">研究対話はまだありません。<br/>問いを送ると自動で作成されます。</p>}
             </div>
-            <div className="mt-3 grid shrink-0 gap-2 border-t border-white/10 pt-3">
-              <div className="rounded-xl border border-white/10 bg-white/[.06] p-3"><div className="flex items-center justify-between gap-2"><div className="flex items-center gap-2 text-xs font-semibold text-[#cce5d9]"><CpuChipIcon className="h-4 w-4 text-[#86b39d]"/>研究メモリ</div><span className={`h-2 w-2 rounded-full ${memoryText ? "bg-emerald-400 shadow-[0_0_10px_#34d399]" : "bg-[#5f746a]"}`}/></div><p className="mt-2 line-clamp-3 text-[11px] leading-5 text-[#9eb5aa]">{memoryText || "仮説・合意・未解決点を対話から蓄積します。"}</p>{memoryText && <p className="mt-1 text-[10px] text-[#718b7f]">{memoryText.length.toLocaleString()}文字を次の対話へ引き継ぎ</p>}</div>
-              <details className="group rounded-xl border border-[#527665]/70 bg-[#183229]"><summary className="cursor-pointer list-none p-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white"><div className="flex items-center justify-between gap-2"><div className="flex items-center gap-2 text-xs font-semibold text-white"><CircleStackIcon className="h-4 w-4 text-[#8bc2a7]"/>プロジェクト知識ベース</div><ChevronRightIcon className="h-3.5 w-3.5 text-[#91ad9f] transition group-open:rotate-90"/></div><p className="mt-2 text-[11px] leading-5 text-[#9eb5aa]">{sourceScopeLabel}</p><p className="mt-1 text-[10px] text-[#718b7f]">この端末では会話を切り替えても維持</p></summary><div className="max-h-36 space-y-1 overflow-y-auto border-t border-white/10 p-2 overscroll-contain">{selected.length > 0 && <button type="button" onClick={() => setSelected([])} className="w-full rounded-lg border border-[#729482]/50 px-2 py-1.5 text-left text-[10px] font-semibold text-[#b9ddcb] hover:bg-white/5">選択を解除して全ready論文を検索</button>}{readyPapers.map(paper => { const checked = selected.includes(paper.id); return <button type="button" key={paper.id} aria-pressed={checked} onClick={() => setSelected(checked ? selected.filter(id => id !== paper.id) : [...selected, paper.id])} className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[10px] ${checked ? "bg-[#315747] text-white" : "text-[#9eb5aa] hover:bg-white/5"}`}><span className={`grid h-4 w-4 shrink-0 place-items-center rounded border ${checked ? "border-[#8fc4aa] bg-[#8fc4aa] text-[#10231b]" : "border-[#607d70]"}`}>{checked && <CheckCircleIcon className="h-3 w-3"/>}</span><span className="truncate">{paper.title}</span></button>;})}{!readyPapers.length && <p className="p-2 text-[10px] leading-5 text-[#91ad9f]">解析が完了した論文はまだありません。</p>}</div></details>
-            </div>
+            <section className="mt-3 shrink-0 border-t border-white/10 pt-3" aria-label={UI_COPY.ask.sources}>
+              <div className="flex items-center justify-between px-1"><div className="flex items-center gap-2 text-xs font-semibold text-white"><CircleStackIcon className="h-4 w-4 text-[#8bc2a7]"/>{UI_COPY.ask.sources}</div><span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] text-[#b9cec3]">{selected.length} / {MAX_SOURCE_PAPERS}件</span></div>
+              <label className="mt-2 flex items-center gap-2 rounded-lg border border-white/15 bg-white/[.06] px-2.5 py-2"><MagnifyingGlassIcon className="h-3.5 w-3.5 shrink-0 text-[#91ad9f]"/><span className="sr-only">論文を検索</span><input value={sourceQuery} disabled={busy} onChange={event => setSourceQuery(event.target.value)} placeholder="論文名・著者で検索" className="min-w-0 flex-1 bg-transparent text-[11px] text-white outline-none placeholder:text-[#718b7f] disabled:opacity-50"/></label>
+              <div className="mt-2 flex items-center justify-between gap-2"><p className="text-[10px] text-[#8fa99c]">1〜5件を選択</p><button type="button" disabled={busy || selected.length === 0} onClick={() => updateSources([])} className="text-[10px] font-semibold text-[#b9ddcb] underline underline-offset-2 disabled:opacity-40">選択を解除</button></div>
+              {sourceNotice && <p role="alert" className="mt-2 rounded-lg bg-amber-950/45 px-2 py-1.5 text-[10px] leading-4 text-amber-100">{sourceNotice}</p>}
+              <div className="mt-2 max-h-44 space-y-1 overflow-y-auto overscroll-contain pr-1 [scrollbar-color:#5f7f70_transparent]">{filteredReadyPapers.map(paper => { const checked = selected.includes(paper.id); return <label key={paper.id} className={`flex items-start gap-2 rounded-lg px-2 py-1.5 text-[10px] ${busy ? "cursor-not-allowed opacity-55" : "cursor-pointer"} ${checked ? "bg-[#315747] text-white" : "text-[#9eb5aa] hover:bg-white/5"}`}><input type="checkbox" checked={checked} disabled={busy} onChange={() => updateSources(checked ? selected.filter(id => id !== paper.id) : [...selected, paper.id])} className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-[#8fc4aa]"/><span className="line-clamp-2 leading-4">{paper.title}</span></label>;})}{!filteredReadyPapers.length && <p className="p-2 text-[10px] leading-5 text-[#91ad9f]">{readyPapers.length ? "一致する論文はありません。" : "解析が完了した論文はまだありません。"}</p>}</div>
+            </section>
           </div>
         </div>
       </aside>
 
-      <div className="flex min-w-0 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-col overflow-hidden">
         <header className="flex items-center justify-between gap-3 border-b border-[#deddd5] bg-[#fffefa]/95 px-4 py-3 shadow-sm backdrop-blur md:px-6">
-          <div className="flex min-w-0 items-center gap-3"><button ref={historyButtonRef} type="button" onClick={() => setHistoryOpen(true)} aria-label="研究対話履歴とプロジェクト知識ベースを開く" aria-expanded={historyOpen} className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-[#cfd5d0] bg-white shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#164f3b] lg:hidden"><Bars3Icon className="h-5 w-5"/></button><div className="min-w-0"><div className="flex min-w-0 items-center gap-2"><span className={`h-2 w-2 shrink-0 rounded-full ${llmHealthy ? "bg-emerald-500" : "bg-amber-500"}`}/><p className="truncate text-sm font-semibold">{detail?.title || (detailLoading ? "会話を読み込んでいます…" : "新しい研究対話")}</p></div><p className="mt-0.5 truncate text-[10px] text-[#7a837f]">プロジェクト知識ベース · {sourceScopeLabel}</p><p className={`mt-0.5 truncate text-[10px] font-semibold md:hidden ${llmHealthy ? "text-[#35634f]" : "text-amber-800"}`}>{llmLabel}</p></div></div>
-          <div data-llm-status-slot className="hidden items-center gap-2 md:flex" aria-label="プロジェクトと回答生成の状態"><span className="rounded-full bg-[#e9efeb] px-2.5 py-1 text-[10px] font-bold text-[#35634f]"><CircleStackIcon className="mr-1 inline h-3 w-3"/>{selected.length ? `${selected.length} sources` : `all ${readyPapers.length} sources`}</span><span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${memoryText ? "bg-[#e1eee7] text-[#164f3b]" : "bg-[#eceeea] text-[#68736f]"}`}>{memoryText ? "記憶を使用中" : "記憶はまだ空です"}</span><span title={llmLabel} className={`max-w-80 truncate rounded-full px-2.5 py-1 text-[10px] font-bold ${llmHealthy ? "bg-[#dfeee6] text-[#164f3b]" : "bg-amber-50 text-amber-800"}`}>{llmLabel}</span></div>
+          <div className="flex min-w-0 items-center gap-3"><button ref={historyButtonRef} type="button" onClick={() => { setEvidenceOpen(false); setHistoryOpen(true); }} aria-label="研究対話と検索する論文を開く" aria-expanded={historyOpen} className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-[#cfd5d0] bg-white shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#164f3b] xl:hidden"><Bars3Icon className="h-5 w-5"/></button><div className="min-w-0"><div className="flex min-w-0 items-center gap-2"><span className={`h-2 w-2 shrink-0 rounded-full ${llmHealthy ? "bg-emerald-500" : "bg-amber-500"}`}/><p className="truncate text-sm font-semibold">{detail?.title || (detailLoading ? "会話を読み込んでいます…" : "新しい研究対話")}</p></div><p className="mt-0.5 truncate text-[10px] text-[#7a837f]">{UI_COPY.ask.sources} · {sourceScopeLabel}</p><p className={`mt-0.5 truncate text-[10px] font-semibold md:hidden ${llmHealthy ? "text-[#35634f]" : "text-amber-800"}`}>{llmLabel}</p></div></div>
+          <div className="flex shrink-0 items-center gap-2"><div data-llm-status-slot className="hidden items-center gap-2 md:flex" aria-label="プロジェクトと回答生成の状態"><span className="rounded-full bg-[#e9efeb] px-2.5 py-1 text-[10px] font-bold text-[#35634f]"><CircleStackIcon className="mr-1 inline h-3 w-3"/>{selected.length ? `${selected.length}件を検索` : "論文を選択してください"}</span><span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${memoryText ? "bg-[#e1eee7] text-[#164f3b]" : "bg-[#eceeea] text-[#68736f]"}`}>{memoryText ? "記憶を使用中" : "記憶はまだ空です"}</span><span title={llmLabel} className={`hidden max-w-80 truncate rounded-full px-2.5 py-1 text-[10px] font-bold lg:block ${llmHealthy ? "bg-[#dfeee6] text-[#164f3b]" : "bg-amber-50 text-amber-800"}`}>{llmLabel}</span></div><button ref={evidenceButtonRef} type="button" onClick={() => { setHistoryOpen(false); setEvidenceOpen(true); }} aria-label={`最新回答の根拠を開く（${evidence.length}件）`} aria-expanded={evidenceOpen} className="relative grid h-10 w-10 place-items-center rounded-xl border border-[#cfd5d0] bg-white text-[#35634f] shadow-sm 2xl:hidden"><DocumentTextIcon className="h-5 w-5"/>{evidence.length > 0 && <span className="absolute -right-1 -top-1 grid min-h-4 min-w-4 place-items-center rounded-full bg-[#164f3b] px-1 text-[9px] font-bold text-white">{evidence.length}</span>}</button></div>
         </header>
         <SearchProgress label={phaseLabel} stage={searchStage} stageIndex={stageIndex}/>
 
-        <div className="grid min-h-0 flex-1 xl:grid-cols-[minmax(0,1fr)_300px]">
+        <div className="grid min-h-0 flex-1 2xl:grid-cols-[minmax(0,1fr)_300px]">
           <div className="flex min-h-0 flex-col">
             <div role="log" aria-label="研究対話" className="min-h-0 flex-1 overflow-y-auto px-4 py-7 md:px-8">
               <div className="mx-auto max-w-3xl space-y-7">
@@ -707,39 +828,40 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
               </div>
             </div>
 
-            <div className="shrink-0 px-3 pb-4 md:px-8 md:pb-6"><div className="mx-auto max-w-3xl">
+            <div className="ask-composer shrink-0 border-t border-[#deddd5] bg-[#f7f6f1]/95 px-3 pt-3 backdrop-blur md:px-8 md:pt-4"><div className="mx-auto max-w-3xl">
               <div className="sr-only" role="status" aria-live="polite">{syncNotice || error}</div>
               {error && <div role="alert" className="mb-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{error}</div>}
               {syncNotice && <div role="status" className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-900">{syncNotice}</div>}
-              {fallbackNotice && <div role="status" className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-medium leading-5 text-amber-950"><span className="font-bold">{lastMeta?.generation_mode === "agentic_rag" ? "根拠監査の注意:" : "LLMフォールバック:"}</span> {fallbackNotice}</div>}
-              {graphSeed && <div role="status" className="mb-3 rounded-xl border border-[#b9d4c5] bg-[#edf7f1] px-4 py-3 text-xs leading-5 text-[#23513e]">グラフの選択ノードから派生した質問です。ノード内容は Research Run に記録され、回答は原文・引用で確認してください。</div>}
-              <form onSubmit={ask} className="rounded-3xl border border-[#bfc9c2] bg-white p-2 shadow-[0_16px_50px_rgba(28,45,37,.13)]">
-                {canWrite && <fieldset disabled={busy} className="mb-2 rounded-2xl bg-[#f5f8f5] p-3">
-                  <legend className="px-1 text-xs font-bold text-[#294638]">今回の目的</legend>
-                  <p className="mt-1 px-1 text-[11px] leading-5 text-[#52605b]">目的を選ぶと、検索結果に追加する検討フレームを切り替えます。</p>
-                  <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-                    {EDITOR_INTERACTION_MODES.map(mode => <label key={mode.id} className={`cursor-pointer rounded-xl border p-3 transition has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-[#164f3b] ${interactionMode === mode.id ? "border-[#4f8a6d] bg-[#e9f4ed]" : "border-[#d5ded8] bg-white hover:border-[#8db49f]"}`}>
+              {timeoutRetry && <div role="status" className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-950"><span>{UI_COPY.ask.timeout}</span><button type="button" disabled={busy} onClick={() => void ask(undefined, timeoutRetry)} className="rounded-full border border-amber-500 px-3 py-1.5 font-bold disabled:opacity-40">{UI_COPY.ask.retrySame}</button></div>}
+              {fallbackNotice && <div role="status" className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-medium leading-5 text-amber-950"><span className="font-bold">代替回答について:</span> {fallbackNotice}</div>}
+              {graphSeed && <div role="status" className="mb-3 rounded-xl border border-[#b9d4c5] bg-[#edf7f1] px-4 py-3 text-xs leading-5 text-[#23513e]">グラフの選択項目から派生した質問です。項目の内容は研究実行記録に残り、回答は原文・引用から確認できます。</div>}
+              <form onSubmit={event => void ask(event)} className="rounded-3xl border border-[#bfc9c2] bg-white p-2 shadow-[0_16px_50px_rgba(28,45,37,.13)]">
+                {canWrite && <fieldset disabled={busy} className="mb-2 rounded-2xl bg-[#f5f8f5] px-3 py-2.5">
+                  <legend className="sr-only">今回の目的</legend>
+                  <div className="flex items-center gap-2 overflow-x-auto pb-1" aria-label="今回の目的を選ぶ">
+                    <span className="shrink-0 text-[11px] font-bold text-[#294638]">今回の目的</span>
+                    {EDITOR_INTERACTION_MODES.map(mode => <label key={mode.id} className={`shrink-0 cursor-pointer rounded-full border px-3 py-1.5 text-[11px] font-bold transition has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-[#164f3b] ${interactionMode === mode.id ? "border-[#4f8a6d] bg-[#e9f4ed] text-[#164f3b]" : "border-[#d5ded8] bg-white text-[#52605b] hover:border-[#8db49f]"}`}>
                       <input type="radio" name="interaction-mode" value={mode.id} checked={interactionMode === mode.id} onChange={() => setInteractionMode(mode.id)} className="sr-only"/>
-                      <span className="block text-xs font-bold text-[#26342e]">{mode.label}</span>
-                      <span className="mt-1 block text-[11px] leading-5 text-[#52605b]">{mode.description}</span>
-                      <span className="mt-2 block border-t border-[#d9e6de] pt-2 text-[10px] leading-4 text-[#35634f]">{mode.example}</span>
+                      {mode.label}
                     </label>)}
                   </div>
-                  {interactionMode !== "synthesis" && <p role="status" className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-5 text-amber-950">発想・反証・実験設計・判断更新の出力は draft / unverified です。論文原文と引用を確認し、人間が採否を判断してください。</p>}
+                  <p className="mt-1 truncate px-1 text-[10px] leading-4 text-[#52605b]">{EDITOR_INTERACTION_MODES.find(mode => mode.id === interactionMode)?.description}</p>
+                  {interactionMode !== "synthesis" && <p role="status" className="mt-1 truncate px-1 text-[10px] leading-4 text-amber-900">未検証の下書きです。論文原文と引用を確認してから採否を判断してください。</p>}
                 </fieldset>}
                 <textarea aria-label="研究について質問" disabled={busy} maxLength={4000} value={query} onChange={event => replaceQuery(event.target.value)} rows={3} placeholder={canWrite ? "論文をまとめる、仮説を反証する、次の実験を設計する…" : "論文の原文根拠を検索…（LLM回答は編集者のみ）"} className="min-h-20 w-full resize-none rounded-2xl bg-transparent px-4 py-3 text-base outline-none placeholder:text-[#9ba19e]"/>
-                <div className="flex items-center justify-between gap-3 px-2 pb-1"><span className="flex min-w-0 items-center gap-1.5 truncate text-[11px] font-medium text-[#52605b]"><CircleStackIcon className="h-3.5 w-3.5 shrink-0 text-[#35634f]"/><span className="truncate">プロジェクト共通 · {sourceScopeLabel}</span></span>{busy ? <button type="button" onClick={stopDisplay} className="inline-flex shrink-0 items-center gap-2 rounded-full border border-[#b8bfba] px-4 py-2 text-xs font-semibold"><StopIcon className="h-4 w-4"/>表示を中断</button> : <button disabled={Array.from(query.trim()).length < 2} className="shrink-0 rounded-full bg-[#164f3b] px-5 py-2.5 text-xs font-semibold text-white disabled:opacity-40">{canWrite ? "質問する" : "原文を検索"}</button>}</div>
+                <div className="flex items-center justify-between gap-3 px-2 pb-1"><span className="flex min-w-0 items-center gap-1.5 truncate text-[11px] font-medium text-[#52605b]"><CircleStackIcon className="h-3.5 w-3.5 shrink-0 text-[#35634f]"/><span className="truncate">{UI_COPY.ask.sources} · {sourceScopeLabel}</span></span>{busy ? <button type="button" onClick={stopDisplay} className="inline-flex shrink-0 items-center gap-2 rounded-full border border-[#b8bfba] px-4 py-2 text-xs font-semibold"><StopIcon className="h-4 w-4"/>表示を中断</button> : <button disabled={Array.from(query.trim()).length < 2 || selected.length < 1 || selected.length > MAX_SOURCE_PAPERS} className="shrink-0 rounded-full bg-[#164f3b] px-5 py-2.5 text-xs font-semibold text-white disabled:opacity-40">{canWrite ? "質問する" : "原文を検索"}</button>}</div>
               </form>
               <div className="mt-3 flex gap-2 overflow-x-auto pb-1">{["論文全体から詳しくまとめて", "前提の弱い部分を反証して", "次の検証実験を設計して"].map(text => <button type="button" key={text} disabled={busy || !canWrite} onClick={() => replaceQuery(text)} className="shrink-0 rounded-full border border-[#d5d8d2] bg-white/70 px-3 py-1.5 text-xs text-[#52605b] disabled:opacity-40">{text}</button>)}</div>
             </div></div>
           </div>
 
-          <CitationEvidencePanel evidence={evidence} grounded={Boolean(lastMeta?.grounded)} openEvidence={openEvidence}/>
+          <CitationEvidencePanel evidence={evidence} grounded={Boolean(lastMeta?.grounded)} openEvidence={openEvidence} className="hidden 2xl:block"/>
         </div>
       </div>
+      {evidenceOpen && <div className="fixed inset-0 z-[95] isolate flex justify-end 2xl:hidden"><button type="button" aria-label="根拠を閉じる" onClick={() => setEvidenceOpen(false)} className="absolute inset-0 bg-[#07110d]/70 backdrop-blur-[3px]"/><div ref={evidenceDrawerRef} role="dialog" aria-modal="true" aria-label="最新回答の根拠" className="relative z-[1] flex h-[100dvh] w-[92vw] max-w-[390px] flex-col bg-[#f3f3ef] pb-[env(safe-area-inset-bottom)] shadow-[-28px_0_70px_rgba(0,0,0,.35)]"><div className="flex shrink-0 items-center justify-between border-b border-[#deddd5] bg-[#fffefa] px-4 py-3"><div><p className="text-sm font-bold text-[#26342e]">{UI_COPY.ask.evidence}</p><p className="mt-0.5 text-[10px] text-[#68736f]">最新回答の引用元 {evidence.length}件</p></div><button type="button" onClick={() => setEvidenceOpen(false)} aria-label="根拠を閉じる" className="grid h-9 w-9 place-items-center rounded-full border border-[#d5d8d2] bg-white"><XMarkIcon className="h-4 w-4"/></button></div><CitationEvidencePanel evidence={evidence} grounded={Boolean(lastMeta?.grounded)} openEvidence={openEvidence} className="flex-1 border-l-0"/></div></div>}
       {graphMessage && <div role="dialog" aria-modal="true" aria-labelledby="graph-candidates-title" className="fixed inset-0 z-[100] flex items-end justify-center bg-[#07110d]/65 p-3 backdrop-blur-sm sm:items-center sm:p-6">
         <div className="max-h-[min(44rem,calc(100dvh-1.5rem))] w-full max-w-xl overflow-y-auto rounded-3xl border border-[#cbd8d0] bg-[#fffefa] p-5 shadow-2xl sm:p-6">
-          <div className="flex items-start justify-between gap-4"><div><p className="text-[10px] font-bold uppercase tracking-[.16em] text-[#35634f]">Research memory → graph</p><h2 id="graph-candidates-title" className="serif mt-1 text-2xl font-semibold">レビュー候補を選ぶ</h2><p className="mt-2 text-xs leading-5 text-[#68736f]">候補は回答から作った<span className="font-bold text-[#a06a28]">未検証の研究案</span>です。会話の保存先は残しますが、論文根拠・検証済み知識・引用の支持を意味しません。</p></div><button type="button" onClick={closeGraphCandidates} disabled={graphSaving} aria-label="候補選択を閉じる" className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-[#d5d8d2] text-[#52605b] disabled:opacity-40"><XMarkIcon className="h-4 w-4"/></button></div>
+          <div className="flex items-start justify-between gap-4"><div><p className="text-[10px] font-bold tracking-[.16em] text-[#35634f]">研究メモリから知識グラフへ</p><h2 id="graph-candidates-title" className="serif mt-1 text-2xl font-semibold">レビュー候補を選ぶ</h2><p className="mt-2 text-xs leading-5 text-[#68736f]">候補は回答から作った<span className="font-bold text-[#a06a28]">未検証の研究案</span>です。会話の保存先は残しますが、論文根拠・検証済み知識・引用の支持を意味しません。</p></div><button type="button" onClick={closeGraphCandidates} disabled={graphSaving} aria-label="候補選択を閉じる" className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-[#d5d8d2] text-[#52605b] disabled:opacity-40"><XMarkIcon className="h-4 w-4"/></button></div>
           {graphCandidatesLoading ? <p role="status" className="py-10 text-center text-sm text-[#68736f]">研究メモリ候補を読み込んでいます…</p> : <div className="mt-5 space-y-3">{graphCandidates.map(candidate => { const saved = graphSavedMemoryRef.current.has(candidate.id); const checked = selectedGraphCandidateIds.includes(candidate.id); return <label key={candidate.id} className={`block rounded-2xl border p-4 ${saved ? "border-[#b8d6c4] bg-[#edf6f0]" : checked ? "border-[#5d9878] bg-[#f1f8f4]" : "border-[#deddd5] bg-white"}`}><div className="flex items-start gap-3"><input type="checkbox" checked={checked} disabled={saved || graphSaving} onChange={() => toggleGraphCandidate(candidate.id)} className="mt-1 h-4 w-4 accent-[#164f3b]"/><div className="min-w-0 flex-1"><div className="flex items-center justify-between gap-2"><span className="rounded-full bg-[#e7f0eb] px-2 py-0.5 text-[10px] font-bold text-[#35634f]">{MEMORY_KIND_LABEL[candidate.kind]}</span>{saved && <span className="text-[10px] font-semibold text-[#35634f]">この画面で保存済み</span>}</div><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-[#26342e]">{candidate.content}</p></div></div></label>; })}{!graphCandidates.length && <p className="rounded-2xl border border-dashed border-[#cbd3cc] p-4 text-center text-sm leading-6 text-[#68736f]">自動候補はありません。下に、回答から検討したい仮説・未解決点を自分で記述して保存できます。</p>}<section className="rounded-2xl border border-[#c9ddd0] bg-[#f4faf6] p-4"><div className="flex flex-wrap items-center justify-between gap-2"><label htmlFor="graph-draft" className="text-xs font-bold text-[#294638]">自分でレビュー候補を追加</label><select aria-label="グラフ候補の種別" value={graphDraftKind} disabled={graphSaving} onChange={event => setGraphDraftKind(event.target.value as typeof graphDraftKind)} className="rounded-lg border border-[#d5d8d2] bg-white px-2 py-1 text-[11px]"><option value="idea">アイデア</option><option value="hypothesis">仮説</option><option value="constraint">制約・反証</option><option value="experiment">実験案</option></select></div><textarea id="graph-draft" value={graphDraft} disabled={graphSaving} onChange={event => setGraphDraft(event.target.value)} maxLength={100000} rows={3} placeholder="例: この効果は対象集団Aに限られる可能性がある。Bとの比較実験で反証する。" className="mt-2 w-full resize-y rounded-xl border border-[#d5d8d2] bg-white px-3 py-2 text-sm leading-5 disabled:opacity-50"/><p className="mt-2 text-[10px] leading-4 text-[#526b5d]">回答と引用情報を会話由来の根拠として残します。論文の事実・検証済み知識にはなりません。</p></section></div>}
           {graphError && <p role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs leading-5 text-red-800">{graphError}</p>}{graphNotice && <p role="status" className="mt-4 rounded-xl border border-[#b8d6c4] bg-[#edf6f0] p-3 text-xs leading-5 text-[#24523e]">{graphNotice}</p>}
           <div className="mt-6 flex justify-end gap-2"><button type="button" onClick={closeGraphCandidates} disabled={graphSaving} className="rounded-full px-4 py-2 text-xs font-semibold text-[#52605b] disabled:opacity-40">閉じる</button><button type="button" onClick={() => void saveGraphCandidates()} disabled={graphCandidatesLoading || graphSaving || (!selectedGraphCandidateIds.length && !graphDraft.trim())} className="rounded-full bg-[#164f3b] px-4 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">{graphSaving ? "保存中…" : `レビュー待ちで${selectedGraphCandidateIds.length + (graphDraft.trim() ? 1 : 0)}件を保存`}</button></div>

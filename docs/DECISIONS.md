@@ -111,6 +111,36 @@
 - Consequences: migration 0025・0026とmessage API項目が増える。監査metadataを持つ環境では情報を失うdowngradeを拒否する一方、ライブ回答・履歴・Ideaの出所を一貫して追跡でき、通信再送で重複Ideaを作らない。
 - Date: 2026-07-19
 
+## D-20260720-11 研究ActionはIdeaを置き換えず、作成時点の出所を保持する
+
+- Status: accepted
+- Linked items: CI-027
+- Context: Ideaを単純なTODOへ書き換えると、発散した仮説・推測と実行作業を区別できず、親Idea・ResearchRun・claim・原典根拠の追跡も失われる。Knowledge GraphとExperiment Planから作る作業も同じ監査境界で扱う必要がある。
+- Decision: `ResearchAction`を独立レコードとして追加し、親IdeaからResearchRun・claim・claim snapshot・SourceSpanを継承する。必要に応じてEvidenceRef、Graph node、Experiment Planをworkspace内で検証して接続する。Idea分解は「根拠確認・反証検索・識別可能な試験設計」の3件を`inference`として生成し、初期の人間判断を`unreviewed`に固定する。採用・保留・却下、期限、進捗はAction側で更新する。
+- Alternatives: Ideaを`todo`へ直接変換する、未追跡のタスク管理機能を追加する、AI生成Actionを自動採用する。
+- Consequences: データとAPIは増えるが、研究タスクを根拠・仮説・実験に戻して監査できる。Action生成は研究判断を確定せず、人間による判断が必須になる。
+- Date: 2026-07-20
+
+## D-20260722-12 研究対話は明示したsource scopeと生成時間を優先する
+
+- Status: accepted
+- Linked items: CI-028, CI-029
+- Context: 論文未選択が「解析済み全件」と解釈され、ResearchRunに保存する範囲と検索APIへ渡す範囲が一致していなかった。また稼働Dockerの16秒生成上限と25秒全体期限がホスト側の45秒設計より短く、回答生成が時間切れになっていた。長い会話ではページ全体のスクロールによりsource選択と根拠確認も画面外へ消えていた。
+- Decision: 新しい対話では1〜5件の論文を明示選択し、Run・preview・SSE・検索のsource IDを一致させる。検索候補とLLM入力にhard boundを設け、45秒の全体期限から約30秒を生成へ予約する。Askは固定シェルとresponsive drawerを使い、会話だけを独立スクロールさせる。API識別子は維持し、利用者向け表示とエラーだけを共通の自然な日本語へ変換する。
+- Alternatives: 未選択を全論文のまま維持する、モデルを変更する、全工程を単一タイムアウトで競合させる、通常のページスクロールを維持する。
+- Consequences: 質問前にsource選択が一操作増えるが、検索範囲と監査記録が一致し、論文数が増えても入力サイズと生成時間を予測できる。既存クライアントはpaper IDを明示する必要があり、Run scope不一致は409で再作成を促す。
+- Date: 2026-07-22
+
+## D-20260722-13 既存workspaceを研究プロジェクトとして再利用する
+
+- Status: accepted
+- Linked items: CI-030
+- Context: DB、membership、APIには複数workspaceの認可境界がすでにあるが、切替操作が小さく見つけにくく、ライブラリ検索やアイデア下書きなど一部のクライアント状態が切替後にも残り得た。別のProjectモデルを追加すると、論文・対話・根拠の所属境界が二重になる。
+- Decision: workspaceを利用者向けには「研究プロジェクト」と表示し、既存の作成・一覧・名前変更APIと`X-Workspace-ID`境界を使う。最後に開いたIDは端末のlocalStorageへ保存するが、サーバーのmembershipを常に正とし、アクセス不能なら個人プロジェクトへ戻す。切替時は進行中要求を中止し、プロジェクト固有の画面を再マウントして一時状態を破棄する。
+- Alternatives: 新しいProject tableとmigrationを追加する、サーバーに利用者ごとの「現在のプロジェクト」を保存する、切替時に既存データを新プロジェクトへ複製する。
+- Consequences: DB migrationやAPI契約変更なしで複数研究を分離できる。選択状態は端末ごとなので別端末では個人プロジェクトから始まる場合があり、共有プロジェクトの作成・メンバー管理権限は既存workspace roleに従う。
+- Date: 2026-07-22
+
 ## 追記テンプレート
 
 ```text

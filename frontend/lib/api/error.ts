@@ -1,4 +1,5 @@
 import type { components } from "./schema";
+import { API_ERROR_COPY, UI_COPY } from "../copy";
 
 type ValidationError = components["schemas"]["ValidationError"];
 
@@ -32,12 +33,30 @@ function isValidationError(value: unknown): value is ValidationError {
   return Array.isArray(candidate.loc) && typeof candidate.msg === "string";
 }
 
+type StructuredErrorDetail = { code?: string; message?: string };
+
+function structuredDetailFromPayload(payload: unknown): StructuredErrorDetail {
+  if (!payload || typeof payload !== "object") return {};
+  const detail = (payload as { detail?: unknown }).detail;
+  if (!detail || typeof detail !== "object" || Array.isArray(detail)) return {};
+  const candidate = detail as { code?: unknown; message?: unknown };
+  const code = typeof candidate.code === "string" && /^[a-z][a-z0-9_.-]{0,127}$/.test(candidate.code)
+    ? candidate.code
+    : undefined;
+  const message = typeof candidate.message === "string" && candidate.message.trim()
+    ? candidate.message.trim()
+    : undefined;
+  return { code, message };
+}
+
 function messageFromPayload(payload: unknown, fallback: string): string {
   if (typeof payload === "string" && payload.trim()) return payload;
   if (!payload || typeof payload !== "object") return fallback;
 
   const detail = (payload as { detail?: unknown }).detail;
   if (typeof detail === "string" && detail.trim()) return detail;
+  const structuredMessage = structuredDetailFromPayload(payload).message;
+  if (structuredMessage) return structuredMessage;
   if (Array.isArray(detail)) {
     const messages = detail.filter(isValidationError).map(item => item.msg);
     if (messages.length) return messages.join(" / ");
@@ -48,9 +67,10 @@ function messageFromPayload(payload: unknown, fallback: string): string {
 }
 
 export function apiErrorFromResponse(response: Response, payload: unknown, fallback: string): ApiError {
+  const structuredDetail = structuredDetailFromPayload(payload);
   return new ApiError(messageFromPayload(payload, fallback), {
     status: response.status,
-    code: `http_${response.status}`,
+    code: structuredDetail.code ?? `http_${response.status}`,
     details: payload,
     requestId: response.headers.get("x-request-id"),
   });
@@ -59,20 +79,26 @@ export function apiErrorFromResponse(response: Response, payload: unknown, fallb
 export function toApiError(error: unknown, fallback = "APIリクエストに失敗しました"): ApiError {
   if (error instanceof ApiError) return error;
   if (error instanceof DOMException && error.name === "AbortError") {
-    return new ApiError("リクエストをキャンセルしました", { code: "aborted", cause: error });
+    return new ApiError(UI_COPY.cancelled, { code: "aborted", cause: error });
   }
   if (error instanceof Error) {
-    return new ApiError(error.message || fallback, { code: "network_error", cause: error });
+    return new ApiError(fallback, { code: "network_error", cause: error, details:{ internalMessage:error.message } });
   }
   return new ApiError(fallback, { code: "unknown_error", cause: error });
 }
 
 export function apiErrorMessage(error: unknown, fallback = "APIリクエストに失敗しました"): string {
   const normalized = toApiError(error, fallback);
-  if (normalized.status === 401) return `認証が必要です。${normalized.message}`;
-  if (normalized.status === 403) return `このワークスペースで操作する権限がありません。${normalized.message}`;
-  if (normalized.status === 503) return `認証またはデータサービスを利用できません。${normalized.message}`;
-  return normalized.message;
+  const codeCopy = Object.prototype.hasOwnProperty.call(API_ERROR_COPY, normalized.code)
+    ? API_ERROR_COPY[normalized.code]
+    : undefined;
+  const statusCode = normalized.status ? `http_${normalized.status}` : "";
+  const statusCopy = statusCode && Object.prototype.hasOwnProperty.call(API_ERROR_COPY, statusCode)
+    ? API_ERROR_COPY[statusCode]
+    : undefined;
+  return codeCopy
+    ?? statusCopy
+    ?? (fallback.trim() && fallback !== "APIリクエストに失敗しました" ? fallback : UI_COPY.unknownError);
 }
 
 export async function errorFromFetchResponse(response: Response, fallback: string): Promise<ApiError> {

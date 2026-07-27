@@ -2,6 +2,7 @@ import hashlib
 import json
 from collections import defaultdict
 from pathlib import Path
+from types import SimpleNamespace
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -9,7 +10,7 @@ from sqlalchemy.orm import sessionmaker
 from app.database import Base
 from app.evaluation import (
     build_offline_artifact, evaluate_retrieval_cases, query_plan_gate,
-    require_live_benchmark_opt_in, write_evaluation_artifact,
+    require_live_benchmark_opt_in, run_live_model_benchmark, write_evaluation_artifact,
 )
 from app.graph_rag import GraphEdge, PrunedTwoHopConfig, RetrievalSeed, pruned_two_hop_retrieve
 from app.models import Principal
@@ -74,9 +75,13 @@ def test_ci014_offline_artifact_exposes_ci019_unresolved_gates_without_network(t
     assert artifact.metrics["p95_ms"] is None
     assert artifact.metrics["component_p95_ms"] is None
     assert artifact.metrics["cost_usd"] == 0.0
+    assert artifact.metrics["openai_calls"] == 0
+    assert artifact.metrics["openai_input_tokens"] == 0
+    assert artifact.metrics["openai_output_tokens"] == 0
     assert artifact.query_plan["query_text_recorded"] is False
     assert "details" not in artifact.query_plan
     assert artifact.assessments["latency"]["status"] == "not_evaluated"
+    assert artifact.assessments["openai_usage"] == {"status": "not_evaluated", "source": None}
     output = tmp_path / "artifact.json"
     write_evaluation_artifact(artifact, output)
     persisted = json.loads(output.read_text(encoding="utf-8"))
@@ -122,6 +127,45 @@ def test_ci014_live_benchmark_requires_explicit_opt_in(monkeypatch):
         assert "CI014_LIVE_BENCHMARK=1" in str(exc)
     else:
         raise AssertionError("live benchmark must not run implicitly")
+
+
+def test_ci014_live_benchmark_reports_per_probe_telemetry_delta(monkeypatch):
+    class _Adapter:
+        def __init__(self):
+            self.calls = 0
+
+        def snapshot_metrics(self):
+            return {
+                "responses.create.ci014_live:gpt-5.4-nano": {
+                    "calls": 11 + self.calls,
+                    "errors": 3,
+                    "retries": 2 + self.calls,
+                    "latency_ms": 400 + 25 * self.calls,
+                    "input_tokens": 500 + 7 * self.calls,
+                    "output_tokens": 80 + 4 * self.calls,
+                    "total_tokens": 580 + 11 * self.calls,
+                    "cached_tokens": 9,
+                    "reasoning_tokens": 6,
+                },
+            }
+
+        def call(self, **kwargs):
+            self.calls += 1
+            return SimpleNamespace(
+                output_text="CI014 live benchmark ready",
+                usage=SimpleNamespace(input_tokens=7, output_tokens=4, total_tokens=11),
+            )
+
+    monkeypatch.setenv("CI014_LIVE_BENCHMARK", "1")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr("app.evaluation.get_openai_adapter", lambda: _Adapter())
+    artifact = run_live_model_benchmark()
+    assert artifact["openai_calls"] == 1
+    assert artifact["openai_errors"] == 0
+    assert artifact["retries"] == 1
+    assert artifact["input_tokens"] == 7
+    assert artifact["output_tokens"] == 4
+    assert artifact["openai_total_tokens"] == 11
 
 
 def test_ci014_graph_contradiction_is_recalled_with_auditable_path():

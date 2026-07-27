@@ -7,16 +7,17 @@ import html
 import json
 import os
 import re
+import time
 from uuid import uuid4
 
 from sqlalchemy import and_, case, delete, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
 from .database import (
-    Base, BeliefEventRecord, CanvasLayoutRecord, ChunkEmbeddingRecord, ChunkRecord, DocumentElementRecord, ExperimentPlanRecord, HypothesisCardRecord, DiscoveryItemRecord, IdeaRecord,
+    Base, BeliefEventRecord, CanvasLayoutRecord, ChunkEmbeddingRecord, ChunkRecord, DocumentElementRecord, ExperimentPlanRecord, HypothesisCardRecord, DiscoveryItemRecord, IdeaRecord, ResearchActionRecord,
     EmbeddingJobRecord, EvidenceRefRecord, IngestionJobRecord, KnowledgeEdgeRecord, KnowledgeEdgeStatusEventRecord,
     KnowledgeNodeRecord, NodeFeedbackRecord, NoteRecord, PaperDecisionRecord, PaperPageRecord, PaperRecord,
     PaperTagRecord, ReasoningRunInputRecord, ReasoningRunOutputRecord, ReasoningRunRecord,
@@ -31,10 +32,76 @@ from .models import (
     ForwardPropagationResult, KnowledgeEdge, KnowledgeNode, NodeFeedback, Note, Paper, PaperDecision, PaperLibraryFacets, PaperLibraryItem, PaperLibraryPage, PaperPage, Principal, ResearchRunGraphSeed,
     ReasoningRun, ReasoningRunLink, ResearchConversation, ResearchConversationDetail,
     ResearchMemoryEvent, ResearchMemoryPage, ResearchMessage, ResearchMessagePage,
-    ConversationGraphExportCreate, GraphIdeaCandidate, Idea, IdeaCreate, IdeaUpdate, ResearchQuestion, ResearchRun, ReviewCandidate, ReviewComment, ReviewDecision, ReviewThread, ReviewThreadCreate, RunArtifact, SourceSet,
+    ConversationGraphExportCreate, GraphIdeaCandidate, Idea, IdeaCreate, IdeaUpdate, ResearchAction, ResearchActionCreate, ResearchActionUpdate, ResearchQuestion, ResearchRun, ReviewCandidate, ReviewComment, ReviewDecision, ReviewThread, ReviewThreadCreate, RunArtifact, SourceSet,
     SavedComparison, SearchHistory, SourceSpan, SourceVersion, Tag, User, Workspace,
     WorkspaceMember,
 )
+
+
+def _postgres_sqlstate(exc: BaseException) -> str | None:
+    """Return a PostgreSQL SQLSTATE from SQLAlchemy/psycopg exception layers."""
+    pending: list[BaseException] = [exc]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        for candidate in (current, getattr(current, "orig", None)):
+            if candidate is None:
+                continue
+            code = getattr(candidate, "sqlstate", None) or getattr(candidate, "pgcode", None)
+            if code:
+                return str(code)
+            diag = getattr(candidate, "diag", None)
+            code = getattr(diag, "sqlstate", None) if diag is not None else None
+            if code:
+                return str(code)
+        for nested in (getattr(current, "__cause__", None), getattr(current, "__context__", None)):
+            if isinstance(nested, BaseException):
+                pending.append(nested)
+    return None
+
+
+def _raise_rag_db_timeout(exc: DBAPIError) -> None:
+    """Translate PostgreSQL statement cancellation into the public RAG deadline contract."""
+    if _postgres_sqlstate(exc) == "57014":
+        raise TimeoutError("rag database deadline exceeded") from exc
+    raise exc
+
+
+def _rag_db_call(request):
+    try:
+        return request()
+    except DBAPIError as exc:
+        _raise_rag_db_timeout(exc)
+
+
+def _configure_rag_statement_timeout(
+    session: Session, *, deadline_monotonic: float | None,
+    statement_timeout_seconds: float,
+) -> None:
+    """Apply one bounded, transaction-local timeout and reject expired work."""
+    remaining = (
+        deadline_monotonic - time.monotonic()
+        if deadline_monotonic is not None else statement_timeout_seconds
+    )
+    if remaining <= 0:
+        raise TimeoutError("rag database deadline exceeded")
+    timeout_ms = max(1, int(min(remaining, statement_timeout_seconds) * 1_000))
+    if session.get_bind().dialect.name == "postgresql":
+        try:
+            session.execute(
+                text("SELECT set_config('statement_timeout', :timeout, true)"),
+                {"timeout": f"{timeout_ms}ms"},
+            )
+        except DBAPIError as exc:
+            _raise_rag_db_timeout(exc)
+
+
+def _check_rag_db_deadline(deadline_monotonic: float | None) -> None:
+    if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+        raise TimeoutError("rag database deadline exceeded")
 
 
 class DuplicatePaperError(Exception):
@@ -384,6 +451,21 @@ def _idea_model(record: IdeaRecord) -> Idea:
         source_span_id=record.source_span_id, checklist=dict(record.checklist or {}),
         status=record.status, hypothesis_card_id=record.hypothesis_card_id,
         created_at=record.created_at.isoformat(),
+    )
+
+
+def _research_action_model(record: ResearchActionRecord) -> ResearchAction:
+    return ResearchAction(
+        id=record.id, workspace_id=record.workspace_id, created_by=record.created_by,
+        idea_id=record.idea_id, research_run_id=record.research_run_id,
+        claim_id=record.claim_id, claim_snapshot=dict(record.claim_snapshot or {}) if record.claim_snapshot else None,
+        source_span_id=record.source_span_id, evidence_ref_id=record.evidence_ref_id,
+        origin_node_id=record.origin_node_id, experiment_plan_id=record.experiment_plan_id,
+        title=record.title, description=record.description, due_date=record.due_date,
+        status=record.status, generation_class=record.generation_class,
+        generation_metadata=dict(record.generation_metadata or {}),
+        human_decision=record.human_decision, human_reason=record.human_reason,
+        created_at=record.created_at.isoformat(), updated_at=record.updated_at.isoformat(),
     )
 
 
@@ -1206,6 +1288,147 @@ class PaperStore:
             self._require_workspace(s, workspace_id)
             return [_idea_model(x) for x in s.scalars(select(IdeaRecord).where(IdeaRecord.workspace_id == workspace_id).order_by(IdeaRecord.created_at.desc())).all()]
 
+    def list_research_actions(self, workspace_id: str) -> list[ResearchAction]:
+        with self.session_factory() as session:
+            self._require_workspace(session, workspace_id)
+            rows = session.scalars(select(ResearchActionRecord).where(
+                ResearchActionRecord.workspace_id == workspace_id,
+            ).order_by(ResearchActionRecord.due_date.is_(None), ResearchActionRecord.due_date, ResearchActionRecord.created_at.desc())).all()
+            return [_research_action_model(row) for row in rows]
+
+    def _action_anchor_context(
+        self, session: Session, workspace_id: str, body: ResearchActionCreate,
+    ) -> tuple[str | None, str | None, str | None, dict | None, str | None, str | None, str | None, str | None]:
+        idea_id, run_id, claim_id, claim_snapshot = body.idea_id, body.research_run_id, body.claim_id, None
+        span_id, evidence_ref_id = body.source_span_id, body.evidence_ref_id
+        if idea_id:
+            idea = session.scalar(select(IdeaRecord).where(IdeaRecord.id == idea_id, IdeaRecord.workspace_id == workspace_id))
+            if idea is None:
+                raise PaperNotFoundError(idea_id)
+            for explicit, inherited, label in ((run_id, idea.research_run_id, "research_run_id"), (claim_id, idea.claim_id, "claim_id"), (span_id, idea.source_span_id, "source_span_id")):
+                if explicit and inherited and explicit != inherited:
+                    raise ValueError(f"research action {label} must match its parent idea")
+            run_id = run_id or idea.research_run_id
+            claim_id = claim_id or idea.claim_id
+            span_id = span_id or idea.source_span_id
+            claim_snapshot = dict(idea.claim_snapshot or {}) or None
+        if claim_id:
+            artifact, claim_snapshot = self._resolve_validation_claim(session, workspace_id, run_id or "", claim_id)
+            del artifact
+        elif run_id:
+            self._scoped_research_run(session, workspace_id, run_id)
+        if span_id:
+            self._scoped_span(session, workspace_id, span_id)
+        if evidence_ref_id and not session.scalar(select(EvidenceRefRecord.id).where(
+            EvidenceRefRecord.id == evidence_ref_id, EvidenceRefRecord.workspace_id == workspace_id,
+        )):
+            raise PaperNotFoundError(evidence_ref_id)
+        if body.origin_node_id and not session.scalar(select(KnowledgeNodeRecord.id).where(
+            KnowledgeNodeRecord.id == body.origin_node_id, KnowledgeNodeRecord.workspace_id == workspace_id,
+        )):
+            raise PaperNotFoundError(body.origin_node_id)
+        if body.experiment_plan_id and not session.scalar(select(ExperimentPlanRecord.id).where(
+            ExperimentPlanRecord.id == body.experiment_plan_id, ExperimentPlanRecord.workspace_id == workspace_id,
+        )):
+            raise PaperNotFoundError(body.experiment_plan_id)
+        return idea_id, run_id, claim_id, claim_snapshot, span_id, evidence_ref_id, body.origin_node_id, body.experiment_plan_id
+
+    def create_research_action(self, workspace_id: str, user_id: str, body: ResearchActionCreate) -> ResearchAction:
+        with self.session_factory.begin() as session:
+            self._require_workspace(session, workspace_id)
+            idea_id, run_id, claim_id, claim_snapshot, span_id, evidence_ref_id, node_id, experiment_id = self._action_anchor_context(session, workspace_id, body)
+            metadata = dict(body.generation_metadata)
+            extraction_source = None
+            extraction_ordinal = None
+            if metadata.get("source") == "mind_map_task_extraction_v1":
+                extraction_source = "mind_map_task_extraction_v1"
+                extraction_ordinal = metadata["ordinal"]
+                existing = session.scalar(select(ResearchActionRecord).where(
+                    ResearchActionRecord.workspace_id == workspace_id,
+                    ResearchActionRecord.origin_node_id == node_id,
+                    ResearchActionRecord.extraction_source == extraction_source,
+                    ResearchActionRecord.extraction_ordinal == extraction_ordinal,
+                ))
+                if existing is not None:
+                    return _research_action_model(existing)
+            now = datetime.now(timezone.utc)
+            row = ResearchActionRecord(
+                id=str(uuid4()), workspace_id=workspace_id, created_by=user_id,
+                idea_id=idea_id, research_run_id=run_id, claim_id=claim_id, claim_snapshot=claim_snapshot,
+                source_span_id=span_id, evidence_ref_id=evidence_ref_id, origin_node_id=node_id,
+                experiment_plan_id=experiment_id, title=body.title, description=body.description,
+                due_date=body.due_date, status="open", generation_class=body.generation_class,
+                generation_metadata=metadata, extraction_source=extraction_source,
+                extraction_ordinal=extraction_ordinal, human_decision="unreviewed", human_reason="",
+                created_at=now, updated_at=now,
+            )
+            try:
+                # The savepoint lets us recover from the unique-index race while
+                # retaining the surrounding workspace/anchor transaction.
+                with session.begin_nested():
+                    session.add(row)
+                    session.flush()
+            except IntegrityError:
+                if extraction_source is None:
+                    raise
+                existing = session.scalar(select(ResearchActionRecord).where(
+                    ResearchActionRecord.workspace_id == workspace_id,
+                    ResearchActionRecord.origin_node_id == node_id,
+                    ResearchActionRecord.extraction_source == extraction_source,
+                    ResearchActionRecord.extraction_ordinal == extraction_ordinal,
+                ))
+                if existing is None:
+                    raise
+                return _research_action_model(existing)
+            return _research_action_model(row)
+
+    def decompose_idea_into_actions(self, workspace_id: str, user_id: str, idea_id: str) -> list[ResearchAction]:
+        with self.session_factory.begin() as session:
+            idea = session.scalar(select(IdeaRecord).where(IdeaRecord.id == idea_id, IdeaRecord.workspace_id == workspace_id))
+            if idea is None:
+                raise PaperNotFoundError(idea_id)
+            existing = session.scalars(select(ResearchActionRecord).where(
+                ResearchActionRecord.workspace_id == workspace_id, ResearchActionRecord.idea_id == idea_id,
+            )).all()
+            generated = [row for row in existing if (row.generation_metadata or {}).get("source") == "idea_decomposition_v1"]
+            if generated:
+                return [_research_action_model(row) for row in generated]
+            base = idea.content.strip()[:240]
+            templates = [
+                ("根拠を確認する", "このIdeaを支持・限定・反証する原典spanを確認し、根拠リンクを追加する。"),
+                ("反証候補を検索する", "競合仮説、条件差、負の結果を検索し、反証条件を記録する。"),
+                ("識別可能な試験を設計する", "競合仮説を区別する測定・対照・判定基準をExperiment Planへ下書きする。"),
+            ]
+            now = datetime.now(timezone.utc); result: list[ResearchAction] = []
+            for ordinal, (suffix, description) in enumerate(templates, 1):
+                row = ResearchActionRecord(
+                    id=str(uuid4()), workspace_id=workspace_id, created_by=user_id, idea_id=idea.id,
+                    research_run_id=idea.research_run_id, claim_id=idea.claim_id,
+                    claim_snapshot=dict(idea.claim_snapshot or {}) or None, source_span_id=idea.source_span_id,
+                    evidence_ref_id=None, origin_node_id=None, experiment_plan_id=None,
+                    title=f"{suffix}: {base}", description=description, due_date=None, status="open",
+                    generation_class="inference", generation_metadata={"source":"idea_decomposition_v1", "ordinal":ordinal, "parent_idea_id":idea.id},
+                    human_decision="unreviewed", human_reason="", created_at=now, updated_at=now,
+                )
+                session.add(row); result.append(_research_action_model(row))
+            session.flush()
+            return result
+
+    def update_research_action(self, workspace_id: str, action_id: str, body: ResearchActionUpdate) -> ResearchAction:
+        with self.session_factory.begin() as session:
+            row = session.scalar(select(ResearchActionRecord).where(
+                ResearchActionRecord.id == action_id, ResearchActionRecord.workspace_id == workspace_id,
+            ).with_for_update())
+            if row is None:
+                raise PaperNotFoundError(action_id)
+            fields = body.model_fields_set
+            if "status" in fields and body.status is not None: row.status = body.status
+            if "due_date" in fields: row.due_date = body.due_date
+            if "human_decision" in fields and body.human_decision is not None: row.human_decision = body.human_decision
+            if "human_reason" in fields and body.human_reason is not None: row.human_reason = body.human_reason.strip()
+            row.updated_at = datetime.now(timezone.utc); session.flush()
+            return _research_action_model(row)
+
     @staticmethod
     def _resolve_validation_claim(
         session: Session, workspace_id: str, research_run_id: str, claim_id: str,
@@ -1819,15 +2042,17 @@ class PaperStore:
         self, workspace_id: str, query: str, *, limit: int = 8,
         paper_ids: list[str] | None = None, year_from: int | None = None,
         year_to: int | None = None,
+        deadline_monotonic: float | None = None,
+        statement_timeout_seconds: float = 5.0,
     ) -> list[Paper]:
         """Load a bounded, portable lexical candidate pool for request-time RAG.
 
         The database performs the coarse filtering. Python scoring and optional
-        vector fusion only see at most ``min(max(4 * limit, 32), 200)`` chunks.
+        vector fusion only see at most 32 chunks.
         Zero-score rows are retained as a deterministic fallback for queries
         that SQLite/PostgreSQL ``LIKE`` cannot tokenize usefully.
         """
-        pool_size = min(max(4 * max(1, limit), 32), 200)
+        pool_size = 32
         scoped_ids = list(dict.fromkeys(paper_ids or []))[:500]
         terms = list(dict.fromkeys(
             re.findall(r"[a-z0-9][a-z0-9_-]+|[一-龯ぁ-んァ-ヶ]{2,}", query.casefold())
@@ -1837,6 +2062,10 @@ class PaperStore:
             for term in terms
         ]
         with self.session_factory() as session:
+            _configure_rag_statement_timeout(
+                session, deadline_monotonic=deadline_monotonic,
+                statement_timeout_seconds=statement_timeout_seconds,
+            )
             searchable = func.lower(
                 PaperRecord.title + " " + PaperRecord.abstract + " " + ChunkRecord.text
             )
@@ -1858,12 +2087,16 @@ class PaperStore:
                 statement = statement.where(or_(PaperRecord.year.is_(None), PaperRecord.year >= year_from))
             if year_to is not None:
                 statement = statement.where(or_(PaperRecord.year.is_(None), PaperRecord.year <= year_to))
-            rows = session.execute(
-                statement.order_by(
-                    lexical_score.desc(), PaperRecord.created_at.desc(),
-                    ChunkRecord.page, ChunkRecord.id,
-                ).limit(pool_size)
-            ).all()
+            try:
+                rows = session.execute(
+                    statement.order_by(
+                        lexical_score.desc(), PaperRecord.created_at.desc(),
+                        ChunkRecord.page, ChunkRecord.id,
+                    ).limit(pool_size)
+                ).all()
+            except DBAPIError as exc:
+                _raise_rag_db_timeout(exc)
+            _check_rag_db_deadline(deadline_monotonic)
 
             grouped: dict[str, tuple[PaperRecord, list[Chunk]]] = {}
             for paper, chunk in rows:
@@ -2173,21 +2406,23 @@ class PaperStore:
 
     @staticmethod
     def _note_model(r: NoteRecord) -> Note:
-        return Note(id=r.id, paper_id=r.paper_id, author_id=r.author_id, title=r.title, content=r.content, created_at=r.created_at.isoformat(), updated_at=r.updated_at.isoformat())
+        return Note(id=r.id, paper_id=r.paper_id, author_id=r.author_id, title=r.title, content=r.content, origin_kind=r.origin_kind, created_at=r.created_at.isoformat(), updated_at=r.updated_at.isoformat())
 
-    def list_notes(self, workspace_id: str, paper_id: str | None = None) -> list[Note]:
+    def list_notes(self, workspace_id: str, paper_id: str | None = None, origin_kind: str | None = None) -> list[Note]:
         with self.session_factory() as session:
             stmt = select(NoteRecord).where(NoteRecord.workspace_id == workspace_id)
             if paper_id is not None:
                 stmt = stmt.where(NoteRecord.paper_id == paper_id)
+            if origin_kind is not None:
+                stmt = stmt.where(NoteRecord.origin_kind == origin_kind)
             return [self._note_model(r) for r in session.scalars(stmt.order_by(NoteRecord.updated_at.desc())).all()]
 
-    def create_note(self, workspace_id: str, author_id: str, paper_id: str | None, title: str, content: str) -> Note:
+    def create_note(self, workspace_id: str, author_id: str, paper_id: str | None, title: str, content: str, origin_kind: str | None = None) -> Note:
         now = datetime.now(timezone.utc)
         with self.session_factory.begin() as session:
             if paper_id and session.scalar(select(PaperRecord.id).where(PaperRecord.workspace_id == workspace_id, PaperRecord.id == paper_id)) is None:
                 raise PaperNotFoundError(paper_id)
-            record = NoteRecord(id=str(uuid4()), workspace_id=workspace_id, paper_id=paper_id, author_id=author_id, title=title.strip(), content=content, created_at=now, updated_at=now)
+            record = NoteRecord(id=str(uuid4()), workspace_id=workspace_id, paper_id=paper_id, author_id=author_id, title=title.strip(), content=content, origin_kind=origin_kind, created_at=now, updated_at=now)
             session.add(record)
         return self._note_model(record)
 
@@ -2220,20 +2455,31 @@ class PaperStore:
         with self.session_factory.begin() as session:
             return bool(session.execute(delete(SearchHistoryRecord).where(SearchHistoryRecord.workspace_id == workspace_id, SearchHistoryRecord.id == history_id)).rowcount)
 
-    def get_chunk_embeddings(self, workspace_id: str, chunk_ids: list[str], model: str) -> dict[str, list[float]]:
+    def get_chunk_embeddings(
+        self, workspace_id: str, chunk_ids: list[str], model: str, *,
+        deadline_monotonic: float | None = None, statement_timeout_seconds: float = 5.0,
+    ) -> dict[str, list[float]]:
         if not chunk_ids:
             return {}
         with self.session_factory() as session:
-            rows = session.execute(
-                select(ChunkEmbeddingRecord.chunk_id, ChunkEmbeddingRecord.vector)
-                .join(ChunkRecord, ChunkRecord.id == ChunkEmbeddingRecord.chunk_id)
-                .join(PaperRecord, PaperRecord.id == ChunkRecord.paper_id)
-                .where(
-                    PaperRecord.workspace_id == workspace_id,
-                    ChunkEmbeddingRecord.chunk_id.in_(chunk_ids),
-                    ChunkEmbeddingRecord.model == model,
-                )
-            ).all()
+            _configure_rag_statement_timeout(
+                session, deadline_monotonic=deadline_monotonic,
+                statement_timeout_seconds=statement_timeout_seconds,
+            )
+            try:
+                rows = session.execute(
+                    select(ChunkEmbeddingRecord.chunk_id, ChunkEmbeddingRecord.vector)
+                    .join(ChunkRecord, ChunkRecord.id == ChunkEmbeddingRecord.chunk_id)
+                    .join(PaperRecord, PaperRecord.id == ChunkRecord.paper_id)
+                    .where(
+                        PaperRecord.workspace_id == workspace_id,
+                        ChunkEmbeddingRecord.chunk_id.in_(chunk_ids),
+                        ChunkEmbeddingRecord.model == model,
+                    )
+                ).all()
+            except DBAPIError as exc:
+                _raise_rag_db_timeout(exc)
+            _check_rag_db_deadline(deadline_monotonic)
             return {chunk_id: list(vector) for chunk_id, vector in rows}
 
     def upsert_chunk_embeddings(self, workspace_id: str, model: str, embeddings: dict[str, list[float]]) -> None:
@@ -2598,6 +2844,7 @@ class PaperStore:
 
     def search_research_memory(
         self, workspace_id: str, conversation_id: str, query: str, *, limit: int = 20,
+        deadline_monotonic: float | None = None, statement_timeout_seconds: float = 5.0,
     ) -> list[ResearchMemoryEvent]:
         """Return a bounded set of query-relevant durable memories.
 
@@ -2618,7 +2865,13 @@ class PaperStore:
                     break
 
         with self.session_factory() as session:
-            self._scoped_conversation_record(session, workspace_id, conversation_id)
+            _configure_rag_statement_timeout(
+                session, deadline_monotonic=deadline_monotonic,
+                statement_timeout_seconds=statement_timeout_seconds,
+            )
+            _rag_db_call(lambda: self._scoped_conversation_record(
+                session, workspace_id, conversation_id,
+            ))
 
             statement = select(ResearchMemoryEventRecord).where(
                 ResearchMemoryEventRecord.conversation_id == conversation_id
@@ -2644,17 +2897,18 @@ class PaperStore:
                 )
             else:
                 statement = statement.order_by(ResearchMemoryEventRecord.ordinal.desc())
-            rows = list(session.scalars(statement.limit(limit)).all())
+            rows = list(_rag_db_call(lambda: session.scalars(statement.limit(limit)).all()))
             if terms and not rows:
                 # Japanese research questions often have no whitespace, so a
                 # purely lexical LIKE query can miss a clearly relevant prior
                 # event. Fall back to the most recent bounded slice rather than
                 # loading the full history or silently dropping all memory.
-                rows = list(session.scalars(
+                rows = list(_rag_db_call(lambda: session.scalars(
                     select(ResearchMemoryEventRecord).where(
                         ResearchMemoryEventRecord.conversation_id == conversation_id
                     ).order_by(ResearchMemoryEventRecord.ordinal.desc()).limit(limit)
-                ).all())
+                ).all()))
+            _check_rag_db_deadline(deadline_monotonic)
             return [self._memory_event_model(row) for row in rows]
 
     def save_comparison(self, workspace_id: str, user_id: str, name: str, paper_ids: list[str], result: list[dict], *, source_set_id: str | None = None, citation_snapshot: list[dict] | None = None, human_judgment: str = "unreviewed", judgment_reason: str = "") -> SavedComparison:
@@ -3376,19 +3630,26 @@ class PaperStore:
 
     def get_source_materials(
         self, workspace_id: str, source_version_ids: list[str], source_span_ids: list[str],
+        *, deadline_monotonic: float | None = None, statement_timeout_seconds: float = 5.0,
     ) -> tuple[dict[str, SourceVersion], dict[str, SourceSpan]]:
         """Resolve graph provenance in two bounded queries instead of per hit."""
         version_ids = list(dict.fromkeys(source_version_ids))
         span_ids = list(dict.fromkeys(source_span_ids))
         with self.session_factory() as session:
-            versions = session.scalars(select(SourceVersionRecord).where(
+            _configure_rag_statement_timeout(
+                session, deadline_monotonic=deadline_monotonic,
+                statement_timeout_seconds=statement_timeout_seconds,
+            )
+            versions = _rag_db_call(lambda: session.scalars(select(SourceVersionRecord).where(
                 SourceVersionRecord.workspace_id == workspace_id,
                 SourceVersionRecord.id.in_(version_ids),
-            )).all() if version_ids else []
-            spans = session.scalars(select(SourceSpanRecord).where(
+            )).all()) if version_ids else []
+            _check_rag_db_deadline(deadline_monotonic)
+            spans = _rag_db_call(lambda: session.scalars(select(SourceSpanRecord).where(
                 SourceSpanRecord.workspace_id == workspace_id,
                 SourceSpanRecord.id.in_(span_ids),
-            )).all() if span_ids else []
+            )).all()) if span_ids else []
+            _check_rag_db_deadline(deadline_monotonic)
             return (
                 {row.id: _source_version_model(row) for row in versions},
                 {row.id: _source_span_model(row) for row in spans},
@@ -3398,6 +3659,7 @@ class PaperStore:
         self, workspace_id: str, paper_pages: dict[str, set[int | None]], *,
         paper_ids: list[str] | None = None, year_from: int | None = None,
         year_to: int | None = None, chunk_limit: int = 200,
+        deadline_monotonic: float | None = None, statement_timeout_seconds: float = 5.0,
     ) -> list[Paper]:
         """Load exact-page chunks for bounded graph hits, independent of lexical RAG candidates."""
         requested = list(paper_pages)[:200]
@@ -3414,6 +3676,10 @@ class PaperStore:
                 ChunkRecord.page.in_(list(pages)[:32]) if pages else ChunkRecord.id.is_not(None),
             ))
         with self.session_factory() as session:
+            _configure_rag_statement_timeout(
+                session, deadline_monotonic=deadline_monotonic,
+                statement_timeout_seconds=statement_timeout_seconds,
+            )
             statement = select(PaperRecord, ChunkRecord).join(
                 ChunkRecord, ChunkRecord.paper_id == PaperRecord.id,
             ).where(
@@ -3426,9 +3692,10 @@ class PaperStore:
                 statement = statement.where(or_(PaperRecord.year.is_(None), PaperRecord.year >= year_from))
             if year_to is not None:
                 statement = statement.where(or_(PaperRecord.year.is_(None), PaperRecord.year <= year_to))
-            rows = session.execute(statement.order_by(
+            rows = _rag_db_call(lambda: session.execute(statement.order_by(
                 PaperRecord.id, ChunkRecord.page, ChunkRecord.id,
-            ).limit(max(1, min(chunk_limit, 200)))).all()
+            ).limit(max(1, min(chunk_limit, 200)))).all())
+            _check_rag_db_deadline(deadline_monotonic)
             grouped: dict[str, tuple[PaperRecord, list[Chunk]]] = {}
             for paper, chunk in rows:
                 grouped.setdefault(paper.id, (paper, []))[1].append(Chunk(
@@ -3610,6 +3877,7 @@ class PaperStore:
     def retrieve_knowledge_subgraph(
         self, workspace_id: str, query: str, *, seed_limit: int = 12,
         edge_limit: int = 200, evidence_limit: int = 400,
+        deadline_monotonic: float | None = None, statement_timeout_seconds: float = 5.0,
     ) -> tuple[list[KnowledgeNode], list[KnowledgeEdge]]:
         """Return a hard-bounded two-hop graph slice for request-time retrieval."""
         seed_limit = max(1, min(seed_limit, 32))
@@ -3623,7 +3891,11 @@ class PaperStore:
             for term in terms
         ]
         with self.session_factory() as session:
-            self._require_workspace(session, workspace_id)
+            _configure_rag_statement_timeout(
+                session, deadline_monotonic=deadline_monotonic,
+                statement_timeout_seconds=statement_timeout_seconds,
+            )
+            _rag_db_call(lambda: self._require_workspace(session, workspace_id))
             content_searchable = func.lower(KnowledgeNodeRecord.content)
             content_score = sum((
                 case((content_searchable.like(f"%{term}%", escape="\\"), 1), else_=0)
@@ -3638,7 +3910,7 @@ class PaperStore:
                     case((evidence_searchable.like(f"%{term}%", escape="\\"), 1), else_=0)
                     for term in escaped_terms
                 ), start=case((EvidenceRefRecord.id.is_not(None), 0), else_=0))
-                evidence_seed_ids = list(session.scalars(
+                evidence_seed_ids = list(_rag_db_call(lambda: session.scalars(
                     select(KnowledgeNodeRecord.id)
                     .join(EvidenceRefRecord, EvidenceRefRecord.knowledge_node_id == KnowledgeNodeRecord.id)
                     .where(
@@ -3649,7 +3921,8 @@ class PaperStore:
                     .group_by(KnowledgeNodeRecord.id)
                     .order_by(func.max(evidence_score).desc(), KnowledgeNodeRecord.id)
                     .limit(seed_limit)
-                ).all())
+                ).all()))
+                _check_rag_db_deadline(deadline_monotonic)
             remaining_seed_count = seed_limit - len(evidence_seed_ids)
             content_statement = select(KnowledgeNodeRecord.id).where(
                 KnowledgeNodeRecord.workspace_id == workspace_id,
@@ -3659,10 +3932,11 @@ class PaperStore:
                 content_statement = content_statement.where(
                     KnowledgeNodeRecord.id.not_in(evidence_seed_ids)
                 )
-            content_seed_ids = list(session.scalars(
+            content_seed_ids = list(_rag_db_call(lambda: session.scalars(
                 content_statement.order_by(content_score.desc(), KnowledgeNodeRecord.id)
                 .limit(max(0, remaining_seed_count))
-            ).all()) if remaining_seed_count else []
+            ).all())) if remaining_seed_count else []
+            _check_rag_db_deadline(deadline_monotonic)
             seed_ids = [*evidence_seed_ids, *content_seed_ids]
             if not seed_ids:
                 return [], []
@@ -3671,51 +3945,59 @@ class PaperStore:
                 KnowledgeEdgeRecord.workspace_id == workspace_id,
                 KnowledgeEdgeRecord.status.in_({"active", "verified"}),
             )
-            first = session.scalars(edge_base.where(or_(
+            first = _rag_db_call(lambda: session.scalars(edge_base.where(or_(
                 KnowledgeEdgeRecord.source_node_id.in_(seed_ids),
                 KnowledgeEdgeRecord.target_node_id.in_(seed_ids),
-            )).order_by(KnowledgeEdgeRecord.id).limit(edge_limit)).all()
+            )).order_by(KnowledgeEdgeRecord.id).limit(edge_limit)).all())
+            _check_rag_db_deadline(deadline_monotonic)
             frontier = list(dict.fromkeys(
                 node_id for row in first
                 for node_id in (row.source_node_id, row.target_node_id)
                 if node_id not in seed_ids
             ))[:edge_limit]
             remaining = edge_limit - len(first)
-            second = session.scalars(edge_base.where(
+            second = _rag_db_call(lambda: session.scalars(edge_base.where(
                 KnowledgeEdgeRecord.source_node_id.in_(frontier)
-            ).order_by(KnowledgeEdgeRecord.id).limit(remaining)).all() if frontier and remaining else []
+            ).order_by(KnowledgeEdgeRecord.id).limit(remaining)).all()) if frontier and remaining else []
+            _check_rag_db_deadline(deadline_monotonic)
             edges_by_id = {row.id: row for row in [*first, *second]}
             edge_rows = list(edges_by_id.values())[:edge_limit]
             node_ids = list(dict.fromkeys([
                 *seed_ids,
                 *(node_id for row in edge_rows for node_id in (row.source_node_id, row.target_node_id)),
             ]))[: seed_limit + edge_limit * 2]
-            node_rows = session.scalars(select(KnowledgeNodeRecord).where(
+            node_rows = _rag_db_call(lambda: session.scalars(select(KnowledgeNodeRecord).where(
                 KnowledgeNodeRecord.workspace_id == workspace_id,
                 KnowledgeNodeRecord.id.in_(node_ids),
                 KnowledgeNodeRecord.status.in_({"active", "verified"}),
-            )).all()
+            )).all())
+            _check_rag_db_deadline(deadline_monotonic)
             # Edge evidence (especially contradictions) gets a reserved first
             # share, then nodes use the remainder. This is one shared budget,
             # not two independent limits that could hydrate 2x the contract.
             edge_budget = max(1, evidence_limit // 2)
             contradiction_ids = [row.id for row in edge_rows if row.relation == "contradicts"]
             other_edge_ids = [row.id for row in edge_rows if row.relation != "contradicts"]
-            edge_evidence = self._edge_evidence_map(
+            edge_evidence = _rag_db_call(lambda: self._edge_evidence_map(
                 session, contradiction_ids, limit=edge_budget,
-            ) if contradiction_ids else {}
+            )) if contradiction_ids else {}
+            _check_rag_db_deadline(deadline_monotonic)
             contradiction_count = sum(len(items) for items in edge_evidence.values())
             if other_edge_ids and contradiction_count < edge_budget:
-                other_evidence = self._edge_evidence_map(
+                other_evidence = _rag_db_call(lambda: self._edge_evidence_map(
                     session, other_edge_ids, limit=edge_budget - contradiction_count,
-                )
+                ))
+                _check_rag_db_deadline(deadline_monotonic)
                 edge_evidence.update(other_evidence)
             loaded_edge_evidence = sum(len(items) for items in edge_evidence.values())
             remaining_evidence = evidence_limit - loaded_edge_evidence
             node_evidence = (
-                self._node_evidence_map(session, node_ids, limit=remaining_evidence)
+                _rag_db_call(lambda: self._node_evidence_map(
+                    session, node_ids, limit=remaining_evidence,
+                ))
                 if remaining_evidence > 0 else {node_id: [] for node_id in node_ids}
             )
+            _check_rag_db_deadline(deadline_monotonic)
             return (
                 [_knowledge_node_model(row, node_evidence.get(row.id, [])) for row in node_rows],
                 [_knowledge_edge_model(row, edge_evidence.get(row.id, [])) for row in edge_rows],

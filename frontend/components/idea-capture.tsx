@@ -62,7 +62,7 @@ export function IdeaCapture({ canWrite, context }: IdeaCaptureProps) {
       });
       setContent(""); setAnchor(""); setOpen(false);
       window.dispatchEvent(new CustomEvent("paperpilot:idea-created", { detail:{ ideaId:created.id } }));
-      setMessage("専用Idea Inboxへ保存しました。Research画面で確認・昇格できます。");
+      setMessage("アイデアを受信箱に保存しました。「整理・履歴」画面で確認できます。");
     } catch (error) {
       setMessage(apiErrorMessage(error, "アイデアを保存できませんでした"));
     } finally { setSaving(false); }
@@ -75,7 +75,7 @@ export function IdeaCapture({ canWrite, context }: IdeaCaptureProps) {
     </button>
     {open && <div role="dialog" aria-modal="true" aria-labelledby="idea-capture-title" className="fixed inset-0 z-50 grid place-items-end bg-[#07130d]/50 p-4 sm:place-items-center" onMouseDown={() => !saving && setOpen(false)}>
       <form onSubmit={save} onMouseDown={event => event.stopPropagation()} className="w-full max-w-lg rounded-3xl border border-[#d8ded9] bg-[#fffefa] p-6 shadow-2xl">
-        <div className="flex items-start justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-[.16em] text-[#a06a28]">Research inbox</p><h2 id="idea-capture-title" className="serif mt-1 text-2xl font-semibold">いまの考えを残す</h2><p className="mt-2 text-xs leading-5 text-[#68736f]">まず受信箱へ保存します。根拠や関係は後から確認してつなげます。</p></div><button type="button" onClick={() => setOpen(false)} disabled={saving} aria-label="閉じる" className="rounded-full p-2 text-[#68736f] hover:bg-[#edf0eb]"><XMarkIcon className="h-5 w-5" /></button></div>
+        <div className="flex items-start justify-between gap-4"><div><p className="text-xs font-bold tracking-[.16em] text-[#a06a28]">アイデア受信箱</p><h2 id="idea-capture-title" className="serif mt-1 text-2xl font-semibold">考えをメモする</h2><p className="mt-2 text-xs leading-5 text-[#68736f]">まずは受信箱に保存します。あとから根拠を確認し、研究アイデアとして整理できます。</p></div><button type="button" onClick={() => setOpen(false)} disabled={saving} aria-label="閉じる" className="rounded-full p-2 text-[#68736f] hover:bg-[#edf0eb]"><XMarkIcon className="h-5 w-5" /></button></div>
         <label className="mt-5 block text-xs font-semibold text-[#52605b]" htmlFor="idea-kind">種別</label>
         <select id="idea-kind" value={category} onChange={event => setCategory(event.target.value as IdeaKind)} disabled={saving} className="mt-1 w-full rounded-xl border border-[#d5d8d2] bg-white px-3 py-2 text-sm"><option value="observation">観察</option><option value="interpretation">解釈</option><option value="hypothesis">仮説</option><option value="falsifier">反証候補</option><option value="todo">TODO</option></select>
         <label className="mt-4 block text-xs font-semibold text-[#52605b]" htmlFor="idea-anchor">根拠へのリンク（任意）</label><input id="idea-anchor" value={anchor} onChange={event => setAnchor(event.target.value)} maxLength={500} placeholder="通常は空欄で保存。IDを使う場合: paper:ID / span:ID / claim:ID / run:ID" className="mt-1 w-full rounded-xl border border-[#d5d8d2] bg-white px-3 py-2 text-sm"/>

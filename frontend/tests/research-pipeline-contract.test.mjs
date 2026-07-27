@@ -27,9 +27,18 @@ test("research pipeline keeps promotion gates and experiment audit actions visib
 
 test("Ask can produce graph candidates even when durable memory is empty", () => {
   assert.match(ask, /await listGraphIdeaCandidates\(/);
+  assert.match(ask, /const imported = await importGraphSource\(/);
+  assert.match(ask, /kind:"chat", locator:`chat:\/\/conversation\/\$\{conversationId\}\/message\/\$\{graphMessage\.id\}`/);
+  assert.match(ask, /source_span_id:evidenceSpan\.id, drafts/);
   assert.match(ask, /await exportConversationGraphDrafts\(/);
+  assert.doesNotMatch(ask, /api\.PATCH\([^\n]*graph-drafts/);
   assert.match(ask, /自分でレビュー候補を追加/);
-  assert.match(ask, /kind:"manual"/);
+  assert.match(ask, /function graphDraftApiKind\(/);
+  assert.match(ask, /manual:.*graphDraftKind/);
+  assert.match(ask, /kind:graphDraftApiKind\(graphDraftKind\)/);
+  assert.match(ask, /会話の根拠を保存/);
+  assert.match(ask, /レビュー候補をグラフへ保存/);
+  assert.doesNotMatch(ask, /HTTP \$\{normalized\.status\}/);
   assert.match(ask, /論文根拠・検証済み知識・引用の支持を意味しません/);
 });
 
@@ -41,12 +50,12 @@ test("Research workspace exposes the complete collaborative review workflow", ()
   ]) {
     assert.match(reviews, new RegExp(`${apiCall}\\(`), `${apiCall} must remain wired to the review UI`);
   }
-  assert.match(reviews, /viewer はレビュー一覧・詳細・判断履歴・レポートを閲覧できます/);
-  assert.match(reviews, /Research Run の主張/);
-  assert.match(reviews, /EvidenceLink/);
+  assert.match(reviews, /閲覧者はレビュー一覧・詳細・判断履歴・レポートを確認できます/);
+  assert.match(reviews, /研究実行の主張/);
+  assert.match(reviews, /根拠リンク/);
   assert.match(reviews, /selectedClaimSnapshot/);
   assert.match(reviews, /保存時点の主張/);
-  assert.match(reviews, /immutable snapshot/);
+  assert.match(reviews, /変更されない記録/);
   assert.match(reviews, /claim_artifact_id/);
   assert.match(reviews, /owner \/ editor の判断履歴/);
 });

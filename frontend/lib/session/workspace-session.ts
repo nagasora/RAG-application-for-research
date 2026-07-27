@@ -14,6 +14,39 @@ import { toApiError, type ApiError } from "@/lib/api/error";
 import { getAuth0AccessToken, loginWithAuth0, logoutFromAuth0 } from "@/lib/auth0";
 
 const WORKSPACE_KEY = "paperpilot.active-workspace";
+const workspaceKey = (userId: string) => `${WORKSPACE_KEY}.${userId}`;
+
+function readSavedWorkspaceId(userId: string): string | null {
+  if (typeof window === "undefined") return null;
+  const key = workspaceKey(userId);
+  try {
+    const persisted = window.localStorage.getItem(key);
+    if (persisted) return persisted;
+  } catch { /* use session storage when durable storage is unavailable */ }
+  try { return window.sessionStorage.getItem(key); }
+  catch { return null; }
+}
+
+function saveWorkspaceId(userId: string, workspaceId: string) {
+  if (typeof window === "undefined") return;
+  const key = workspaceKey(userId);
+  try {
+    window.localStorage.setItem(key, workspaceId);
+    window.sessionStorage.removeItem(key);
+    return;
+  } catch { /* fall back to this browser session */ }
+  try { window.sessionStorage.setItem(key, workspaceId); }
+  catch { /* browser storage may be unavailable */ }
+}
+
+function clearSavedWorkspaceId(userId: string) {
+  if (typeof window === "undefined") return;
+  const key = workspaceKey(userId);
+  try { window.localStorage.removeItem(key); }
+  catch { /* browser storage may be unavailable */ }
+  try { window.sessionStorage.removeItem(key); }
+  catch { /* browser storage may be unavailable */ }
+}
 
 type SessionStatus = "loading" | "ready" | "error";
 
@@ -64,12 +97,12 @@ export function useWorkspaceSession(): WorkspaceSession {
         const current = await getMe(controller.signal);
         setActiveWorkspaceId(current.personal_workspace.id);
         const available = await listWorkspaces(controller.signal);
-        const savedId = typeof window === "undefined" ? null : window.sessionStorage.getItem(WORKSPACE_KEY);
+        const savedId = readSavedWorkspaceId(current.user.id);
         const selected = available.find(item => item.id === savedId)
           ?? available.find(item => item.id === current.personal_workspace.id)
           ?? current.personal_workspace;
         setActiveWorkspaceId(selected.id);
-        if (typeof window !== "undefined") window.sessionStorage.setItem(WORKSPACE_KEY, selected.id);
+        saveWorkspaceId(current.user.id, selected.id);
         setMe(current); setWorkspaces(available); setActiveWorkspace(selected); setStatus("ready");
       } catch (requestError) {
         if (controller.signal.aborted) return;
@@ -83,9 +116,9 @@ export function useWorkspaceSession(): WorkspaceSession {
     const selected = workspaces.find(item => item.id === workspaceId);
     if (!selected) return;
     setActiveWorkspaceId(selected.id);
-    if (typeof window !== "undefined") window.sessionStorage.setItem(WORKSPACE_KEY, selected.id);
+    if (me) saveWorkspaceId(me.user.id, selected.id);
     setActiveWorkspace(selected);
-  }, [workspaces]);
+  }, [me, workspaces]);
 
   const createWorkspace = useCallback(async (name: string) => {
     setCreating(true);
@@ -93,10 +126,10 @@ export function useWorkspaceSession(): WorkspaceSession {
       const created = await createWorkspaceRequest(name);
       setWorkspaces(current => [...current, created]);
       setActiveWorkspaceId(created.id);
-      if (typeof window !== "undefined") window.sessionStorage.setItem(WORKSPACE_KEY, created.id);
+      if (me) saveWorkspaceId(me.user.id, created.id);
       setActiveWorkspace(created);
     } finally { setCreating(false); }
-  }, []);
+  }, [me]);
 
   const renameWorkspace = useCallback(async (workspaceId: string, name: string) => {
     setRenaming(true);
@@ -117,9 +150,9 @@ export function useWorkspaceSession(): WorkspaceSession {
   const logout = useCallback(async () => {
     setSessionAccessToken(null);
     setActiveWorkspaceId(null);
-    if (typeof window !== "undefined") window.sessionStorage.removeItem(WORKSPACE_KEY);
+    if (me) clearSavedWorkspaceId(me.user.id);
     await logoutFromAuth0();
-  }, []);
+  }, [me]);
 
   return {
     status, mode, me, workspaces, activeWorkspace, error, creating, renaming,

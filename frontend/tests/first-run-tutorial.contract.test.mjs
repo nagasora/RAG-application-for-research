@@ -15,7 +15,7 @@ test("first-run tutorial derives progress from persisted research records rather
 });
 
 test("first-run tutorial covers the complete PaperPilot research loop and can persistently dismiss or reopen", () => {
-  for (const label of ["再埋め込み", "日本語で論文に質問する", "Ideaとして残す", "反証可能な仮説へ昇格する", "比較してギャップを検討する", "グラフ候補を人間がレビューする"]) {
+  for (const label of ["再埋め込み", "日本語で論文に質問する", "アイデアとして残す", "反証可能な仮説へ昇格する", "比較してギャップを検討する", "グラフ候補を人間がレビューする"]) {
     assert.match(tutorial, new RegExp(label));
   }
   assert.match(tutorial, /localStorage\.setItem/);
@@ -27,7 +27,7 @@ test("first-run tutorial covers the complete PaperPilot research loop and can pe
 test("graph Sources do not complete a review and stale workspace activity is discarded", () => {
   assert.match(tutorial, /graphPending === 0 && \(activity\.graphReviewed \?\? 0\) > 0/);
   assert.match(tutorial, /判断済み/);
-  assert.match(tutorial, /Source \$\{activity\.graphSources/);
+  assert.match(tutorial, /原典 \$\{activity\.graphSources/);
   assert.match(tutorial, /activityAbortRef\.current\?\.abort\(\)/);
   assert.match(tutorial, /activityRevisionRef\.current/);
   assert.match(tutorial, /setActivity\(EMPTY_ACTIVITY\)/);

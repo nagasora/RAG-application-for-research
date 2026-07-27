@@ -47,5 +47,9 @@ def test_legacy_claim_kinds_are_classified_without_changing_kind():
 
 
 def test_evidence_mode_rejects_an_unscoped_request_before_retrieval():
-    with pytest.raises(HTTPException, match="selected paper_ids"):
-        main._answer(SearchRequest(query="what", interaction_mode="evidence"), object(), object())
+    with pytest.raises(HTTPException) as exc_info:
+        main._validate_search_source_scope(
+            SearchRequest(query="what", interaction_mode="evidence"), object(), "workspace",
+        )
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail["code"] == "source_scope_required"

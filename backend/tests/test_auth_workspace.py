@@ -78,7 +78,51 @@ def test_first_identity_gets_personal_workspace_and_can_create_more(tmp_path):
         main.app.dependency_overrides.clear()
 
 
-def test_llm_status_is_authenticated_and_never_exposes_credentials(tmp_path, monkeypatch):
+def test_papers_are_isolated_when_switching_between_projects(tmp_path):
+    setup_app(tmp_path)
+    try:
+        with TestClient(main.app) as client:
+            user_headers = {"X-Dev-User": "alice"}
+            personal = client.get("/api/me", headers=user_headers).json()[
+                "personal_workspace"
+            ]
+            second = client.post(
+                "/api/workspaces", headers=user_headers, json={"name": "Second Study"}
+            ).json()
+            first_headers = {**user_headers, "X-Workspace-ID": personal["id"]}
+            second_headers = {**user_headers, "X-Workspace-ID": second["id"]}
+
+            first_upload = client.post(
+                "/api/papers/upload",
+                headers=first_headers,
+                files={"files": ("first-project.txt", b"first project evidence", "text/plain")},
+            )
+            second_upload = client.post(
+                "/api/papers/upload",
+                headers=second_headers,
+                files={"files": ("second-project.txt", b"second project evidence", "text/plain")},
+            )
+            first_paper_id = first_upload.json()[0]["paper"]["id"]
+            cross_project_detail = client.get(
+                f"/api/papers/{first_paper_id}", headers=second_headers
+            )
+            cross_project_delete = client.delete(
+                f"/api/papers/{first_paper_id}", headers=second_headers
+            )
+            first_list = client.get("/api/papers", headers=first_headers)
+            second_list = client.get("/api/papers", headers=second_headers)
+
+        assert first_upload.status_code == 200
+        assert second_upload.status_code == 200
+        assert cross_project_detail.status_code == 404
+        assert cross_project_delete.status_code == 404
+        assert [paper["title"] for paper in first_list.json()] == ["first-project"]
+        assert [paper["title"] for paper in second_list.json()] == ["second-project"]
+    finally:
+        main.app.dependency_overrides.clear()
+
+
+def test_llm_status_is_authenticated_and_never_exposes_credentials_or_cross_workspace_failures(tmp_path, monkeypatch):
     setup_app(tmp_path)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setenv("EMBEDDING_PROVIDER", "local")
@@ -96,7 +140,7 @@ def test_llm_status_is_authenticated_and_never_exposes_credentials(tmp_path, mon
             "model": "gpt-5.4-nano",
             "embedding_model": "local-hash-v1",
             "agentic_dependencies_available": True,
-            "last_failure_code": "api_key_missing",
+            "last_failure_code": None,
         }
     finally:
         main._set_last_llm_failure(None)
@@ -227,9 +271,10 @@ def test_viewer_can_preview_local_evidence_but_cannot_start_cost_bearing_generat
             store.add_workspace_member(workspace.id, bob.id, "viewer")
             headers = {"X-Dev-User": "bob", "X-Workspace-ID": workspace.id}
 
-            preview = client.post("/api/search/preview", headers=headers, json={"query": "evidence review"})
-            answer = client.post("/api/search", headers=headers, json={"query": "evidence review"})
-            streamed = client.post("/api/search/stream", headers=headers, json={"query": "evidence review"})
+            request = {"query": "evidence review", "paper_ids": [uploaded["id"]]}
+            preview = client.post("/api/search/preview", headers=headers, json=request)
+            answer = client.post("/api/search", headers=headers, json=request)
+            streamed = client.post("/api/search/stream", headers=headers, json=request)
             summary = client.post(f"/api/papers/{uploaded['id']}/summary", headers=headers)
 
         assert preview.status_code == 200
