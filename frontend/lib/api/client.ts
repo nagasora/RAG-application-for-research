@@ -4,7 +4,10 @@ import { authenticatedFetch, authenticatedHeaders } from "./auth";
 import { ApiError, apiErrorFromResponse, errorFromFetchResponse, toApiError } from "./error";
 import type { components, paths } from "./schema";
 
-export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+// An empty base keeps requests relative to the Next.js origin. next.config.ts
+// proxies /api to the local FastAPI server when no public API URL is supplied.
+export const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || "").replace(/\/$/, "");
+export const apiUrl = (path: string): string => `${API_BASE_URL}${path}`;
 
 export type Paper = components["schemas"]["PaperSummary"];
 export type Citation = components["schemas"]["Citation"];
@@ -81,11 +84,34 @@ export type GraphIdeaCandidate = components["schemas"]["GraphIdeaCandidate"];
 export type ConversationGraphExportCreate = components["schemas"]["ConversationGraphExportCreate"];
 export type ForwardPropagationCreate = components["schemas"]["ForwardPropagationCreate"];
 export type ForwardPropagationResult = components["schemas"]["ForwardPropagationResult"];
+export type MindMap = components["schemas"]["MindMap"];
+export type MindMapCreate = components["schemas"]["MindMapCreate"];
+export type MindMapNode = components["schemas"]["MindMapNode"];
+export type MindMapNodeDraft = components["schemas"]["MindMapNodeDraft"];
+export type MindMapNodeUpdate = components["schemas"]["MindMapNodeUpdate"];
+export type MindMapGenerationRequest = components["schemas"]["MindMapGenerationRequest"];
+export type MindMapCandidateResponse = components["schemas"]["MindMapCandidateResponse"];
+export type MindMapActionCandidate = components["schemas"]["MindMapActionCandidate"];
+export type MindMapActionCandidates = components["schemas"]["MindMapActionCandidates"];
 export type DiscoverySearchRequest = components["schemas"]["DiscoverySearchRequest"];
 export type DiscoverySearchResponse = components["schemas"]["DiscoverySearchResponse"];
 export type DiscoverySearchItem = components["schemas"]["DiscoverySearchItem"];
 export type DiscoveryImportRequest = components["schemas"]["DiscoveryImportRequest"];
 export type DiscoveryImportResponse = components["schemas"]["DiscoveryImportResponse"];
+
+export type GenerationScope = "ask" | "discovery" | "analysis" | "mind_map";
+export type GenerationOverride = { generation_provider?: string; generation_model?: string };
+export type GenerationOption = components["schemas"]["GenerationModelOption"];
+export type GenerationSettings = components["schemas"]["WorkspaceGenerationSettings"];
+export type GenerationScopeSetting = components["schemas"]["GenerationScopeSetting"];
+export type DiscoverySessionImportRequest = { search_session_id: string; candidate_ids: string[] };
+export type ExperimentComparisonResponse = components["schemas"]["ExperimentComparisonResponse"];
+export type ExperimentAnalysisError = { paper_id: string; code: string; message: string };
+export type SaveComparisonOptions = {
+  experimentAnalysis?: boolean;
+  experimentProfileIds?: string[];
+  analysisErrors?: ExperimentAnalysisError[];
+};
 
 export type ResearchMessagePageOptions = { limit?: number; beforeOrdinal?: number | null };
 export type ResearchMemoryPageOptions = ResearchMessagePageOptions & { kind?: ResearchMemoryKind | null };
@@ -125,6 +151,14 @@ export async function getLLMStatus(signal?: AbortSignal): Promise<LLMStatus> {
   return unwrap(result, "LLMの接続状態を取得できませんでした");
 }
 
+export async function getGenerationSettings(signal?: AbortSignal): Promise<GenerationSettings> {
+  return unwrap(await api.GET("/api/workspace/generation-settings", { signal }), "生成モデル設定を取得できませんでした");
+}
+
+export async function updateGenerationSettings(scopes: Record<GenerationScope, GenerationScopeSetting>, signal?: AbortSignal): Promise<GenerationSettings> {
+  return unwrap(await api.PUT("/api/workspace/generation-settings", { body:{ scopes }, signal }), "生成モデル設定を更新できませんでした");
+}
+
 export async function reindexEmbeddings(body: EmbeddingReindexRequest = {}, signal?: AbortSignal): Promise<EmbeddingReindexResponse> {
   return unwrap(await api.POST("/api/embeddings/reindex", { body, signal }), "埋め込みの再作成を開始できませんでした");
 }
@@ -132,7 +166,7 @@ export async function reindexEmbeddings(body: EmbeddingReindexRequest = {}, sign
 export async function previewSearch(body: SearchRequest, signal?: AbortSignal): Promise<SearchPreview> {
   let response: Response;
   try {
-    response = await fetch(`${API_BASE_URL}/api/search/preview`, {
+    response = await fetch(apiUrl("/api/search/preview"), {
       method: "POST",
       headers: authenticatedHeaders({ "Content-Type": "application/json" }),
       credentials: "include",
@@ -179,12 +213,16 @@ export async function listSourceSetSummaries(signal?: AbortSignal): Promise<Sour
   return unwrap(await api.GET("/api/source-sets", { signal }), "コレクションを取得できませんでした");
 }
 
-export async function searchExternalPapers(body: DiscoverySearchRequest, signal?: AbortSignal): Promise<DiscoverySearchResponse> {
-  return unwrap(await api.POST("/api/discovery/search", { body, signal }), "外部論文を検索できませんでした");
+export async function searchExternalPapers(body: DiscoverySearchRequest & GenerationOverride, signal?: AbortSignal): Promise<DiscoverySearchResponse> {
+  return unwrap(await api.POST("/api/discovery/search", { body: body as DiscoverySearchRequest, signal }), "外部論文を検索できませんでした");
 }
 
 export async function importExternalAbstracts(body: DiscoveryImportRequest, signal?: AbortSignal): Promise<DiscoveryImportResponse> {
   return unwrap(await api.POST("/api/discovery/imports", { body, signal }), "要旨をライブラリへ追加できませんでした");
+}
+
+export async function importExternalSearchSession(body: DiscoverySessionImportRequest, signal?: AbortSignal): Promise<DiscoveryImportResponse> {
+  return unwrap(await api.POST("/api/discovery/imports", { body, signal }), "検索候補をライブラリへ追加できませんでした");
 }
 
 export async function listIdeas(signal?: AbortSignal): Promise<Idea[]> {
@@ -275,7 +313,7 @@ export async function addReviewDecision(threadId: string, body: ReviewDecisionCr
 }
 
 export async function getReviewReport(signal?: AbortSignal): Promise<{ blob: Blob; filename: string }> {
-  const blob = await fetchAuthenticatedBlob(`${API_BASE_URL}/api/reviews/report.md`, "レビューレポートを出力できませんでした", signal);
+  const blob = await fetchAuthenticatedBlob(apiUrl("/api/reviews/report.md"), "レビューレポートを出力できませんでした", signal);
   return { blob, filename:"paperpilot-review-report.md" };
 }
 
@@ -353,6 +391,96 @@ export async function listGraphSourceSpans(sourceVersionId: string, signal?: Abo
   }), "Source Spanを取得できませんでした");
 }
 
+export async function listMindMaps(signal?: AbortSignal): Promise<MindMap[]> {
+  return unwrap(await api.GET("/api/mind-maps", { signal }), "マインドマップ一覧を取得できませんでした");
+}
+
+export async function createMindMap(body: MindMapCreate, signal?: AbortSignal): Promise<MindMap> {
+  return unwrap(await api.POST("/api/mind-maps", { body, signal }), "マインドマップを保存できませんでした");
+}
+
+export async function getMindMap(mindMapId: string, signal?: AbortSignal): Promise<MindMap> {
+  return unwrap(await api.GET("/api/mind-maps/{mind_map_id}", {
+    params:{ path:{ mind_map_id:mindMapId } }, signal,
+  }), "マインドマップを取得できませんでした");
+}
+
+export async function deleteMindMap(mindMapId: string, signal?: AbortSignal): Promise<void> {
+  return expectNoContent(await api.DELETE("/api/mind-maps/{mind_map_id}", {
+    params:{ path:{ mind_map_id:mindMapId } }, signal,
+  }), "マインドマップを削除できませんでした");
+}
+
+export async function generateMindMap(body: MindMapGenerationRequest, signal?: AbortSignal): Promise<MindMapCandidateResponse> {
+  return unwrap(await api.POST("/api/mind-maps/generate", { body, signal }), "マインドマップ候補を生成できませんでした");
+}
+
+export async function updateMindMapNode(nodeId: string, body: MindMapNodeUpdate, signal?: AbortSignal): Promise<MindMapNode> {
+  return unwrap(await api.PATCH("/api/mind-map-nodes/{node_id}", {
+    params:{ path:{ node_id:nodeId } }, body, signal,
+  }), "ノードを更新できませんでした");
+}
+
+export async function deleteMindMapNode(nodeId: string, signal?: AbortSignal): Promise<void> {
+  return expectNoContent(await api.DELETE("/api/mind-map-nodes/{node_id}", {
+    params:{ path:{ node_id:nodeId } }, signal,
+  }), "部分木を削除できませんでした");
+}
+
+export async function expandMindMapNode(nodeId: string, signal?: AbortSignal): Promise<MindMapCandidateResponse> {
+  return unwrap(await api.POST("/api/mind-map-nodes/{node_id}/expand", {
+    params:{ path:{ node_id:nodeId } }, signal,
+  }), "子ノード候補を生成できませんでした");
+}
+
+export async function confirmMindMapChildren(
+  nodeId: string,
+  nodes: MindMapNodeDraft[],
+  generationRunId?: string | null,
+  signal?: AbortSignal,
+): Promise<MindMapNode[]> {
+  return unwrap(await api.POST("/api/mind-map-nodes/{node_id}/children", {
+    params:{ path:{ node_id:nodeId } }, body:{ nodes, generation_run_id:generationRunId }, signal,
+  }), "選択した子ノードを保存できませんでした");
+}
+
+export async function generateMindMapActions(nodeId: string, signal?: AbortSignal): Promise<MindMapActionCandidates> {
+  return unwrap(await api.POST("/api/mind-map-nodes/{node_id}/research-actions/generate", {
+    params:{ path:{ node_id:nodeId } }, signal,
+  }), "Action候補を生成できませんでした");
+}
+
+export async function confirmMindMapActions(
+  nodeId: string,
+  researchRunId: string,
+  actions: MindMapActionCandidate[],
+  signal?: AbortSignal,
+): Promise<ResearchAction[]> {
+  return unwrap(await api.POST("/api/mind-map-nodes/{node_id}/research-actions", {
+    params:{ path:{ node_id:nodeId } }, body:{ research_run_id:researchRunId, actions }, signal,
+  }), "選択したActionを保存できませんでした");
+}
+
+export async function createMindMapNote(
+  nodeId: string,
+  body: components["schemas"]["NoteCreate"],
+  signal?: AbortSignal,
+): Promise<Note> {
+  return unwrap(await api.POST("/api/mind-map-nodes/{node_id}/notes", {
+    params:{ path:{ node_id:nodeId } }, body, signal,
+  }), "ノードからNoteを作成できませんでした");
+}
+
+export async function promoteMindMapNode(
+  nodeId: string,
+  nodeType: components["schemas"]["MindMapGraphNodeCreate"]["node_type"],
+  signal?: AbortSignal,
+): Promise<KnowledgeNode> {
+  return unwrap(await api.POST("/api/mind-map-nodes/{node_id}/graph-node", {
+    params:{ path:{ node_id:nodeId } }, body:{ node_type:nodeType }, signal,
+  }), "Knowledge Graphへ昇格できませんでした");
+}
+
 export async function createGraphNode(body: KnowledgeNodeCreate, signal?: AbortSignal): Promise<KnowledgeNode> {
   return unwrap(await api.POST("/api/graph/nodes", { body, signal }), "知識ノードを作成できませんでした");
 }
@@ -413,7 +541,7 @@ export async function getPaperChunk(paperId: string, chunkId: string, signal?: A
 
 export async function getPaperFile(paperId: string, signal?: AbortSignal): Promise<Blob> {
   return fetchAuthenticatedBlob(
-    `${API_BASE_URL}/api/papers/${encodeURIComponent(paperId)}/file`,
+    apiUrl(`/api/papers/${encodeURIComponent(paperId)}/file`),
     "原本ファイルを取得できませんでした", signal,
   );
 }
@@ -445,7 +573,7 @@ export async function listAssets(paperId: string, signal?: AbortSignal): Promise
 
 export async function getAssetFile(paperId: string, elementId: string, signal?: AbortSignal): Promise<Blob> {
   return fetchAuthenticatedBlob(
-    `${API_BASE_URL}/api/papers/${encodeURIComponent(paperId)}/assets/${encodeURIComponent(elementId)}/file`,
+    apiUrl(`/api/papers/${encodeURIComponent(paperId)}/assets/${encodeURIComponent(elementId)}/file`),
     "図版を取得できませんでした", signal,
   );
 }
@@ -515,9 +643,9 @@ function isGap(value: unknown): value is Gap {
     .every(item => typeof item === "string");
 }
 
-export async function comparePapers(paperIds: string[], signal?: AbortSignal): Promise<CompareRow[]> {
+export async function comparePapers(paperIds: string[], signal?: AbortSignal, override?: GenerationOverride): Promise<CompareRow[]> {
   const result = await api.POST("/api/analysis/compare", {
-    body: { paper_ids: paperIds },
+    body: { paper_ids: paperIds, ...override } as components["schemas"]["AnalysisRequest"],
     signal,
   });
   const payload = await unwrap(result, "論文比較に失敗しました");
@@ -525,6 +653,12 @@ export async function comparePapers(paperIds: string[], signal?: AbortSignal): P
     throw toApiError(new Error("論文比較のレスポンス形式が不正です"));
   }
   return payload;
+}
+
+export async function compareExperiments(paperIds: string[], override?: GenerationOverride, signal?: AbortSignal): Promise<ExperimentComparisonResponse> {
+  return unwrap(await api.POST("/api/analysis/experiments/compare", {
+    body:{ paper_ids:paperIds, ...override }, signal,
+  }), "実験比較に失敗しました");
 }
 
 export async function findResearchGaps(paperIds: string[], signal?: AbortSignal): Promise<Gap[]> {
@@ -677,9 +811,18 @@ export async function listSavedComparisons(signal?: AbortSignal): Promise<SavedC
   return unwrap(await api.GET("/api/comparisons", { signal }), "保存済み比較を取得できませんでした");
 }
 
-export async function saveComparison(name: string, paperIds: string[], signal?: AbortSignal): Promise<SavedComparison> {
+export async function saveComparison(name: string, paperIds: string[], signal?: AbortSignal, options: SaveComparisonOptions = {}): Promise<SavedComparison> {
+  const body: components["schemas"]["SavedComparisonCreate"] = {
+    name,
+    paper_ids: paperIds,
+    human_judgment:"unreviewed",
+    judgment_reason:"",
+    experiment_analysis:options.experimentAnalysis ?? false,
+    ...(options.experimentProfileIds?.length ? { experiment_profile_ids:options.experimentProfileIds } : {}),
+    ...(options.analysisErrors?.length ? { analysis_errors:options.analysisErrors } : {}),
+  };
   return unwrap(await api.POST("/api/comparisons", {
-    body: { name, paper_ids: paperIds, human_judgment:"unreviewed", judgment_reason:"" }, signal,
+    body, signal,
   }), "比較を保存できませんでした");
 }
 
@@ -688,7 +831,7 @@ export async function deleteSavedComparison(comparisonId: string, signal?: Abort
 }
 
 export async function exportPapers(format: ExportFormat, paperIds: string[] = [], signal?: AbortSignal): Promise<{ blob: Blob; filename: string }> {
-  const url = new URL(`${API_BASE_URL}/api/exports/papers`);
+  const url = new URL(apiUrl("/api/exports/papers"), typeof window === "undefined" ? "http://localhost" : window.location.origin);
   url.searchParams.set("format", format);
   paperIds.forEach(paperId => url.searchParams.append("paper_ids", paperId));
   let response: Response;

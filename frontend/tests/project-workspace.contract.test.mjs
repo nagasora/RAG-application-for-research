@@ -33,9 +33,9 @@ test("switching projects cancels requests and remounts every project-local surfa
   assert.match(page, /uploadAbortRef\.current\?\.abort\(\)/);
   assert.match(page, /setExternalId\(""\)/);
   assert.match(page, /setDragging\(false\)/);
-  assert.match(page, /<LibraryBrowse key=\{session\.activeWorkspace\.id\}/);
-  assert.match(page, /<EmbeddingReindexPanel key=\{session\.activeWorkspace\.id\}/);
-  assert.match(page, /<IdeaCapture key=\{session\.activeWorkspace\.id\}/);
+  assert.match(page, /<LibraryBrowse key=\{`browse:\$\{session\.activeWorkspace\.id\}`\}/);
+  assert.match(page, /<EmbeddingReindexPanel key=\{`reindex:\$\{session\.activeWorkspace\.id\}`\}/);
+  assert.match(page, /<IdeaCapture key=\{`idea:\$\{session\.activeWorkspace\.id\}`\}/);
 });
 
 test("API client keeps the selected project at the authorization boundary", () => {

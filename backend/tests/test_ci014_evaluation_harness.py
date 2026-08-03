@@ -136,7 +136,7 @@ def test_ci014_live_benchmark_reports_per_probe_telemetry_delta(monkeypatch):
 
         def snapshot_metrics(self):
             return {
-                "responses.create.ci014_live:gpt-5.4-nano": {
+                "responses.create.ci014_live:gpt-5.6-luna": {
                     "calls": 11 + self.calls,
                     "errors": 3,
                     "retries": 2 + self.calls,

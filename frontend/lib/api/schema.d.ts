@@ -21,6 +21,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/analysis/experiments/compare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Compare Experiments */
+        post: operations["compare_experiments_api_analysis_experiments_compare_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/analysis/gaps": {
         parameters: {
             query?: never;
@@ -173,7 +190,7 @@ export interface paths {
         put?: never;
         /**
          * Search Discovery Papers
-         * @description Search provider metadata; returned abstracts are not full-text evidence.
+         * @description Federated metadata discovery. Abstracts remain abstract-only evidence.
          */
         post: operations["search_discovery_papers_api_discovery_search_post"];
         delete?: never;
@@ -735,6 +752,185 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mind-map-nodes/{node_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Mind Map Node */
+        delete: operations["delete_mind_map_node_api_mind_map_nodes__node_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Mind Map Node */
+        patch: operations["update_mind_map_node_api_mind_map_nodes__node_id__patch"];
+        trace?: never;
+    };
+    "/api/mind-map-nodes/{node_id}/children": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Confirm Mind Map Children */
+        post: operations["confirm_mind_map_children_api_mind_map_nodes__node_id__children_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mind-map-nodes/{node_id}/expand": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Expand Mind Map Node */
+        post: operations["expand_mind_map_node_api_mind_map_nodes__node_id__expand_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mind-map-nodes/{node_id}/graph-node": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Promote Mind Map Node */
+        post: operations["promote_mind_map_node_api_mind_map_nodes__node_id__graph_node_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mind-map-nodes/{node_id}/notes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Mind Map Note */
+        post: operations["create_mind_map_note_api_mind_map_nodes__node_id__notes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mind-map-nodes/{node_id}/research-actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Confirm Mind Map Actions */
+        post: operations["confirm_mind_map_actions_api_mind_map_nodes__node_id__research_actions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mind-map-nodes/{node_id}/research-actions/generate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Generate Mind Map Actions */
+        post: operations["generate_mind_map_actions_api_mind_map_nodes__node_id__research_actions_generate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mind-maps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Mind Maps
+         * @description Saved maps remain readable even when the emergency flag stops new work.
+         */
+        get: operations["list_mind_maps_api_mind_maps_get"];
+        put?: never;
+        /** Create Mind Map */
+        post: operations["create_mind_map_api_mind_maps_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mind-maps/generate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Generate Mind Map
+         * @description Return an auditable candidate only; persistence requires POST /mind-maps.
+         */
+        post: operations["generate_mind_map_api_mind_maps_generate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mind-maps/{mind_map_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Mind Map */
+        get: operations["get_mind_map_api_mind_maps__mind_map_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete Mind Map */
+        delete: operations["delete_mind_map_api_mind_maps__mind_map_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1554,6 +1750,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspace/generation-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Workspace Generation Settings */
+        get: operations["get_workspace_generation_settings_api_workspace_generation_settings_get"];
+        /** Put Workspace Generation Settings */
+        put: operations["put_workspace_generation_settings_api_workspace_generation_settings_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces": {
         parameters: {
             query?: never;
@@ -1938,9 +2152,13 @@ export interface components {
         };
         /** DiscoveryImportRequest */
         DiscoveryImportRequest: {
+            /** Candidate Ids */
+            candidate_ids?: string[];
             /** Provider Paper Ids */
-            provider_paper_ids: string[];
-            search_context: components["schemas"]["DiscoverySearchContext"];
+            provider_paper_ids?: string[];
+            search_context?: components["schemas"]["DiscoverySearchContext"] | null;
+            /** Search Session Id */
+            search_session_id?: string | null;
         };
         /** DiscoveryImportResponse */
         DiscoveryImportResponse: {
@@ -1978,9 +2196,9 @@ export interface components {
             /**
              * Provider
              * @default semantic_scholar
-             * @constant
+             * @enum {string}
              */
-            provider: "semantic_scholar";
+            provider: "semantic_scholar" | "openalex" | "cinii" | "jstage";
             /** Provider Paper Id */
             provider_paper_id: string;
             /**
@@ -2038,9 +2256,9 @@ export interface components {
             /**
              * Provider
              * @default semantic_scholar
-             * @constant
+             * @enum {string}
              */
-            provider: "semantic_scholar";
+            provider: "semantic_scholar" | "openalex" | "cinii" | "jstage";
             /** Provider Paper Id */
             provider_paper_id: string;
             /**
@@ -2064,6 +2282,25 @@ export interface components {
             source_url: string;
             /** Title */
             title: string;
+        };
+        /** DiscoveryProviderStatus */
+        DiscoveryProviderStatus: {
+            /** Error */
+            error?: ("timeout" | "rate_limited" | "unavailable" | "invalid_response" | "disabled") | null;
+            /**
+             * Item Count
+             * @default 0
+             */
+            item_count: number;
+            /** Provider */
+            provider: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "succeeded" | "failed" | "disabled";
+            /** Warning */
+            warning?: string | null;
         };
         /** DiscoveryReviewUpdate */
         DiscoveryReviewUpdate: {
@@ -2097,6 +2334,8 @@ export interface components {
             abstract: string;
             /** Authors */
             authors?: string[];
+            /** Candidate Id */
+            candidate_id: string;
             /**
              * Citation Count
              * @default 0
@@ -2114,10 +2353,27 @@ export interface components {
             external_ids?: {
                 [key: string]: string;
             };
+            /** Language */
+            language?: string | null;
+            /** Match Reasons */
+            match_reasons?: string[];
+            /** Possible Duplicate Of */
+            possible_duplicate_of?: string | null;
+            /**
+             * Provider
+             * @default semantic_scholar
+             */
+            provider: string;
+            /** Provider Ids */
+            provider_ids?: {
+                [key: string]: string;
+            };
             /** Provider Paper Id */
             provider_paper_id: string;
             /** Publication Date */
             publication_date?: string | null;
+            /** Source Providers */
+            source_providers?: string[];
             /**
              * Source Url
              * @default
@@ -2134,8 +2390,20 @@ export interface components {
         DiscoverySearchRequest: {
             /** Cursor */
             cursor?: string | null;
+            /** Generation Model */
+            generation_model?: string | null;
+            /** Generation Provider */
+            generation_provider?: string | null;
+            /** Providers */
+            providers?: ("semantic_scholar" | "openalex" | "cinii" | "jstage")[];
             /** Query */
             query: string;
+            /**
+             * Search Mode
+             * @default keyword
+             * @enum {string}
+             */
+            search_mode: "keyword" | "question";
             /**
              * Sort
              * @default relevance
@@ -2149,20 +2417,47 @@ export interface components {
         };
         /** DiscoverySearchResponse */
         DiscoverySearchResponse: {
+            /** Degraded Providers */
+            degraded_providers?: string[];
+            /** Expires At */
+            expires_at?: string | null;
             /** Fetched At */
             fetched_at: string;
+            /** Generation Model */
+            generation_model?: string | null;
+            /** Generation Provider */
+            generation_provider?: string | null;
             /** Items */
             items?: components["schemas"]["DiscoverySearchItem"][];
             /** Next Cursor */
             next_cursor?: string | null;
+            /**
+             * Partial
+             * @default false
+             */
+            partial: boolean;
             /**
              * Provider
              * @default semantic_scholar
              * @constant
              */
             provider: "semantic_scholar";
+            /** Providers */
+            providers?: components["schemas"]["DiscoveryProviderStatus"][];
+            /** Providers Used */
+            providers_used?: string[];
+            /** Query Plan */
+            query_plan?: string[];
+            /** Search Plan */
+            search_plan?: {
+                [key: string]: unknown;
+            };
+            /** Search Session Id */
+            search_session_id?: string | null;
             /** Total Estimate */
             total_estimate?: number | null;
+            /** Warnings */
+            warnings?: string[];
         };
         /** DocumentElement */
         DocumentElement: {
@@ -2337,6 +2632,140 @@ export interface components {
             /** Workspace Id */
             workspace_id: string;
         };
+        /** ExperimentAnalysisErrorResponse */
+        ExperimentAnalysisErrorResponse: {
+            /** Code */
+            code: string;
+            /** Message */
+            message: string;
+            /** Paper Id */
+            paper_id: string;
+        };
+        /** ExperimentComparisonCellResponse */
+        ExperimentComparisonCellResponse: {
+            /** Evidence */
+            evidence?: components["schemas"]["ExperimentEvidenceResponse"][];
+            /** Key */
+            key: string;
+            /**
+             * Status
+             * @default grounded
+             * @enum {string}
+             */
+            status: "grounded" | "unresolved";
+            /** Text */
+            text: string;
+        };
+        /** ExperimentComparisonRequest */
+        ExperimentComparisonRequest: {
+            /** Generation Model */
+            generation_model?: string | null;
+            /** Generation Provider */
+            generation_provider?: string | null;
+            /** Paper Ids */
+            paper_ids: string[];
+        };
+        /** ExperimentComparisonResponse */
+        ExperimentComparisonResponse: {
+            /** Errors */
+            errors?: components["schemas"]["ExperimentAnalysisErrorResponse"][];
+            /** Generation Model */
+            generation_model?: string | null;
+            /** Generation Provider */
+            generation_provider?: string | null;
+            /** Matrix */
+            matrix?: components["schemas"]["ExperimentMatrixRowResponse"][];
+            /** Profiles */
+            profiles?: components["schemas"]["ExperimentProfileResponse"][];
+        };
+        /** ExperimentEvidenceLocatorResponse */
+        ExperimentEvidenceLocatorResponse: {
+            /** Bbox */
+            bbox?: number[] | null;
+            /** Cell */
+            cell?: {
+                [key: string]: number;
+            } | null;
+            /** Element Id */
+            element_id?: string | null;
+            /** Page */
+            page: number;
+            /** Quote */
+            quote: string;
+            /**
+             * Source Kind
+             * @default page_text
+             */
+            source_kind: string;
+            /** Source Span Id */
+            source_span_id?: string | null;
+        };
+        /** ExperimentEvidenceResponse */
+        ExperimentEvidenceResponse: {
+            /** Comparator */
+            comparator?: string | null;
+            /** Kind */
+            kind: string;
+            locator: components["schemas"]["ExperimentEvidenceLocatorResponse"];
+            /** Measurements */
+            measurements?: components["schemas"]["ExperimentMeasurementResponse"][];
+            /**
+             * Quality
+             * @default unknown
+             */
+            quality: string;
+            /** Text */
+            text: string;
+        };
+        /** ExperimentFigureTableResponse */
+        ExperimentFigureTableResponse: {
+            /** Caption */
+            caption: string;
+            /** Caption Element Id */
+            caption_element_id?: string | null;
+            /**
+             * Confidence
+             * @enum {string}
+             */
+            confidence: "high" | "medium" | "unknown";
+            /** Label */
+            label?: string | null;
+            /** Page */
+            page: number;
+            /**
+             * Relation
+             * @enum {string}
+             */
+            relation: "caption_for" | "unresolved";
+            /** Target Element Id */
+            target_element_id?: string | null;
+            /**
+             * Target Kind
+             * @enum {string}
+             */
+            target_kind: "figure" | "table";
+        };
+        /** ExperimentMatrixRowResponse */
+        ExperimentMatrixRowResponse: {
+            /** Cells */
+            cells?: components["schemas"]["ExperimentComparisonCellResponse"][];
+            /** Paper Id */
+            paper_id: string;
+        };
+        /** ExperimentMeasurementResponse */
+        ExperimentMeasurementResponse: {
+            /**
+             * Kind
+             * @default reported_value
+             */
+            kind: string;
+            /** Raw */
+            raw: string;
+            /** Unit */
+            unit?: string | null;
+            /** Value */
+            value?: number | null;
+        };
         /** ExperimentPlan */
         ExperimentPlan: {
             /** Competing Hypothesis Discrimination */
@@ -2425,6 +2854,85 @@ export interface components {
              */
             schema_version: "paperpilot.experiment-plan.v1";
         };
+        /** ExperimentProfileResponse */
+        ExperimentProfileResponse: {
+            /** Author Interpretations */
+            author_interpretations?: components["schemas"]["ExperimentEvidenceResponse"][];
+            /** Cached */
+            cached: boolean;
+            /** Derived Source Version Id */
+            derived_source_version_id?: string | null;
+            /** Design */
+            design?: components["schemas"]["ExperimentEvidenceResponse"][];
+            /**
+             * Extraction Mode
+             * @default deterministic_local
+             * @enum {string}
+             */
+            extraction_mode: "llm_verified" | "deterministic_local";
+            /** Figure Table Refs */
+            figure_table_refs?: components["schemas"]["ExperimentFigureTableResponse"][];
+            /**
+             * Generation Model
+             * @default evidence-extractor-v1
+             */
+            generation_model: string;
+            /**
+             * Generation Prompt Version
+             * @default experiment-analysis-v1
+             */
+            generation_prompt_version: string;
+            /**
+             * Generation Provider
+             * @default local
+             */
+            generation_provider: string;
+            /** Generation Usage */
+            generation_usage?: {
+                [key: string]: unknown;
+            };
+            /** Limitations */
+            limitations?: components["schemas"]["ExperimentEvidenceResponse"][];
+            /** Observations */
+            observations?: components["schemas"]["ExperimentEvidenceResponse"][];
+            /** Paper Id */
+            paper_id: string;
+            /** Profile Id */
+            profile_id?: string | null;
+            /**
+             * Progress
+             * @enum {string}
+             */
+            progress: "cached" | "extracting" | "completed" | "failed";
+            /**
+             * Proposal Candidates Accepted
+             * @default 0
+             */
+            proposal_candidates_accepted: number;
+            /**
+             * Proposal Candidates Rejected
+             * @default 0
+             */
+            proposal_candidates_rejected: number;
+            /** Purpose */
+            purpose?: components["schemas"]["ExperimentEvidenceResponse"][];
+            /**
+             * Review Status
+             * @default review_pending
+             */
+            review_status: string;
+            /** Source Span Ids */
+            source_span_ids?: string[];
+            /** Source Version Id */
+            source_version_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ready" | "cached" | "failed";
+            /** Title */
+            title: string;
+        };
         /** ExperimentResultCreate */
         ExperimentResultCreate: {
             /** Data Snapshot */
@@ -2506,6 +3014,30 @@ export interface components {
             edges?: components["schemas"]["KnowledgeEdge"][];
             hypothesis: components["schemas"]["KnowledgeNode"];
             reasoning_run: components["schemas"]["ReasoningRun"];
+        };
+        /** GenerationModelOption */
+        GenerationModelOption: {
+            /** Available */
+            available: boolean;
+            /** Model */
+            model: string;
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "openai" | "gemini";
+            /** Reason */
+            reason?: string | null;
+        };
+        /** GenerationScopeSetting */
+        GenerationScopeSetting: {
+            /** Model */
+            model: string;
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "openai" | "gemini";
         };
         /**
          * GraphIdeaCandidate
@@ -3023,6 +3555,217 @@ export interface components {
             personal_workspace: components["schemas"]["Workspace"];
             user: components["schemas"]["User"];
         };
+        /** MindMap */
+        MindMap: {
+            /** Created At */
+            created_at: string;
+            /** Created By */
+            created_by?: string | null;
+            /**
+             * Generation Kind
+             * @default manual
+             * @enum {string}
+             */
+            generation_kind: "manual" | "ai";
+            /** Generation Run Id */
+            generation_run_id?: string | null;
+            /** Id */
+            id: string;
+            /** Nodes */
+            nodes?: components["schemas"]["MindMapNode"][];
+            /** Source Scope */
+            source_scope?: {
+                [key: string]: unknown;
+            };
+            /** Title */
+            title: string;
+            /** Updated At */
+            updated_at: string;
+            /** Workspace Id */
+            workspace_id: string;
+        };
+        /** MindMapActionCandidate */
+        MindMapActionCandidate: {
+            /** Client Id */
+            client_id: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /**
+             * Ordinal
+             * @default 0
+             */
+            ordinal: number;
+            /** Title */
+            title: string;
+        };
+        /** MindMapActionCandidates */
+        MindMapActionCandidates: {
+            /** Candidates */
+            candidates?: components["schemas"]["MindMapActionCandidate"][];
+            /** Research Run Id */
+            research_run_id: string;
+        };
+        /** MindMapActionConfirm */
+        MindMapActionConfirm: {
+            /** Actions */
+            actions: components["schemas"]["MindMapActionCandidate"][];
+            /** Research Run Id */
+            research_run_id: string;
+        };
+        /** MindMapCandidateResponse */
+        MindMapCandidateResponse: {
+            /** Nodes */
+            nodes: components["schemas"]["MindMapNodeDraft"][];
+            /** Research Run Id */
+            research_run_id: string;
+            /** Source Scope */
+            source_scope: {
+                [key: string]: unknown;
+            };
+            /** Title */
+            title: string;
+        };
+        /** MindMapChildrenCreate */
+        MindMapChildrenCreate: {
+            /** Generation Run Id */
+            generation_run_id?: string | null;
+            /** Nodes */
+            nodes: components["schemas"]["MindMapNodeDraft"][];
+        };
+        /** MindMapCreate */
+        MindMapCreate: {
+            /**
+             * Generation Kind
+             * @default manual
+             * @enum {string}
+             */
+            generation_kind: "manual" | "ai";
+            /** Generation Run Id */
+            generation_run_id?: string | null;
+            /** Nodes */
+            nodes: components["schemas"]["MindMapNodeDraft"][];
+            /** Source Scope */
+            source_scope?: {
+                [key: string]: unknown;
+            };
+            /** Title */
+            title: string;
+        };
+        /** MindMapGenerationRequest */
+        MindMapGenerationRequest: {
+            /** Evidence Ref Ids */
+            evidence_ref_ids?: string[];
+            /** Generation Model */
+            generation_model?: string | null;
+            /** Generation Provider */
+            generation_provider?: string | null;
+            /** Paper Id */
+            paper_id?: string | null;
+            /** Source Span Ids */
+            source_span_ids?: string[];
+            /** Title */
+            title?: string | null;
+        };
+        /** MindMapGraphNodeCreate */
+        MindMapGraphNodeCreate: {
+            /**
+             * Node Type
+             * @enum {string}
+             */
+            node_type: "source" | "idea" | "constraint" | "hypothesis" | "experiment";
+        };
+        /** MindMapNode */
+        MindMapNode: {
+            /**
+             * Body
+             * @default
+             */
+            body: string;
+            /** Created At */
+            created_at: string;
+            /** Depth */
+            depth: number;
+            /** Evidence Ref Ids */
+            evidence_ref_ids?: string[];
+            /** Generation Run Id */
+            generation_run_id?: string | null;
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "root" | "theme" | "claim" | "question" | "method" | "finding" | "task" | "note" | "link";
+            /** Knowledge Node Id */
+            knowledge_node_id?: string | null;
+            /** Mind Map Id */
+            mind_map_id: string;
+            /** Order Index */
+            order_index: number;
+            /** Parent Id */
+            parent_id?: string | null;
+            /** Source Span Ids */
+            source_span_ids?: string[];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "review_pending" | "active" | "rejected";
+            /** Title */
+            title: string;
+            /** Updated At */
+            updated_at: string;
+        };
+        /**
+         * MindMapNodeDraft
+         * @description A client-side tree.  IDs/depth/order are server assigned.
+         */
+        MindMapNodeDraft: {
+            /**
+             * Body
+             * @default
+             */
+            body: string;
+            /** Client Id */
+            client_id: string;
+            /** Evidence Ref Ids */
+            evidence_ref_ids?: string[];
+            /**
+             * Generated
+             * @default false
+             */
+            generated: boolean;
+            /**
+             * Kind
+             * @default theme
+             * @enum {string}
+             */
+            kind: "root" | "theme" | "claim" | "question" | "method" | "finding" | "task" | "note" | "link";
+            /** Parent Client Id */
+            parent_client_id?: string | null;
+            /** Source Span Ids */
+            source_span_ids?: string[];
+            /** Title */
+            title: string;
+        };
+        /** MindMapNodeUpdate */
+        MindMapNodeUpdate: {
+            /** Body */
+            body?: string | null;
+            /** Evidence Ref Ids */
+            evidence_ref_ids?: string[] | null;
+            /** Kind */
+            kind?: ("root" | "theme" | "claim" | "question" | "method" | "finding" | "task" | "note" | "link") | null;
+            /** Source Span Ids */
+            source_span_ids?: string[] | null;
+            /** Status */
+            status?: ("review_pending" | "active" | "rejected") | null;
+            /** Title */
+            title?: string | null;
+        };
         /** NodeFeedback */
         NodeFeedback: {
             /**
@@ -3075,8 +3818,14 @@ export interface components {
             created_at: string;
             /** Id */
             id: string;
+            /** Mind Map Node Id */
+            mind_map_node_id?: string | null;
             /** Origin Kind */
             origin_kind?: "mind_map" | null;
+            /** Origin Snapshot */
+            origin_snapshot?: {
+                [key: string]: unknown;
+            } | null;
             /** Paper Id */
             paper_id: string | null;
             /** Title */
@@ -3088,8 +3837,14 @@ export interface components {
         NoteCreate: {
             /** Content */
             content: string;
+            /** Mind Map Node Id */
+            mind_map_node_id?: string | null;
             /** Origin Kind */
             origin_kind?: "mind_map" | null;
+            /** Origin Snapshot */
+            origin_snapshot?: {
+                [key: string]: unknown;
+            } | null;
             /** Paper Id */
             paper_id?: string | null;
             /** Title */
@@ -3467,6 +4222,10 @@ export interface components {
             id: string;
             /** Idea Id */
             idea_id?: string | null;
+            /** Mind Map Node Id */
+            mind_map_node_id?: string | null;
+            /** Origin Kind */
+            origin_kind?: "mind_map" | null;
             /** Origin Node Id */
             origin_node_id?: string | null;
             /** Research Run Id */
@@ -3512,6 +4271,10 @@ export interface components {
             };
             /** Idea Id */
             idea_id?: string | null;
+            /** Mind Map Node Id */
+            mind_map_node_id?: string | null;
+            /** Origin Kind */
+            origin_kind?: "mind_map" | null;
             /** Origin Node Id */
             origin_node_id?: string | null;
             /** Research Run Id */
@@ -3680,6 +4443,14 @@ export interface components {
             created_at: string;
             /** Draft */
             draft?: boolean | null;
+            /** Fallback Reason */
+            fallback_reason?: string | null;
+            /** Generation Mode */
+            generation_mode?: ("agentic_rag" | "local_fallback") | null;
+            /** Generation Model */
+            generation_model?: string | null;
+            /** Generation Provider */
+            generation_provider?: string | null;
             /** Id */
             id: string;
             /** Interaction Mode */
@@ -3755,6 +4526,11 @@ export interface components {
             created_by?: string | null;
             /** Excluded Paper Ids */
             excluded_paper_ids?: string[];
+            /**
+             * Generation Provider
+             * @default
+             */
+            generation_provider: string;
             /** Id */
             id: string;
             /**
@@ -3850,12 +4626,20 @@ export interface components {
             /** Node Id */
             node_id: string;
         };
+        /** ResearchRunMindMapSeed */
+        ResearchRunMindMapSeed: {
+            /** Mind Map Id */
+            mind_map_id: string;
+            /** Node Id */
+            node_id?: string | null;
+        };
         /**
          * ResearchRunPlan
          * @description Free-form run plan with an optional, governed graph seed.
          */
         ResearchRunPlan: {
             graph_seed?: components["schemas"]["ResearchRunGraphSeed"] | null;
+            mind_map_seed?: components["schemas"]["ResearchRunMindMapSeed"] | null;
         } & {
             [key: string]: unknown;
         };
@@ -4010,6 +4794,8 @@ export interface components {
         };
         /** SavedComparison */
         SavedComparison: {
+            /** Analysis Errors */
+            analysis_errors?: components["schemas"]["ExperimentAnalysisErrorResponse"][];
             /** Citation Snapshot */
             citation_snapshot?: {
                 [key: string]: unknown;
@@ -4044,10 +4830,19 @@ export interface components {
         };
         /** SavedComparisonCreate */
         SavedComparisonCreate: {
+            /** Analysis Errors */
+            analysis_errors?: components["schemas"]["ExperimentAnalysisErrorResponse"][];
             /** Citation Snapshot */
             citation_snapshot?: {
                 [key: string]: unknown;
             }[];
+            /**
+             * Experiment Analysis
+             * @default false
+             */
+            experiment_analysis: boolean;
+            /** Experiment Profile Ids */
+            experiment_profile_ids?: string[];
             /**
              * Human Judgment
              * @default unreviewed
@@ -4095,6 +4890,10 @@ export interface components {
         SearchRequest: {
             /** Conversation Id */
             conversation_id?: string | null;
+            /** Generation Model */
+            generation_model?: string | null;
+            /** Generation Provider */
+            generation_provider?: string | null;
             /**
              * Interaction Mode
              * @default synthesis
@@ -4106,6 +4905,7 @@ export interface components {
              * @default 8
              */
             limit: number;
+            mind_map_seed?: components["schemas"]["ResearchRunMindMapSeed"] | null;
             /** Paper Ids */
             paper_ids?: string[];
             /** Query */
@@ -4142,6 +4942,8 @@ export interface components {
              * @enum {string}
              */
             generation_mode: "agentic_rag" | "local_fallback";
+            /** Generation Provider */
+            generation_provider?: string | null;
             /**
              * Grounded
              * @default false
@@ -4420,6 +5222,26 @@ export interface components {
             /** Name */
             name: string;
         };
+        /** WorkspaceGenerationSettings */
+        WorkspaceGenerationSettings: {
+            /** Options */
+            options?: components["schemas"]["GenerationModelOption"][];
+            /** Scopes */
+            scopes: {
+                [key: string]: components["schemas"]["GenerationScopeSetting"];
+            };
+            /** Updated At */
+            updated_at?: string | null;
+            /** Updated By */
+            updated_by?: string | null;
+        };
+        /** WorkspaceGenerationSettingsUpdate */
+        WorkspaceGenerationSettingsUpdate: {
+            /** Scopes */
+            scopes: {
+                [key: string]: components["schemas"]["GenerationScopeSetting"];
+            };
+        };
         /**
          * WorkspaceMember
          * @description A workspace member with the identity fields safe to show to collaborators.
@@ -4487,6 +5309,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ComparisonRow"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    compare_experiments_api_analysis_experiments_compare_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExperimentComparisonRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExperimentComparisonResponse"];
                 };
             };
             /** @description Validation Error */
@@ -5971,6 +6826,418 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MeResponse"];
+                };
+            };
+        };
+    };
+    delete_mind_map_node_api_mind_map_nodes__node_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                node_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_mind_map_node_api_mind_map_nodes__node_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                node_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MindMapNodeUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MindMapNode"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    confirm_mind_map_children_api_mind_map_nodes__node_id__children_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                node_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MindMapChildrenCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MindMapNode"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    expand_mind_map_node_api_mind_map_nodes__node_id__expand_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                node_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MindMapCandidateResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    promote_mind_map_node_api_mind_map_nodes__node_id__graph_node_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                node_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MindMapGraphNodeCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeNode"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_mind_map_note_api_mind_map_nodes__node_id__notes_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                node_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NoteCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Note"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    confirm_mind_map_actions_api_mind_map_nodes__node_id__research_actions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                node_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MindMapActionConfirm"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResearchAction"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    generate_mind_map_actions_api_mind_map_nodes__node_id__research_actions_generate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                node_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MindMapActionCandidates"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_mind_maps_api_mind_maps_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MindMap"][];
+                };
+            };
+        };
+    };
+    create_mind_map_api_mind_maps_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MindMapCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MindMap"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    generate_mind_map_api_mind_maps_generate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MindMapGenerationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MindMapCandidateResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_mind_map_api_mind_maps__mind_map_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                mind_map_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MindMap"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_mind_map_api_mind_maps__mind_map_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                mind_map_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -7855,6 +9122,59 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_workspace_generation_settings_api_workspace_generation_settings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceGenerationSettings"];
+                };
+            };
+        };
+    };
+    put_workspace_generation_settings_api_workspace_generation_settings_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceGenerationSettingsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceGenerationSettings"];
+                };
             };
             /** @description Validation Error */
             422: {

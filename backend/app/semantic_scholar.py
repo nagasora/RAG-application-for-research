@@ -22,7 +22,7 @@ _PAPER_FIELDS = "paperId,title,authors,year,publicationDate,venue,abstract,citat
 class SemanticScholarError(Exception):
     """A safe, stable description of an upstream failure."""
 
-    def __init__(self, code: Literal["timeout", "rate_limited", "unavailable", "invalid_response"]):
+    def __init__(self, code: Literal["timeout", "rate_limited", "unavailable", "not_found", "invalid_response"]):
         super().__init__(code)
         self.code = code
 
@@ -39,6 +39,8 @@ def _client(client: httpx.Client | None) -> tuple[httpx.Client, bool]:
 def _json(response: httpx.Response) -> dict:
     if response.status_code == 429:
         raise SemanticScholarError("rate_limited")
+    if response.status_code == 404:
+        raise SemanticScholarError("not_found")
     if response.status_code >= 500:
         raise SemanticScholarError("unavailable")
     try:

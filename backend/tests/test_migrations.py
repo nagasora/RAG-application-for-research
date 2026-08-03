@@ -1,9 +1,41 @@
 from pathlib import Path
+from datetime import datetime, timezone
 
 from alembic import command
 from alembic.config import Config
 import pytest
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import MetaData, Table, create_engine, inspect, text
+
+
+def _insert_required_row(engine, table_name: str, **overrides):
+    """Insert one migration-guard fixture without depending on current ORM models."""
+    table = Table(table_name, MetaData(), autoload_with=engine)
+    values = dict(overrides)
+    for column in table.columns:
+        if column.name in values or column.nullable or column.server_default is not None:
+            continue
+        try:
+            python_type = column.type.python_type
+        except NotImplementedError:
+            python_type = str
+        if python_type is str:
+            values[column.name] = f"{table_name}-{column.name}"
+        elif python_type is int:
+            values[column.name] = 1
+        elif python_type is bool:
+            values[column.name] = False
+        elif python_type is datetime:
+            values[column.name] = datetime.now(timezone.utc)
+        elif python_type is dict:
+            values[column.name] = {}
+        elif python_type is list:
+            values[column.name] = []
+        elif python_type is bytes:
+            values[column.name] = b"x"
+        else:
+            values[column.name] = python_type()
+    with engine.begin() as connection:
+        connection.execute(table.insert().values(**values))
 
 
 def test_initial_migration_builds_current_schema(tmp_path, monkeypatch):
@@ -24,6 +56,8 @@ def test_initial_migration_builds_current_schema(tmp_path, monkeypatch):
         "knowledge_edge_status_events", "research_questions", "source_sets", "source_set_papers",
         "research_runs", "run_artifacts",
         "review_threads", "review_comments", "review_decisions",
+        "discovery_search_sessions", "discovery_search_candidates",
+        "workspace_generation_settings", "generation_audits", "experiment_profiles",
     }
     paper_columns = {column["name"] for column in inspector.get_columns("papers")}
     assert {"storage_key", "mime_type", "byte_size", "workspace_id", "created_by"} <= paper_columns
@@ -396,3 +430,164 @@ def test_collaborative_review_downgrade_refuses_to_drop_audit_history(tmp_path, 
         """))
     with pytest.raises(RuntimeError, match="review audit data exists"):
         command.downgrade(config, "20260716_0023")
+
+
+def test_federated_discovery_generation_migration_upgrades_and_downgrades(tmp_path, monkeypatch):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    backend = Path(__file__).resolve().parents[1]
+    database_url = f"sqlite:///{tmp_path / 'federated-discovery.db'}"
+    config = Config(str(backend / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", database_url)
+
+    command.upgrade(config, "20260727_0029")
+    command.upgrade(config, "20260727_0030")
+    engine = create_engine(database_url)
+    upgraded = inspect(engine)
+    assert {
+        "discovery_search_sessions",
+        "discovery_search_candidates",
+        "workspace_generation_settings",
+        "generation_audits",
+        "experiment_profiles",
+    } <= set(upgraded.get_table_names())
+    assert "generation_provider" in {
+        column["name"] for column in upgraded.get_columns("research_runs")
+    }
+
+    command.downgrade(config, "20260727_0029")
+    downgraded = inspect(engine)
+    assert not {
+        "discovery_search_sessions",
+        "discovery_search_candidates",
+        "workspace_generation_settings",
+        "generation_audits",
+        "experiment_profiles",
+    } & set(downgraded.get_table_names())
+    assert "generation_provider" not in {
+        column["name"] for column in downgraded.get_columns("research_runs")
+    }
+
+
+@pytest.mark.parametrize("guard_table", [
+    "experiment_profiles",
+    "generation_audits",
+    "workspace_generation_settings",
+    "discovery_search_candidates",
+    "discovery_search_sessions",
+])
+def test_federated_discovery_downgrade_refuses_each_nonempty_guard_table(
+    tmp_path, monkeypatch, guard_table,
+):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    backend = Path(__file__).resolve().parents[1]
+    database_url = f"sqlite:///{tmp_path / f'guard-{guard_table}.db'}"
+    config = Config(str(backend / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", database_url)
+    command.upgrade(config, "20260727_0030")
+    engine = create_engine(database_url)
+    _insert_required_row(engine, guard_table)
+
+    with pytest.raises(RuntimeError, match=guard_table):
+        command.downgrade(config, "20260727_0029")
+
+    assert guard_table in inspect(engine).get_table_names()
+    with engine.connect() as connection:
+        assert connection.execute(text(f"SELECT COUNT(*) FROM {guard_table}")).scalar_one() == 1
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "20260727_0030"
+
+
+def test_federated_discovery_downgrade_refuses_nonempty_research_run_generation(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    backend = Path(__file__).resolve().parents[1]
+    database_url = f"sqlite:///{tmp_path / 'guard-research-run.db'}"
+    config = Config(str(backend / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", database_url)
+    command.upgrade(config, "20260727_0030")
+    engine = create_engine(database_url)
+    _insert_required_row(engine, "research_runs", generation_provider="openai")
+
+    with pytest.raises(RuntimeError, match="research_run_generation"):
+        command.downgrade(config, "20260727_0029")
+
+    assert "generation_provider" in {
+        column["name"] for column in inspect(engine).get_columns("research_runs")
+    }
+    with engine.connect() as connection:
+        assert connection.execute(text(
+            "SELECT generation_provider FROM research_runs"
+        )).scalar_one() == "openai"
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "20260727_0030"
+
+
+def test_saved_comparison_analysis_errors_downgrade_guard_is_lossless(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    backend = Path(__file__).resolve().parents[1]
+    database_url = f"sqlite:///{tmp_path / 'guard-analysis-errors.db'}"
+    config = Config(str(backend / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", database_url)
+    command.upgrade(config, "20260728_0031")
+    engine = create_engine(database_url)
+    _insert_required_row(
+        engine, "saved_comparisons",
+        analysis_errors=[{"paper_id": "excluded", "code": "analysis_failed"}],
+    )
+
+    with pytest.raises(RuntimeError, match="saved_comparisons.analysis_errors"):
+        command.downgrade(config, "20260727_0030")
+
+    assert "analysis_errors" in {
+        column["name"] for column in inspect(engine).get_columns("saved_comparisons")
+    }
+    with engine.connect() as connection:
+        assert connection.execute(text(
+            "SELECT analysis_errors FROM saved_comparisons"
+        )).scalar_one()
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "20260728_0031"
+
+
+def test_saved_comparison_analysis_errors_empty_database_downgrades(tmp_path, monkeypatch):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    backend = Path(__file__).resolve().parents[1]
+    database_url = f"sqlite:///{tmp_path / 'empty-analysis-errors.db'}"
+    config = Config(str(backend / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", database_url)
+    command.upgrade(config, "20260728_0031")
+    command.downgrade(config, "20260727_0030")
+    assert "analysis_errors" not in {
+        column["name"] for column in inspect(create_engine(database_url)).get_columns("saved_comparisons")
+    }
+
+
+def test_mind_map_downgrade_preserves_detached_note_provenance(tmp_path, monkeypatch):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    backend = Path(__file__).resolve().parents[1]
+    database_url = f"sqlite:///{tmp_path / 'mind-map-note-guard.db'}"
+    config = Config(str(backend / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", database_url)
+    command.upgrade(config, "20260729_0032")
+    engine = create_engine(database_url)
+    _insert_required_row(engine, "users", id="u", issuer="test", subject="mind-map-user")
+    _insert_required_row(engine, "workspaces", id="w", created_by="u", is_personal=False)
+    _insert_required_row(
+        engine,
+        "notes",
+        id="n",
+        workspace_id="w",
+        author_id="u",
+        origin_kind="mind_map",
+        origin_snapshot={"mind_map_id": "deleted", "node_id": "deleted-node", "title": "root"},
+    )
+
+    with pytest.raises(RuntimeError, match="Note provenance"):
+        command.downgrade(config, "20260728_0031")
+
+    assert "origin_snapshot" in {
+        column["name"] for column in inspect(engine).get_columns("notes")
+    }
+    with engine.connect() as connection:
+        assert connection.execute(text("SELECT origin_snapshot FROM notes WHERE id='n'")).scalar_one()
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "20260729_0032"

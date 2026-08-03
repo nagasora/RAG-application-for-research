@@ -11,6 +11,14 @@ export const UI_COPY = {
     timeout: "AIの回答が時間内に終わりませんでした。論文の抜粋が見つかった場合は、代わりに表示しています",
     retrySame: "同じ条件でもう一度",
   },
+  discovery: {
+    connectionHelp: "APIへ接続できませんでした。PaperPilot API が起動していることを確認して、もう一度検索してください。",
+    retrySearch: "もう一度検索",
+  },
+  externalPaper: {
+    loading: "論文情報を取得中…",
+    success: "外部データベースから論文メタデータを登録しました。",
+  },
 } as const;
 
 export const API_ERROR_COPY: Readonly<Record<string, string>> = {
@@ -24,6 +32,11 @@ export const API_ERROR_COPY: Readonly<Record<string, string>> = {
   invalid_sse_event: "回答データを読み取れませんでした。もう一度お試しください。",
   missing_response_body: "回答を受信できませんでした。もう一度お試しください。",
   stream_error: "回答を受信できませんでした。もう一度お試しください。",
+  invalid_external_identifier: "DOI または arXiv ID の形式を確認してください。",
+  external_paper_not_found: "外部データベースで論文情報が見つかりませんでした。DOI または arXiv ID を確認してください。",
+  external_provider_rate_limited: "外部データベースの利用上限に達しました。少し時間をおいて、もう一度お試しください。",
+  external_provider_unavailable: "外部データベースを一時的に利用できません。時間をおいて、もう一度お試しください。",
+  invalid_provider_response: "外部データベースから有効な論文情報を取得できませんでした。DOI または arXiv ID を確認して、もう一度お試しください。",
   source_scope_required: "検索する論文を1〜5件選んでください。",
   source_scope_too_large: "検索する論文は5件まで選べます。",
   research_run_scope_mismatch: "検索する論文が変わりました。もう一度質問してください。",

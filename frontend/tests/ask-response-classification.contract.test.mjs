@@ -11,6 +11,15 @@ test("assistant responses share classification badges between history and live s
   assert.match(source, /aria-label=\{`回答の主張区分/);
 });
 
+test("assistant responses show the resolved provider and model for both live and history turns", () => {
+  assert.match(source, /function generationLabel/);
+  assert.match(source, /generationProvider=\{message\.generation_provider\}/);
+  assert.match(source, /generationModel=\{message\.generation_model\}/);
+  assert.match(source, /generationProvider=\{lastMeta\?\.generation_provider\}/);
+  assert.match(source, /generationModel=\{lastMeta\?\.model\}/);
+  assert.match(source, /生成: \{generation\}/);
+});
+
 test("the response UI communicates mode, draft status, and every claim classification without calling drafts verified", () => {
   for (const label of ["統合", "発想", "反証", "実験設計", "判断更新", "根拠あり", "推論", "一般知識", "仮説", "未検証"]) {
     assert.match(source, new RegExp(label));

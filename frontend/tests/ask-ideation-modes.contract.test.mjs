@@ -17,7 +17,7 @@ test("editors can choose every supported ideation mode with Japanese guidance", 
 
 test("the editor stream request uses the selected interaction mode", () => {
   assert.match(source, /const \[interactionMode, setInteractionMode\] = useState<EditorInteractionMode>\("synthesis"\)/);
-  assert.match(source, /streamSearch\(\{ query:prompt, paper_ids:paperIds, limit:SEARCH_RESULT_LIMIT, conversation_id:conversationId, research_run_id:researchRun\.id, interaction_mode:attemptMode \}/);
+  assert.match(source, /streamSearch\(\{ query:prompt, paper_ids:paperIds, limit:SEARCH_RESULT_LIMIT, conversation_id:conversationId, research_run_id:researchRun\.id, interaction_mode:attemptMode, \.\.\.generationOverride \}/);
   assert.doesNotMatch(source, /streamSearch\([^\n]+interaction_mode:\"synthesis\"/);
 });
 

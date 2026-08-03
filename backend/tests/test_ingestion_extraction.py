@@ -7,7 +7,7 @@ from sqlalchemy.orm import sessionmaker
 from app import extraction, main
 from app.celery_app import celery_app, ingest_task
 from app.database import Base, DocumentElementRecord
-from app.extraction import DocumentExtractor, ExtractionConfig
+from app.extraction import CaptionLocation, DocumentExtractor, ExtractionConfig
 from app.storage import LocalOriginalStorage
 from app.store import PaperStore
 
@@ -32,12 +32,28 @@ class FakeTables:
         return {1: [[['Column A', 'Column B'], ['one', 'two']]]}
 
 
+class FakeCaptionLocator:
+    def locate(self, pdf_bytes, max_pages):
+        return {1: [CaptionLocation("figure", "Figure 1", "Figure 1 Overview", [20, 650, 320, 680])]}
+
+
+class FakeCropRenderer:
+    def __init__(self): self.calls = []
+    def render_crop(self, pdf_bytes, page_index, page_width, page_height, bbox):
+        self.calls.append((page_index, bbox))
+        return b"crop-png"
+
+
 class FakePage:
     mediabox = SimpleNamespace(width=600, height=800)
     images = [SimpleNamespace(name="figure.png", data=b"png-bytes")]
 
     def __init__(self, text): self._text = text
     def extract_text(self): return self._text
+
+
+class VectorOnlyPage(FakePage):
+    images = []
 
 
 def test_feature_off_skips_ocr_and_extracts_table_figure_caption(monkeypatch, tmp_path):
@@ -53,6 +69,11 @@ def test_feature_off_skips_ocr_and_extracts_table_figure_caption(monkeypatch, tm
     assert table.structured_data["rows"][1] == ["one", "two"]
     figure = next(element for element in result.elements if element.kind == "figure")
     assert storage.path_for(figure.asset_key).read_bytes() == b"png-bytes"
+    caption = next(element for element in result.elements if element.kind == "caption")
+    assert "related_element_id" not in caption.structured_data
+    assert caption.structured_data["caption_relation"] == "unresolved"
+    assert caption.structured_data["caption_relation_confidence"] == "medium"
+    assert "caption_label" not in figure.structured_data
 
 
 def test_low_density_page_uses_ocr_only_when_enabled(monkeypatch, tmp_path):
@@ -62,6 +83,34 @@ def test_low_density_page_uses_ocr_only_when_enabled(monkeypatch, tmp_path):
     assert ocr.calls == 1
     assert result.pages[0].text_source == "ocr"
     assert "OCR result" in result.pages[0].text
+
+
+def test_caption_bbox_creates_a_separate_page_derived_crop_only_for_unambiguous_target(monkeypatch, tmp_path):
+    monkeypatch.setattr(extraction, "PdfReader", lambda _: SimpleNamespace(pages=[FakePage("Figure 1 Overview")]))
+    renderer = FakeCropRenderer()
+    storage = LocalOriginalStorage(tmp_path / "assets")
+    result = DocumentExtractor(ExtractionConfig(), tables=FakeTables(), caption_locator=FakeCaptionLocator(), crop_renderer=renderer).extract(b"fake", "paper.pdf", "paper-id", storage)
+    original = next(element for element in result.elements if element.kind == "figure" and not element.structured_data.get("derived_from_page"))
+    crop = next(element for element in result.elements if element.kind == "figure" and element.structured_data.get("derived_from_page"))
+    caption = next(element for element in result.elements if element.kind == "caption")
+    assert original.asset_key != crop.asset_key
+    assert crop.structured_data["caption_element_id"] == caption.id
+    assert crop.structured_data["source_element_id"] == original.id
+    assert caption.bbox == [20, 650, 320, 680]
+    assert renderer.calls and storage.path_for(crop.asset_key).read_bytes() == b"crop-png"
+
+
+def test_vector_only_figure_caption_creates_a_page_derived_crop(monkeypatch, tmp_path):
+    monkeypatch.setattr(extraction, "PdfReader", lambda _: SimpleNamespace(pages=[VectorOnlyPage("Figure 1 Overview")]))
+    renderer = FakeCropRenderer()
+    result = DocumentExtractor(ExtractionConfig(), tables=FakeTables(), caption_locator=FakeCaptionLocator(), crop_renderer=renderer).extract(b"fake", "paper.pdf", "paper-id", LocalOriginalStorage(tmp_path / "assets"))
+    crop = next(element for element in result.elements if element.kind == "figure" and element.structured_data.get("derived_from_page"))
+    caption = next(element for element in result.elements if element.kind == "caption")
+    assert crop.structured_data["source_element_id"] is None
+    assert crop.structured_data["crop_confidence"] == "medium"
+    assert "related_element_id" not in caption.structured_data
+    assert caption.structured_data["caption_relation"] == "page_derived_unresolved"
+    assert caption.structured_data["caption_relation_confidence"] == "medium"
 
 
 def test_ocr_dependency_failure_has_explicit_native_or_fail_policy(monkeypatch, tmp_path):

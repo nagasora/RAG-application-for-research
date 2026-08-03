@@ -291,7 +291,7 @@ def test_forward_propagation_creates_grounded_hypothesis_lineage_atomically(tmp_
                 "hypothesis_content": "A constrained intervention will improve the outcome.",
                 "evidence_span_ids": [span_id],
                 "prompt": "Formulate a falsifiable hypothesis.",
-                "metadata": {"model": "gpt-5.4-nano"},
+                "metadata": {"model": "gpt-5.6-luna"},
             })
             assert propagated.status_code == 201
             result = propagated.json()
@@ -315,7 +315,7 @@ def test_forward_propagation_creates_grounded_hypothesis_lineage_atomically(tmp_
                 main, "_generate_forward_hypothesis",
                 lambda contents, evidence, prompt: (
                     "A generated, falsifiable hypothesis.",
-                    {"generation_mode": "llm", "model": "gpt-5.4-nano", "fallback_reason": None},
+                    {"generation_mode": "llm", "model": "gpt-5.6-luna", "fallback_reason": None},
                 ),
             )
             generated = client.post("/api/graph/forward-propagations", headers=_headers("alice"), json={
@@ -325,7 +325,7 @@ def test_forward_propagation_creates_grounded_hypothesis_lineage_atomically(tmp_
             assert generated.status_code == 201
             assert generated.json()["hypothesis"]["content"] == "A generated, falsifiable hypothesis."
             assert generated.json()["hypothesis"]["metadata"]["generation_mode"] == "llm"
-            assert generated.json()["hypothesis"]["metadata"]["model"] == "gpt-5.4-nano"
+            assert generated.json()["hypothesis"]["metadata"]["model"] == "gpt-5.6-luna"
 
             before = len(store.list_knowledge_nodes(inputs[0]["workspace_id"]))
             rejected = client.post("/api/graph/forward-propagations", headers=_headers("alice"), json={

@@ -351,6 +351,7 @@ class AgenticRAG:
         max_sources: int = 8,
         max_evidence_chars: int = 24_000,
         generation_reserve_seconds: float = 30.0,
+        uses_openai_adapter: bool = True,
         verify_clean_claims: bool = False,
         progress_callback: ProgressCallback | None = None,
     ) -> None:
@@ -376,6 +377,7 @@ class AgenticRAG:
             1.0,
             min(generation_reserve_seconds, 30.0, self.max_execution_seconds - 5.0),
         )
+        self.uses_openai_adapter = uses_openai_adapter
         self.verify_clean_claims = verify_clean_claims
         self._progress_callback = progress_callback
         self._deadline: float | None = None
@@ -487,11 +489,11 @@ class AgenticRAG:
             value = (
                 get_openai_adapter().call(
                     operation=f"langchain.invoke.{stage}",
-                    model=os.getenv("OPENAI_MODEL", "gpt-5.4-nano"),
+                    model=os.getenv("OPENAI_MODEL", "gpt-5.6-luna"),
                     timeout_seconds=call_timeout, deadline_monotonic=stage_deadline,
                     request=lambda _: invoke_with_remaining_budget(), max_retries=1,
                 )
-                if self.model_factory is not None and os.getenv("OPENAI_API_KEY") else invoke_with_remaining_budget()
+                if self.uses_openai_adapter and self.model_factory is not None and os.getenv("OPENAI_API_KEY") else invoke_with_remaining_budget()
             )
         except BaseException as exc:
             self._record_failure(stage, exc)

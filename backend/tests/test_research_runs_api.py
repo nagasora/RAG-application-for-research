@@ -37,7 +37,7 @@ def test_research_run_snapshots_context_artifacts_and_cancel(tmp_path):
             created = client.post("/api/research/runs", headers=_headers("alice"), json={
                 "research_question_id": question["id"], "source_set_id": source_set["id"],
                 "purpose": "Audit", "success_criteria": "Citations are traceable", "plan": {"steps": ["retrieve"]},
-                "model": "gpt-5.4-nano", "prompt_version": "research-v1",
+                "model": "gpt-5.6-luna", "prompt_version": "research-v1",
             })
             assert created.status_code == 201
             run = created.json()
