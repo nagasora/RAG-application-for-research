@@ -70,7 +70,7 @@ PaperPilotを「論文について賢く話せるアプリ」から、「既存�
 Focusは同時に最大3件とする。次回実装では、原則として上から検討する。
 
 <!-- FOCUS_START -->
-- CI-022: 初回利用者が研究ワークフロー全体をUIで確認できるようにする。
+- CI-007: 比較セルとgap候補が引用・条件・confidence・unknown・人間判定を持つ。
 <!-- FOCUS_END -->
 
 ## 優先バックログ
@@ -101,7 +101,7 @@ Focusは同時に最大3件とする。次回実装では、原則として上�
 | CI-019 | P2 | validating | performance | requestごとの全chunk走査を避け、検索品質とp95を測定できる | CI-014 | 2026-07-16 | D-20260716-08 | ORM hydrationは最大200 chunk、graphはseed 12/edge 200/evidence 400で制限し原典pageを独立取得。LIKEのDB全走査・semantic-only vector recallは未解消のため、CI-014でquery plan・Recall@k・p95を実測してFTS/pgvector採否を決める |
 | CI-020 | P1 | done | operations | queue・retry・quota・cost・backup restoreを本番運用で監視・復旧できる | CI-017 | 2026-07-16 | - | operations status APIとCelery/retry/quota/cost/backup restore runbookを追加。py_compile成功 |
 | CI-021 | P1 | validating | multilingual-retrieval | 日本語の研究質問から英語・日本語論文の意味的根拠を同じ検索経路で回収でき、既存論文も安全に再embeddingできる | CI-019 | 2026-07-16 | D-20260716-09 | APIキー時のOpenAI多言語embedding自動選択、workspace scoped再embedding、日→英mock回帰、Analysis/Library導線を実装。P0/P1独立レビュー済み。実providerでの再embeddingと日英検索結果を確認する |
-| CI-022 | P1 | in_progress | onboarding | 初回利用者が論文登録から根拠確認、アイデア、仮説、比較、グラフまでの実装済み機能をUIで確認できる | CI-008, CI-021 | 2026-07-23 | - | 空グラフのmind map配置を全域化し、局所ErrorBoundaryを追加。frontend単体75件・型検査・production build、再構築後の空グラフ3表示・画面往復・console errorなしを確認。初回チュートリアル全体の完了条件は継続検証する |
+| CI-022 | P1 | validating | onboarding | 初回利用者が論文登録から根拠確認、アイデア、仮説、比較、グラフまでの実装済み機能をUIで確認できる | CI-008, CI-021 | 2026-07-23 | - | 空グラフのmind map配置を全域化し、局所ErrorBoundaryを追加。frontend単体75件・型検査・production build、再構築後の空グラフ3表示・画面往復・console errorなしを確認。初回チュートリアル全体の完了条件は継続検証する |
 | CI-023 | P1 | done | ideation | AIとの対話で統合・発散・反証・実験化・更新を選び、生成案の根拠区分を保ったまま次の問いと人間レビューへ進める | CI-005, CI-008 | 2026-07-19 | D-20260716-02, D-20260716-03, D-20260719-10 | Ask目的選択、ResearchRun自動記録、mode・draft・claims履歴、分類バッジ、真正性検証・冗等保存付きclaim→Idea Inbox、Graph選択ノードからの発散・反証・実験設計導線を実装。backend 198件、frontend 58件・型検査・buildを確認 |
 | CI-024 | P1 | intake | discovery-map | 論文間の引用ネットワークを主張・仮説グラフと混同せず探索し、候補を人間レビューへ送れる | CI-012 | 2026-07-19 | - | Semantic Scholar等のcitation edge取得範囲、license、snapshot、外部候補のDiscovery queue接続を設計する |
 | CI-025 | P1 | intake | evidence-matrix | 問い、採否基準、比較列、引用付き抽出を再現可能なEvidence Matrixとしてレビューできる | CI-007 | 2026-07-19 | - | 比較セルのEvidenceLink固定完了後、screening基準と列定義をResearchRunへ保存する契約を設計する |
@@ -110,6 +110,13 @@ Focusは同時に最大3件とする。次回実装では、原則として上�
 | CI-028 | P0 | done | agentic-rag | 選択した1〜5件の論文だけを対象に、生成時間を確保しながら45秒以内に回答または説明付き抽出結果を返す | CI-003, CI-014, CI-019, CI-023 | 2026-07-22 | D-20260722-12 | source scope、DB/LLM期限、PG 57014、キャンセル境界を実装。backend 227件成功。再構築コンテナでadapter・45秒・生成予約30秒・3000 tokens・API 200を確認 |
 | CI-029 | P1 | done | frontend | 会話をスクロールしても研究対話、検索対象、入力欄、最新回答の根拠へ常にアクセスでき、自然な日本語で状態を理解できる | CI-006, CI-022, CI-023, CI-028 | 2026-07-22 | D-20260722-12 | 固定3ペイン、responsive drawer、1〜5件選択、日本語copyを実装。frontend 68件・型検査・production build・5 viewport・Escape/focus復元・design QA成功 |
 | CI-030 | P1 | done | project-navigation | 複数の研究プロジェクトを作成・切替・名前変更でき、論文・対話・グラフ・下書きが混ざらず、再読込後も直前の選択を安全に再開できる | CI-016 | 2026-07-22 | D-20260722-13 | workspace境界を再利用して切替・検索・作成・名前変更、利用者別復元、状態分離を実装。backend認可16件、frontend 72件・型検査・production build、再構築後API/Web 200、独立レビューP0/P1なしを確認 |
+| CI-031 | P1 | done | external-discovery | Semantic Scholarから外部論文を検索し、取得時点と要旨のみの範囲を失わず、選択した候補だけをLibraryへ採用できる | CI-012, CI-013 | 2026-07-27 | D-20260727-14 | Backend全回帰分割242件と最終Discovery 14件、Frontend 80件・型検査・production build、実OpenAPI生成を確認。独立レビューP0/P1/P2なし |
+| CI-032 | P1 | done | multilingual-discovery | 日本語の質問文から国内外の学術DBを横断し、出所と検索計画を保った候補を低コストで取得できる | CI-012, CI-013, CI-021, CI-031 | 2026-07-28 | D-20260727-15, D-20260728-18 | HTTPS出典URL、provider workflow、session paging/import、workspace/cursorを実装。部分provider失敗をモックbrowserで確認し、backend全283件・frontend全88件・独立レビューP0/P1/P2なし |
+| CI-033 | P1 | done | model-governance | workspace既定と実行単位でOpenAI/Geminiを切り替え、実際のprovider/modelを監査できる | CI-003, CI-014, CI-016 | 2026-07-28 | D-20260727-16, D-20260728-18 | Gemini plain/JSON分離、SSE・履歴・ResearchRun・auditの実効provider/model同期を実装。browserでOpenAI/Gemini selectorとlocal fallback表示を確認し、型検査・build・監査テスト成功 |
+| CI-034 | P0 | done | experiment-evidence | 全文PDFの手法・条件・測定値・結果・著者考察・図表を原典へ戻れる比較として確認できる | CI-001, CI-003, CI-006, CI-007, CI-017 | 2026-07-28 | D-20260727-17, D-20260728-18 | 部分失敗保存、immutable profile/span、service/store分割、downgrade guard、caption安全化を実装。モックbrowserで3件中2件成功の比較・保存、Evidence Viewer、keyboard tabを確認 |
+| CI-035 | P1 | done | mind-map | 論文または選択した原典根拠から編集可能なマップを作り、根拠を失わずNote・Research Action・Ask・Knowledge Graphへ進める | CI-001, CI-003, CI-016, CI-017, CI-023, CI-027 | 2026-07-29 | D-20260729-19 | 独立MindMap、候補確定、研究連携、権限制御、同時再送を含む冪等性を実装。migration、backend全293件相当、frontend全95件、型検査、build、Docker再構築、ブラウザ受入、独立レビューを完了 |
+| CI-036 | P1 | done | external-discovery | 外部論文検索は同一オリジン接続で到達でき、DOI直接登録は書誌・要旨・出所を `abstract_only` として安全に登録できる | CI-031, CI-032 | 2026-08-02 | D-20260801-20 | 同一オリジンproxy、構造化エラー、Crossref主・Semantic Scholar fallback、canonical DOI、arXiv応答ID照合、検索session・Paper親行のPostgreSQL FK順序、全providerの検索結果追加契約を修正。backend全325件と最終外部論文51件、frontend 99件・型検査・production build、実PostgreSQLで提示DOIの冪等登録とOpenAlex検索20件→既存Paperへのduplicate収束を確認。 |
+| CI-037 | P1 | validating | ingestion | PDF等の抽出テキストに制御文字が混入しても、本文・ページ・表要素・原典spanを保存し、分析可能にする | CI-017 | 2026-08-03 | - | NUL除去の回帰テストとバックエンド回帰を実行し、PostgreSQL取り込みでも確認する。 |
 <!-- BACKLOG_TABLE_END -->
 
 ## 主要項目の受入条件と評価指標
@@ -229,6 +236,54 @@ Focusは同時に最大3件とする。次回実装では、原則として上�
 - 切替時は進行中の要求を中止し、論文検索、選択、根拠、アイデア下書き、再embedding状態を旧プロジェクトから持ち越さない。
 - 全API要求は選択中のworkspace IDを認可境界へ渡し、アクセス権を失った保存済みIDは個人プロジェクトへ安全に戻す。
 - 最後に開いたアクセス可能なプロジェクトを再読込後に復元し、A/Bプロジェクト間の論文が相互に表示されないことを回帰テストで確認する。
+
+### CI-031 外部論文サーチ
+
+- Semantic Scholarをキーワード、年範囲、関連度・新着・引用数で検索し、20件単位で候補を確認できる。
+- 検索結果は自動採用せず、owner/editorが明示選択した1〜20件だけを要旨付きでLibraryへ登録する。
+- provider、取得時刻、license、rate limit policy、応答snapshot、検索条件を保存し、DOI・arXiv・Semantic Scholar IDで重複登録を防ぐ。
+- 要旨だけの論文は `abstract_only` として、PDFページではなく「外部要旨」をEvidenceに表示する。
+- viewer、別workspace、provider rate limit・timeout・部分失敗・再送をAPIとUIの両方で安全に扱う。
+
+### CI-032 低コスト多言語論文探索
+
+- 日本語または英語の研究質問を最大4件の日英検索queryへ展開し、使用した検索計画とmodel有無を利用者が確認できる。
+- Semantic Scholar、OpenAlex、CiNii、J-STAGEを独立providerとして検索し、DOI・arXiv・provider IDを優先して正規化し、RRFで統合する。
+- providerの一部が429・timeout・不正応答でも取得済み候補を返し、失敗providerを画面とAPIへ明示する。
+- 検索候補はworkspace内の期限付きSearch Sessionだけに保存し、owner/editorが選択した候補以外はPaper・Evidenceにしない。
+- CiNii Application IDや検索語生成modelが未設定でも、利用可能providerと原文queryで検索でき、有料providerへ自動fallbackしない。
+
+### CI-033 OpenAI・Gemini生成モデル切替
+
+- server allowlistから利用可能なOpenAI・Geminiモデルだけを表示し、API keyや任意model IDをブラウザへ渡さない。
+- ownerはworkspace既定を変更でき、editorはAsk・Discovery・Analysisの各実行だけを一時上書きでき、viewerは保存済み結果の閲覧だけができる。
+- 実際に解決したprovider、model、prompt version、usageをResearchRunまたは対応する実行snapshotへ保存する。
+- provider障害時は別の有料modelを自動実行せず、機能ごとに定めたローカルまたは検索語未展開の安全な縮退を表示する。
+- 生成modelの変更はembedding provider・modelと分離し、既存論文の再embeddingを発生させない。
+
+### CI-034 実験Evidence比較
+
+- 全文解析済みPDFを2〜5件選び、「実験結果・手法を比較」を押した時だけ未抽出profileを生成し、原本hash・model・prompt version一致時は再利用する。
+- 研究目的、実験デザイン、対象、条件、手法、比較対象、測定値、観測結果、著者考察、限界を分離し、本文にない値は `未報告` と表示する。
+- 結果文・考察文はexact quoteとSourceSpan、図はpage・bbox・caption、表はrow・column・header・cell locatorから原典へ戻れる。
+- 数値・単位・比較対象・引用が原本または表セルと一致しない候補は保存せず、自動抽出の初期状態を `review_pending` にする。
+- `abstract_only` 論文を抽出対象へ含めず、比較表、実験結果・考察、図表、研究ギャップの4タブとPDF導線を表示しない。
+
+### CI-035 根拠付き編集可能マインドマップ
+
+- 解析済み全文論文1件、または利用者が選んだ同一workspaceのEvidenceRef・SourceSpanだけから候補を生成し、使用したsource scopeとResearchRunを保存する。
+- 初期ツリー、枝展開、Research Actionは候補として返し、利用者が選択して確定するまでMindMap・Actionへ保存しない。生成ノードは確定後も`review_pending`とする。
+- 1 root、許可kind、題名200文字、本文4,000文字、最大250ノード、深さ8、同一map親子、連続orderをサーバーで検証し、全ツリーを原子的に保存する。
+- 部分木削除は対象配下と関連リンクだけを削除し、作成済みNote、Research Action、明示昇格したKnowledgeNode本体を残す。
+- 全読書きでworkspace境界とviewer read-onlyを保ち、LLMが使えない場合も閲覧、手動編集、Note・Action・Ask・Graph昇格を利用できる。
+
+### CI-036 外部論文検索・DOI取得の復旧
+
+- `NEXT_PUBLIC_API_URL` 未設定のローカルUIは同一オリジンの `/api` proxy を通じ、CORS差異で検索要求を失敗させない。明示した本番API URLは従来どおり直接利用する。
+- 検索の通信失敗、全provider障害、部分provider障害を区別してフォーム直下に表示し、利用者が明示操作で再試行できる。自動再試行は行わない。
+- DOI、`doi:`、DOI resolver URLを同一のcanonical DOIにし、Crossrefから書誌・要旨を取得する。Crossrefが利用不能な時だけSemantic Scholarをfallbackとして用いる。
+- 直接登録した論文はprovider snapshot、取得時刻、license、rate policyを残す`abstract_only`であり、PDFを自動取得・解析・比較対象化しない。
+- 不正ID、未発見、rate limit、provider利用不能時にはPaperを保存せず、安全な構造化エラーを返す。
 
 ## 調査ログ
 

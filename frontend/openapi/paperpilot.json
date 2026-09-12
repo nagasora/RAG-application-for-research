@@ -443,6 +443,15 @@
             ],
             "title": "Evidence Role"
           },
+          "evidence_scope": {
+            "default": "full_text",
+            "enum": [
+              "full_text",
+              "abstract"
+            ],
+            "title": "Evidence Scope",
+            "type": "string"
+          },
           "excerpt": {
             "title": "Excerpt",
             "type": "string"
@@ -772,6 +781,118 @@
         "title": "ConversationGraphExportCreate",
         "type": "object"
       },
+      "DiscoveryImportItem": {
+        "properties": {
+          "discovery_item_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Discovery Item Id"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "paper_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paper Id"
+          },
+          "provider_paper_id": {
+            "title": "Provider Paper Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "imported",
+              "duplicate",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider_paper_id",
+          "status"
+        ],
+        "title": "DiscoveryImportItem",
+        "type": "object"
+      },
+      "DiscoveryImportRequest": {
+        "properties": {
+          "candidate_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Candidate Ids",
+            "type": "array"
+          },
+          "provider_paper_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Provider Paper Ids",
+            "type": "array"
+          },
+          "search_context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DiscoverySearchContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "search_session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Search Session Id"
+          }
+        },
+        "title": "DiscoveryImportRequest",
+        "type": "object"
+      },
+      "DiscoveryImportResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DiscoveryImportItem"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "title": "DiscoveryImportResponse",
+        "type": "object"
+      },
       "DiscoveryItem": {
         "properties": {
           "abstract": {
@@ -780,12 +901,14 @@
             "type": "string"
           },
           "classification": {
+            "default": "unclassified",
             "enum": [
               "supports",
               "contradicts",
               "boundary_condition",
               "method_alternative",
-              "duplicate"
+              "duplicate",
+              "unclassified"
             ],
             "title": "Classification",
             "type": "string"
@@ -818,9 +941,25 @@
             "title": "License",
             "type": "string"
           },
+          "paper_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paper Id"
+          },
           "provider": {
-            "const": "semantic_scholar",
             "default": "semantic_scholar",
+            "enum": [
+              "semantic_scholar",
+              "openalex",
+              "cinii",
+              "jstage"
+            ],
             "title": "Provider",
             "type": "string"
           },
@@ -844,6 +983,11 @@
             ],
             "title": "Review Status",
             "type": "string"
+          },
+          "search_context": {
+            "additionalProperties": true,
+            "title": "Search Context",
+            "type": "object"
           },
           "snapshot": {
             "additionalProperties": true,
@@ -873,7 +1017,6 @@
         },
         "required": [
           "provider_paper_id",
-          "classification",
           "title",
           "id",
           "workspace_id",
@@ -891,12 +1034,14 @@
             "type": "string"
           },
           "classification": {
+            "default": "unclassified",
             "enum": [
               "supports",
               "contradicts",
               "boundary_condition",
               "method_alternative",
-              "duplicate"
+              "duplicate",
+              "unclassified"
             ],
             "title": "Classification",
             "type": "string"
@@ -907,8 +1052,13 @@
             "type": "string"
           },
           "provider": {
-            "const": "semantic_scholar",
             "default": "semantic_scholar",
+            "enum": [
+              "semantic_scholar",
+              "openalex",
+              "cinii",
+              "jstage"
+            ],
             "title": "Provider",
             "type": "string"
           },
@@ -947,10 +1097,67 @@
         },
         "required": [
           "provider_paper_id",
-          "classification",
           "title"
         ],
         "title": "DiscoveryItemCreate",
+        "type": "object"
+      },
+      "DiscoveryProviderStatus": {
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "enum": [
+                  "timeout",
+                  "rate_limited",
+                  "unavailable",
+                  "invalid_response",
+                  "disabled"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "item_count": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Item Count",
+            "type": "integer"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "succeeded",
+              "failed",
+              "disabled"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "warning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warning"
+          }
+        },
+        "required": [
+          "provider",
+          "status"
+        ],
+        "title": "DiscoveryProviderStatus",
         "type": "object"
       },
       "DiscoveryReviewUpdate": {
@@ -968,6 +1175,456 @@
           "review_status"
         ],
         "title": "DiscoveryReviewUpdate",
+        "type": "object"
+      },
+      "DiscoverySearchContext": {
+        "properties": {
+          "query": {
+            "maxLength": 4000,
+            "minLength": 2,
+            "title": "Query",
+            "type": "string"
+          },
+          "sort": {
+            "default": "relevance",
+            "enum": [
+              "relevance",
+              "newest",
+              "citation_count"
+            ],
+            "title": "Sort",
+            "type": "string"
+          },
+          "year_from": {
+            "anyOf": [
+              {
+                "maximum": 2200.0,
+                "minimum": 1800.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year From"
+          },
+          "year_to": {
+            "anyOf": [
+              {
+                "maximum": 2200.0,
+                "minimum": 1800.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year To"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "title": "DiscoverySearchContext",
+        "type": "object"
+      },
+      "DiscoverySearchItem": {
+        "properties": {
+          "abstract": {
+            "default": "",
+            "title": "Abstract",
+            "type": "string"
+          },
+          "authors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Authors",
+            "type": "array"
+          },
+          "candidate_id": {
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "citation_count": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Citation Count",
+            "type": "integer"
+          },
+          "content_scope": {
+            "const": "abstract_only",
+            "default": "abstract_only",
+            "title": "Content Scope",
+            "type": "string"
+          },
+          "existing_paper_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Existing Paper Id"
+          },
+          "external_ids": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "External Ids",
+            "type": "object"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "match_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Match Reasons",
+            "type": "array"
+          },
+          "possible_duplicate_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Possible Duplicate Of"
+          },
+          "provider": {
+            "default": "semantic_scholar",
+            "title": "Provider",
+            "type": "string"
+          },
+          "provider_ids": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Provider Ids",
+            "type": "object"
+          },
+          "provider_paper_id": {
+            "title": "Provider Paper Id",
+            "type": "string"
+          },
+          "publication_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publication Date"
+          },
+          "source_providers": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Source Providers",
+            "type": "array"
+          },
+          "source_url": {
+            "default": "",
+            "title": "Source Url",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "venue": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Venue"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          }
+        },
+        "required": [
+          "candidate_id",
+          "provider_paper_id",
+          "title"
+        ],
+        "title": "DiscoverySearchItem",
+        "type": "object"
+      },
+      "DiscoverySearchRequest": {
+        "properties": {
+          "cursor": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cursor"
+          },
+          "generation_model": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation Model"
+          },
+          "generation_provider": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation Provider"
+          },
+          "providers": {
+            "items": {
+              "enum": [
+                "semantic_scholar",
+                "openalex",
+                "cinii",
+                "jstage"
+              ],
+              "type": "string"
+            },
+            "maxItems": 4,
+            "title": "Providers",
+            "type": "array"
+          },
+          "query": {
+            "maxLength": 4000,
+            "minLength": 2,
+            "title": "Query",
+            "type": "string"
+          },
+          "search_mode": {
+            "default": "keyword",
+            "enum": [
+              "keyword",
+              "question"
+            ],
+            "title": "Search Mode",
+            "type": "string"
+          },
+          "sort": {
+            "default": "relevance",
+            "enum": [
+              "relevance",
+              "newest",
+              "citation_count"
+            ],
+            "title": "Sort",
+            "type": "string"
+          },
+          "year_from": {
+            "anyOf": [
+              {
+                "maximum": 2200.0,
+                "minimum": 1800.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year From"
+          },
+          "year_to": {
+            "anyOf": [
+              {
+                "maximum": 2200.0,
+                "minimum": 1800.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year To"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "title": "DiscoverySearchRequest",
+        "type": "object"
+      },
+      "DiscoverySearchResponse": {
+        "properties": {
+          "degraded_providers": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Degraded Providers",
+            "type": "array"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "fetched_at": {
+            "title": "Fetched At",
+            "type": "string"
+          },
+          "generation_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation Model"
+          },
+          "generation_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation Provider"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DiscoverySearchItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "partial": {
+            "default": false,
+            "title": "Partial",
+            "type": "boolean"
+          },
+          "provider": {
+            "const": "semantic_scholar",
+            "default": "semantic_scholar",
+            "title": "Provider",
+            "type": "string"
+          },
+          "providers": {
+            "items": {
+              "$ref": "#/components/schemas/DiscoveryProviderStatus"
+            },
+            "title": "Providers",
+            "type": "array"
+          },
+          "providers_used": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Providers Used",
+            "type": "array"
+          },
+          "query_plan": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Query Plan",
+            "type": "array"
+          },
+          "search_plan": {
+            "additionalProperties": true,
+            "title": "Search Plan",
+            "type": "object"
+          },
+          "search_session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Search Session Id"
+          },
+          "total_estimate": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Estimate"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "fetched_at"
+        ],
+        "title": "DiscoverySearchResponse",
         "type": "object"
       },
       "DocumentElement": {
@@ -1370,6 +2027,411 @@
         "title": "EvidenceRef",
         "type": "object"
       },
+      "ExperimentAnalysisErrorResponse": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "paper_id": {
+            "title": "Paper Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "paper_id",
+          "code",
+          "message"
+        ],
+        "title": "ExperimentAnalysisErrorResponse",
+        "type": "object"
+      },
+      "ExperimentComparisonCellResponse": {
+        "properties": {
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/ExperimentEvidenceResponse"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "status": {
+            "default": "grounded",
+            "enum": [
+              "grounded",
+              "unresolved"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "text"
+        ],
+        "title": "ExperimentComparisonCellResponse",
+        "type": "object"
+      },
+      "ExperimentComparisonRequest": {
+        "properties": {
+          "generation_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation Model"
+          },
+          "generation_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation Provider"
+          },
+          "paper_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 5,
+            "minItems": 2,
+            "title": "Paper Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "paper_ids"
+        ],
+        "title": "ExperimentComparisonRequest",
+        "type": "object"
+      },
+      "ExperimentComparisonResponse": {
+        "properties": {
+          "errors": {
+            "items": {
+              "$ref": "#/components/schemas/ExperimentAnalysisErrorResponse"
+            },
+            "title": "Errors",
+            "type": "array"
+          },
+          "generation_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation Model"
+          },
+          "generation_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation Provider"
+          },
+          "matrix": {
+            "items": {
+              "$ref": "#/components/schemas/ExperimentMatrixRowResponse"
+            },
+            "title": "Matrix",
+            "type": "array"
+          },
+          "profiles": {
+            "items": {
+              "$ref": "#/components/schemas/ExperimentProfileResponse"
+            },
+            "title": "Profiles",
+            "type": "array"
+          }
+        },
+        "title": "ExperimentComparisonResponse",
+        "type": "object"
+      },
+      "ExperimentEvidenceLocatorResponse": {
+        "properties": {
+          "bbox": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bbox"
+          },
+          "cell": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cell"
+          },
+          "element_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Element Id"
+          },
+          "page": {
+            "minimum": 1.0,
+            "title": "Page",
+            "type": "integer"
+          },
+          "quote": {
+            "title": "Quote",
+            "type": "string"
+          },
+          "source_kind": {
+            "default": "page_text",
+            "title": "Source Kind",
+            "type": "string"
+          },
+          "source_span_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Span Id"
+          }
+        },
+        "required": [
+          "page",
+          "quote"
+        ],
+        "title": "ExperimentEvidenceLocatorResponse",
+        "type": "object"
+      },
+      "ExperimentEvidenceResponse": {
+        "properties": {
+          "comparator": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comparator"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "locator": {
+            "$ref": "#/components/schemas/ExperimentEvidenceLocatorResponse"
+          },
+          "measurements": {
+            "items": {
+              "$ref": "#/components/schemas/ExperimentMeasurementResponse"
+            },
+            "title": "Measurements",
+            "type": "array"
+          },
+          "quality": {
+            "default": "unknown",
+            "title": "Quality",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "text",
+          "locator"
+        ],
+        "title": "ExperimentEvidenceResponse",
+        "type": "object"
+      },
+      "ExperimentFigureTableResponse": {
+        "properties": {
+          "caption": {
+            "title": "Caption",
+            "type": "string"
+          },
+          "caption_element_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Caption Element Id"
+          },
+          "confidence": {
+            "enum": [
+              "high",
+              "medium",
+              "unknown"
+            ],
+            "title": "Confidence",
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "page": {
+            "minimum": 1.0,
+            "title": "Page",
+            "type": "integer"
+          },
+          "relation": {
+            "enum": [
+              "caption_for",
+              "unresolved"
+            ],
+            "title": "Relation",
+            "type": "string"
+          },
+          "target_element_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Element Id"
+          },
+          "target_kind": {
+            "enum": [
+              "figure",
+              "table"
+            ],
+            "title": "Target Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "page",
+          "target_kind",
+          "caption",
+          "relation",
+          "confidence"
+        ],
+        "title": "ExperimentFigureTableResponse",
+        "type": "object"
+      },
+      "ExperimentMatrixRowResponse": {
+        "properties": {
+          "cells": {
+            "items": {
+              "$ref": "#/components/schemas/ExperimentComparisonCellResponse"
+            },
+            "title": "Cells",
+            "type": "array"
+          },
+          "paper_id": {
+            "title": "Paper Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "paper_id"
+        ],
+        "title": "ExperimentMatrixRowResponse",
+        "type": "object"
+      },
+      "ExperimentMeasurementResponse": {
+        "properties": {
+          "kind": {
+            "default": "reported_value",
+            "title": "Kind",
+            "type": "string"
+          },
+          "raw": {
+            "title": "Raw",
+            "type": "string"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "raw"
+        ],
+        "title": "ExperimentMeasurementResponse",
+        "type": "object"
+      },
       "ExperimentPlan": {
         "properties": {
           "competing_hypothesis_discrimination": {
@@ -1628,6 +2690,172 @@
         "title": "ExperimentPlanSnapshot",
         "type": "object"
       },
+      "ExperimentProfileResponse": {
+        "properties": {
+          "author_interpretations": {
+            "items": {
+              "$ref": "#/components/schemas/ExperimentEvidenceResponse"
+            },
+            "title": "Author Interpretations",
+            "type": "array"
+          },
+          "cached": {
+            "title": "Cached",
+            "type": "boolean"
+          },
+          "derived_source_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Derived Source Version Id"
+          },
+          "design": {
+            "items": {
+              "$ref": "#/components/schemas/ExperimentEvidenceResponse"
+            },
+            "title": "Design",
+            "type": "array"
+          },
+          "extraction_mode": {
+            "default": "deterministic_local",
+            "enum": [
+              "llm_verified",
+              "deterministic_local"
+            ],
+            "title": "Extraction Mode",
+            "type": "string"
+          },
+          "figure_table_refs": {
+            "items": {
+              "$ref": "#/components/schemas/ExperimentFigureTableResponse"
+            },
+            "title": "Figure Table Refs",
+            "type": "array"
+          },
+          "generation_model": {
+            "default": "evidence-extractor-v1",
+            "title": "Generation Model",
+            "type": "string"
+          },
+          "generation_prompt_version": {
+            "default": "experiment-analysis-v1",
+            "title": "Generation Prompt Version",
+            "type": "string"
+          },
+          "generation_provider": {
+            "default": "local",
+            "title": "Generation Provider",
+            "type": "string"
+          },
+          "generation_usage": {
+            "additionalProperties": true,
+            "title": "Generation Usage",
+            "type": "object"
+          },
+          "limitations": {
+            "items": {
+              "$ref": "#/components/schemas/ExperimentEvidenceResponse"
+            },
+            "title": "Limitations",
+            "type": "array"
+          },
+          "observations": {
+            "items": {
+              "$ref": "#/components/schemas/ExperimentEvidenceResponse"
+            },
+            "title": "Observations",
+            "type": "array"
+          },
+          "paper_id": {
+            "title": "Paper Id",
+            "type": "string"
+          },
+          "profile_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile Id"
+          },
+          "progress": {
+            "enum": [
+              "cached",
+              "extracting",
+              "completed",
+              "failed"
+            ],
+            "title": "Progress",
+            "type": "string"
+          },
+          "proposal_candidates_accepted": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Proposal Candidates Accepted",
+            "type": "integer"
+          },
+          "proposal_candidates_rejected": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Proposal Candidates Rejected",
+            "type": "integer"
+          },
+          "purpose": {
+            "items": {
+              "$ref": "#/components/schemas/ExperimentEvidenceResponse"
+            },
+            "title": "Purpose",
+            "type": "array"
+          },
+          "review_status": {
+            "default": "review_pending",
+            "title": "Review Status",
+            "type": "string"
+          },
+          "source_span_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Source Span Ids",
+            "type": "array"
+          },
+          "source_version_id": {
+            "title": "Source Version Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "ready",
+              "cached",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "paper_id",
+          "title",
+          "status",
+          "cached",
+          "progress",
+          "source_version_id"
+        ],
+        "title": "ExperimentProfileResponse",
+        "type": "object"
+      },
       "ExperimentResultCreate": {
         "properties": {
           "data_snapshot": {
@@ -1821,6 +3049,66 @@
           "reasoning_run"
         ],
         "title": "ForwardPropagationResult",
+        "type": "object"
+      },
+      "GenerationModelOption": {
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "provider": {
+            "enum": [
+              "openai",
+              "gemini"
+            ],
+            "title": "Provider",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "provider",
+          "model",
+          "available"
+        ],
+        "title": "GenerationModelOption",
+        "type": "object"
+      },
+      "GenerationScopeSetting": {
+        "properties": {
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "provider": {
+            "enum": [
+              "openai",
+              "gemini"
+            ],
+            "title": "Provider",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "model"
+        ],
+        "title": "GenerationScopeSetting",
         "type": "object"
       },
       "GraphIdeaCandidate": {
@@ -3106,6 +4394,662 @@
         "title": "MeResponse",
         "type": "object"
       },
+      "MindMap": {
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "generation_kind": {
+            "default": "manual",
+            "enum": [
+              "manual",
+              "ai"
+            ],
+            "title": "Generation Kind",
+            "type": "string"
+          },
+          "generation_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation Run Id"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/MindMapNode"
+            },
+            "title": "Nodes",
+            "type": "array"
+          },
+          "source_scope": {
+            "additionalProperties": true,
+            "title": "Source Scope",
+            "type": "object"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "workspace_id",
+          "title",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "MindMap",
+        "type": "object"
+      },
+      "MindMapActionCandidate": {
+        "properties": {
+          "client_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Client Id",
+            "type": "string"
+          },
+          "description": {
+            "default": "",
+            "maxLength": 20000,
+            "title": "Description",
+            "type": "string"
+          },
+          "ordinal": {
+            "default": 0,
+            "maximum": 4.0,
+            "minimum": 0.0,
+            "title": "Ordinal",
+            "type": "integer"
+          },
+          "title": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_id",
+          "title"
+        ],
+        "title": "MindMapActionCandidate",
+        "type": "object"
+      },
+      "MindMapActionCandidates": {
+        "properties": {
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/MindMapActionCandidate"
+            },
+            "maxItems": 5,
+            "title": "Candidates",
+            "type": "array"
+          },
+          "research_run_id": {
+            "title": "Research Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "research_run_id"
+        ],
+        "title": "MindMapActionCandidates",
+        "type": "object"
+      },
+      "MindMapActionConfirm": {
+        "properties": {
+          "actions": {
+            "items": {
+              "$ref": "#/components/schemas/MindMapActionCandidate"
+            },
+            "maxItems": 5,
+            "minItems": 1,
+            "title": "Actions",
+            "type": "array"
+          },
+          "research_run_id": {
+            "title": "Research Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "research_run_id",
+          "actions"
+        ],
+        "title": "MindMapActionConfirm",
+        "type": "object"
+      },
+      "MindMapCandidateResponse": {
+        "properties": {
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/MindMapNodeDraft"
+            },
+            "title": "Nodes",
+            "type": "array"
+          },
+          "research_run_id": {
+            "title": "Research Run Id",
+            "type": "string"
+          },
+          "source_scope": {
+            "additionalProperties": true,
+            "title": "Source Scope",
+            "type": "object"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "research_run_id",
+          "title",
+          "source_scope",
+          "nodes"
+        ],
+        "title": "MindMapCandidateResponse",
+        "type": "object"
+      },
+      "MindMapChildrenCreate": {
+        "properties": {
+          "generation_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation Run Id"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/MindMapNodeDraft"
+            },
+            "maxItems": 8,
+            "minItems": 1,
+            "title": "Nodes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "nodes"
+        ],
+        "title": "MindMapChildrenCreate",
+        "type": "object"
+      },
+      "MindMapCreate": {
+        "properties": {
+          "generation_kind": {
+            "default": "manual",
+            "enum": [
+              "manual",
+              "ai"
+            ],
+            "title": "Generation Kind",
+            "type": "string"
+          },
+          "generation_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation Run Id"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/MindMapNodeDraft"
+            },
+            "maxItems": 250,
+            "minItems": 1,
+            "title": "Nodes",
+            "type": "array"
+          },
+          "source_scope": {
+            "additionalProperties": true,
+            "title": "Source Scope",
+            "type": "object"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "nodes"
+        ],
+        "title": "MindMapCreate",
+        "type": "object"
+      },
+      "MindMapGenerationRequest": {
+        "properties": {
+          "evidence_ref_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Evidence Ref Ids",
+            "type": "array"
+          },
+          "generation_model": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation Model"
+          },
+          "generation_provider": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation Provider"
+          },
+          "paper_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paper Id"
+          },
+          "source_span_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Source Span Ids",
+            "type": "array"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "MindMapGenerationRequest",
+        "type": "object"
+      },
+      "MindMapGraphNodeCreate": {
+        "properties": {
+          "node_type": {
+            "enum": [
+              "source",
+              "idea",
+              "constraint",
+              "hypothesis",
+              "experiment"
+            ],
+            "title": "Node Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "node_type"
+        ],
+        "title": "MindMapGraphNodeCreate",
+        "type": "object"
+      },
+      "MindMapNode": {
+        "properties": {
+          "body": {
+            "default": "",
+            "title": "Body",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "depth": {
+            "maximum": 8.0,
+            "minimum": 0.0,
+            "title": "Depth",
+            "type": "integer"
+          },
+          "evidence_ref_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence Ref Ids",
+            "type": "array"
+          },
+          "generation_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation Run Id"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "root",
+              "theme",
+              "claim",
+              "question",
+              "method",
+              "finding",
+              "task",
+              "note",
+              "link"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "knowledge_node_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Knowledge Node Id"
+          },
+          "mind_map_id": {
+            "title": "Mind Map Id",
+            "type": "string"
+          },
+          "order_index": {
+            "minimum": 0.0,
+            "title": "Order Index",
+            "type": "integer"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          },
+          "source_span_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Source Span Ids",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "review_pending",
+              "active",
+              "rejected"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "mind_map_id",
+          "kind",
+          "title",
+          "depth",
+          "order_index",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "MindMapNode",
+        "type": "object"
+      },
+      "MindMapNodeDraft": {
+        "description": "A client-side tree.  IDs/depth/order are server assigned.",
+        "properties": {
+          "body": {
+            "default": "",
+            "maxLength": 4000,
+            "title": "Body",
+            "type": "string"
+          },
+          "client_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Client Id",
+            "type": "string"
+          },
+          "evidence_ref_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Evidence Ref Ids",
+            "type": "array"
+          },
+          "generated": {
+            "default": false,
+            "title": "Generated",
+            "type": "boolean"
+          },
+          "kind": {
+            "default": "theme",
+            "enum": [
+              "root",
+              "theme",
+              "claim",
+              "question",
+              "method",
+              "finding",
+              "task",
+              "note",
+              "link"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "parent_client_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Client Id"
+          },
+          "source_span_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Source Span Ids",
+            "type": "array"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_id",
+          "title"
+        ],
+        "title": "MindMapNodeDraft",
+        "type": "object"
+      },
+      "MindMapNodeUpdate": {
+        "properties": {
+          "body": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Body"
+          },
+          "evidence_ref_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Ref Ids"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "enum": [
+                  "root",
+                  "theme",
+                  "claim",
+                  "question",
+                  "method",
+                  "finding",
+                  "task",
+                  "note",
+                  "link"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "source_span_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Span Ids"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "review_pending",
+                  "active",
+                  "rejected"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "MindMapNodeUpdate",
+        "type": "object"
+      },
       "NodeFeedback": {
         "properties": {
           "comment": {
@@ -3229,6 +5173,41 @@
             "title": "Id",
             "type": "string"
           },
+          "mind_map_node_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mind Map Node Id"
+          },
+          "origin_kind": {
+            "anyOf": [
+              {
+                "const": "mind_map",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Origin Kind"
+          },
+          "origin_snapshot": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Origin Snapshot"
+          },
           "paper_id": {
             "anyOf": [
               {
@@ -3267,6 +5246,41 @@
             "maxLength": 100000,
             "title": "Content",
             "type": "string"
+          },
+          "mind_map_node_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mind Map Node Id"
+          },
+          "origin_kind": {
+            "anyOf": [
+              {
+                "const": "mind_map",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Origin Kind"
+          },
+          "origin_snapshot": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Origin Snapshot"
           },
           "paper_id": {
             "anyOf": [
@@ -3469,6 +5483,15 @@
             "title": "Chunk Count",
             "type": "integer"
           },
+          "content_scope": {
+            "default": "full_text",
+            "enum": [
+              "full_text",
+              "abstract_only"
+            ],
+            "title": "Content Scope",
+            "type": "string"
+          },
           "created_at": {
             "title": "Created At",
             "type": "string"
@@ -3615,6 +5638,15 @@
           "chunk_count": {
             "title": "Chunk Count",
             "type": "integer"
+          },
+          "content_scope": {
+            "default": "full_text",
+            "enum": [
+              "full_text",
+              "abstract_only"
+            ],
+            "title": "Content Scope",
+            "type": "string"
           },
           "created_at": {
             "title": "Created At",
@@ -3870,6 +5902,15 @@
           "chunk_count": {
             "title": "Chunk Count",
             "type": "integer"
+          },
+          "content_scope": {
+            "default": "full_text",
+            "enum": [
+              "full_text",
+              "abstract_only"
+            ],
+            "title": "Content Scope",
+            "type": "string"
           },
           "created_at": {
             "title": "Created At",
@@ -4255,6 +6296,29 @@
             ],
             "title": "Idea Id"
           },
+          "mind_map_node_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mind Map Node Id"
+          },
+          "origin_kind": {
+            "anyOf": [
+              {
+                "const": "mind_map",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Origin Kind"
+          },
           "origin_node_id": {
             "anyOf": [
               {
@@ -4403,6 +6467,29 @@
               }
             ],
             "title": "Idea Id"
+          },
+          "mind_map_node_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mind Map Node Id"
+          },
+          "origin_kind": {
+            "anyOf": [
+              {
+                "const": "mind_map",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Origin Kind"
           },
           "origin_node_id": {
             "anyOf": [
@@ -4844,6 +6931,54 @@
             ],
             "title": "Draft"
           },
+          "fallback_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fallback Reason"
+          },
+          "generation_mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "agentic_rag",
+                  "local_fallback"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation Mode"
+          },
+          "generation_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation Model"
+          },
+          "generation_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation Provider"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -5074,6 +7209,11 @@
             "title": "Excluded Paper Ids",
             "type": "array"
           },
+          "generation_provider": {
+            "default": "",
+            "title": "Generation Provider",
+            "type": "string"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -5291,6 +7431,33 @@
         "title": "ResearchRunGraphSeed",
         "type": "object"
       },
+      "ResearchRunMindMapSeed": {
+        "properties": {
+          "mind_map_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Mind Map Id",
+            "type": "string"
+          },
+          "node_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Id"
+          }
+        },
+        "required": [
+          "mind_map_id"
+        ],
+        "title": "ResearchRunMindMapSeed",
+        "type": "object"
+      },
       "ResearchRunPlan": {
         "additionalProperties": true,
         "description": "Free-form run plan with an optional, governed graph seed.",
@@ -5299,6 +7466,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/ResearchRunGraphSeed"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mind_map_seed": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResearchRunMindMapSeed"
               },
               {
                 "type": "null"
@@ -5782,6 +7959,13 @@
       },
       "SavedComparison": {
         "properties": {
+          "analysis_errors": {
+            "items": {
+              "$ref": "#/components/schemas/ExperimentAnalysisErrorResponse"
+            },
+            "title": "Analysis Errors",
+            "type": "array"
+          },
           "citation_snapshot": {
             "items": {
               "additionalProperties": true,
@@ -5862,12 +8046,31 @@
       },
       "SavedComparisonCreate": {
         "properties": {
+          "analysis_errors": {
+            "items": {
+              "$ref": "#/components/schemas/ExperimentAnalysisErrorResponse"
+            },
+            "title": "Analysis Errors",
+            "type": "array"
+          },
           "citation_snapshot": {
             "items": {
               "additionalProperties": true,
               "type": "object"
             },
             "title": "Citation Snapshot",
+            "type": "array"
+          },
+          "experiment_analysis": {
+            "default": false,
+            "title": "Experiment Analysis",
+            "type": "boolean"
+          },
+          "experiment_profile_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Experiment Profile Ids",
             "type": "array"
           },
           "human_judgment": {
@@ -5989,6 +8192,30 @@
             ],
             "title": "Conversation Id"
           },
+          "generation_model": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation Model"
+          },
+          "generation_provider": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation Provider"
+          },
           "interaction_mode": {
             "default": "synthesis",
             "enum": [
@@ -6008,6 +8235,16 @@
             "minimum": 1.0,
             "title": "Limit",
             "type": "integer"
+          },
+          "mind_map_seed": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResearchRunMindMapSeed"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "paper_ids": {
             "items": {
@@ -6153,6 +8390,17 @@
             ],
             "title": "Generation Mode",
             "type": "string"
+          },
+          "generation_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation Provider"
           },
           "grounded": {
             "default": false,
@@ -6951,6 +9199,83 @@
         "title": "WorkspaceCreate",
         "type": "object"
       },
+      "WorkspaceGenerationSettings": {
+        "properties": {
+          "options": {
+            "items": {
+              "$ref": "#/components/schemas/GenerationModelOption"
+            },
+            "title": "Options",
+            "type": "array"
+          },
+          "scopes": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/GenerationScopeSetting"
+            },
+            "propertyNames": {
+              "enum": [
+                "ask",
+                "discovery",
+                "analysis",
+                "mind_map"
+              ]
+            },
+            "title": "Scopes",
+            "type": "object"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "updated_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated By"
+          }
+        },
+        "required": [
+          "scopes"
+        ],
+        "title": "WorkspaceGenerationSettings",
+        "type": "object"
+      },
+      "WorkspaceGenerationSettingsUpdate": {
+        "properties": {
+          "scopes": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/GenerationScopeSetting"
+            },
+            "propertyNames": {
+              "enum": [
+                "ask",
+                "discovery",
+                "analysis",
+                "mind_map"
+              ]
+            },
+            "title": "Scopes",
+            "type": "object"
+          }
+        },
+        "required": [
+          "scopes"
+        ],
+        "title": "WorkspaceGenerationSettingsUpdate",
+        "type": "object"
+      },
       "WorkspaceMember": {
         "description": "A workspace member with the identity fields safe to show to collaborators.",
         "properties": {
@@ -7088,6 +9413,44 @@
           }
         },
         "summary": "Compare"
+      }
+    },
+    "/api/analysis/experiments/compare": {
+      "post": {
+        "operationId": "compare_experiments_api_analysis_experiments_compare_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExperimentComparisonRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExperimentComparisonResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Compare Experiments"
       }
     },
     "/api/analysis/gaps": {
@@ -7302,6 +9665,45 @@
         "summary": "Delete Comparison"
       }
     },
+    "/api/discovery/imports": {
+      "post": {
+        "description": "Import explicitly selected provider abstracts with a durable accepted audit record.",
+        "operationId": "import_discovery_papers_api_discovery_imports_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiscoveryImportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscoveryImportResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Import Discovery Papers"
+      }
+    },
     "/api/discovery/items": {
       "post": {
         "operationId": "create_discovery_item_api_discovery_items_post",
@@ -7409,6 +9811,45 @@
           }
         },
         "summary": "List Discovery Review Queue"
+      }
+    },
+    "/api/discovery/search": {
+      "post": {
+        "description": "Federated metadata discovery. Abstracts remain abstract-only evidence.",
+        "operationId": "search_discovery_papers_api_discovery_search_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiscoverySearchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscoverySearchResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Search Discovery Papers"
       }
     },
     "/api/embeddings/reindex": {
@@ -8974,6 +11415,534 @@
         "summary": "Me"
       }
     },
+    "/api/mind-map-nodes/{node_id}": {
+      "delete": {
+        "operationId": "delete_mind_map_node_api_mind_map_nodes__node_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "title": "Node Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Mind Map Node"
+      },
+      "patch": {
+        "operationId": "update_mind_map_node_api_mind_map_nodes__node_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "title": "Node Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MindMapNodeUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MindMapNode"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Mind Map Node"
+      }
+    },
+    "/api/mind-map-nodes/{node_id}/children": {
+      "post": {
+        "operationId": "confirm_mind_map_children_api_mind_map_nodes__node_id__children_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "title": "Node Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MindMapChildrenCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MindMapNode"
+                  },
+                  "title": "Response Confirm Mind Map Children Api Mind Map Nodes  Node Id  Children Post",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Confirm Mind Map Children"
+      }
+    },
+    "/api/mind-map-nodes/{node_id}/expand": {
+      "post": {
+        "operationId": "expand_mind_map_node_api_mind_map_nodes__node_id__expand_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "title": "Node Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MindMapCandidateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Expand Mind Map Node"
+      }
+    },
+    "/api/mind-map-nodes/{node_id}/graph-node": {
+      "post": {
+        "operationId": "promote_mind_map_node_api_mind_map_nodes__node_id__graph_node_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "title": "Node Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MindMapGraphNodeCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeNode"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Promote Mind Map Node"
+      }
+    },
+    "/api/mind-map-nodes/{node_id}/notes": {
+      "post": {
+        "operationId": "create_mind_map_note_api_mind_map_nodes__node_id__notes_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "title": "Node Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NoteCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Note"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Mind Map Note"
+      }
+    },
+    "/api/mind-map-nodes/{node_id}/research-actions": {
+      "post": {
+        "operationId": "confirm_mind_map_actions_api_mind_map_nodes__node_id__research_actions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "title": "Node Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MindMapActionConfirm"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ResearchAction"
+                  },
+                  "title": "Response Confirm Mind Map Actions Api Mind Map Nodes  Node Id  Research Actions Post",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Confirm Mind Map Actions"
+      }
+    },
+    "/api/mind-map-nodes/{node_id}/research-actions/generate": {
+      "post": {
+        "operationId": "generate_mind_map_actions_api_mind_map_nodes__node_id__research_actions_generate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "title": "Node Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MindMapActionCandidates"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Generate Mind Map Actions"
+      }
+    },
+    "/api/mind-maps": {
+      "get": {
+        "description": "Saved maps remain readable even when the emergency flag stops new work.",
+        "operationId": "list_mind_maps_api_mind_maps_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MindMap"
+                  },
+                  "title": "Response List Mind Maps Api Mind Maps Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Mind Maps"
+      },
+      "post": {
+        "operationId": "create_mind_map_api_mind_maps_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MindMapCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MindMap"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Mind Map"
+      }
+    },
+    "/api/mind-maps/generate": {
+      "post": {
+        "description": "Return an auditable candidate only; persistence requires POST /mind-maps.",
+        "operationId": "generate_mind_map_api_mind_maps_generate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MindMapGenerationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MindMapCandidateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Generate Mind Map"
+      }
+    },
+    "/api/mind-maps/{mind_map_id}": {
+      "delete": {
+        "operationId": "delete_mind_map_api_mind_maps__mind_map_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mind_map_id",
+            "required": true,
+            "schema": {
+              "title": "Mind Map Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Mind Map"
+      },
+      "get": {
+        "operationId": "get_mind_map_api_mind_maps__mind_map_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mind_map_id",
+            "required": true,
+            "schema": {
+              "title": "Mind Map Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MindMap"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Mind Map"
+      }
+    },
     "/api/notes": {
       "get": {
         "operationId": "list_notes_api_notes_get",
@@ -8992,6 +11961,23 @@
                 }
               ],
               "title": "Paper Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "origin_kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "const": "mind_map",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Origin Kind"
             }
           }
         ],
@@ -11479,6 +14465,60 @@
           }
         },
         "summary": "Update Tag"
+      }
+    },
+    "/api/workspace/generation-settings": {
+      "get": {
+        "operationId": "get_workspace_generation_settings_api_workspace_generation_settings_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceGenerationSettings"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Workspace Generation Settings"
+      },
+      "put": {
+        "operationId": "put_workspace_generation_settings_api_workspace_generation_settings_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceGenerationSettingsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceGenerationSettings"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Workspace Generation Settings"
       }
     },
     "/api/workspaces": {

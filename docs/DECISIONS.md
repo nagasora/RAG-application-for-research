@@ -141,6 +141,76 @@
 - Consequences: DB migrationやAPI契約変更なしで複数研究を分離できる。選択状態は端末ごとなので別端末では個人プロジェクトから始まる場合があり、共有プロジェクトの作成・メンバー管理権限は既存workspace roleに従う。
 - Date: 2026-07-22
 
+## D-20260727-14 外部検索結果は明示採用時に要旨の出所と範囲を固定する
+
+- Status: accepted
+- Linked items: CI-031
+- Context: 外部検索結果をそのまま全文論文としてLibraryへ入れると、providerのlive応答が変化した際に取得内容を再現できず、要旨をPDF本文やページ根拠のように誤認させる。既存のarXiv/DOI登録はprovider失敗時にも空のPaperを作成し得て、識別子表記差による重複も防げない。
+- Decision: 初期providerをSemantic Scholarに限定し、検索結果は一時表示だけにする。owner/editorが明示選択した候補だけを再取得してLibraryへ採用し、provider、取得時刻、license、rate limit policy、検索条件、応答snapshotをaccepted DiscoveryItemとしてPaperへ接続する。DOI・arXiv・Semantic Scholar IDをworkspace内で正規化して重複を防ぎ、要旨だけのPaperとCitationは`abstract_only` / `abstract`としてPDFページと区別する。provider失敗時はPaperを作らない。
+- Alternatives: 検索結果を全件pending queueへ保存する、検索結果を即時自動採用する、公開PDFも自動取得する、OpenAIで検索語を翻訳する。
+- Consequences: 採用操作時にproviderを再照会するため失敗や部分成功が起こり得るが、利用者が選んだ内容だけが監査可能な研究資産になる。全文根拠が必要な論文は別途原本ファイルを登録する。
+- Date: 2026-07-27
+
+## D-20260727-15 Deep Researchではなく学術provider横断検索を既定にする
+
+- Status: accepted
+- Linked items: CI-032
+- Context: 長時間・高額な自律調査を日常の論文発見に使うと、検索のたびに費用と待ち時間が増える。一方、質問文を日英の学術検索語へ展開し、複数の学術metadata providerを統合すれば、候補発見に必要なrecallと出所を低コストで確保できる。
+- Decision: 初期版はDeep Researchを使用せず、最大4件の日英query planをSemantic Scholar、OpenAlex、CiNii、J-STAGEへ並列送信する。CrossrefはDOI・訂正・撤回metadataの検証に限定し、provider順位はRRFで統合する。検索候補は短期Search Sessionにだけ保存し、明示採用時だけCI-031のPaper・DiscoveryItem来歴へ固定する。
+- Alternatives: Gemini Deep Researchを毎回実行する、単一providerだけを使う、検索結果を自動でLibraryへ登録する。
+- Consequences: 全Web調査ほどの網羅的レポートは作らないが、国内外候補を高速・低コスト・監査可能に取得できる。CiNii資格情報や一部providerがない環境では、利用可能providerだけで部分結果を返す。
+- Date: 2026-07-27
+
+## D-20260727-16 生成モデルとembeddingを分離しworkspace既定と実行時選択を監査する
+
+- Status: accepted
+- Linked items: CI-033
+- Context: OpenAI固定の生成経路ではコストや用途に応じたGemini利用ができない。生成モデルの変更をembeddingへ連動させると、既存vectorとの互換性が失われ再indexが必要になる。
+- Decision: API keyはサーバー環境変数だけで管理し、allowlist内のOpenAI/Gemini生成モデルをworkspace既定としてownerが設定する。editorはAsk・Discovery・Analysisの実行時だけ上書きできる。解決済みprovider/modelをResearchRun等へ不変保存し、embedding provider/modelは別設定として維持する。
+- Alternatives: ブラウザへAPI keyを保存する、利用者が任意モデルIDを送る、生成モデル変更時にembeddingも切り替える。
+- Consequences: providerごとのadapter・エラー分類・usage計測が必要になるが、秘密情報を露出せず費用と再現性を管理できる。Gemini未設定時もOpenAIまたは既存local fallbackを維持できる。
+- Date: 2026-07-27
+
+## D-20260727-17 実験結果と著者考察を分離し図表と原文へ固定する
+
+- Status: accepted
+- Linked items: CI-034
+- Context: 現行比較は本文先頭付近の一文をheuristicに拾うだけで、実験条件・測定値・結果・考察の区別やセル単位の根拠がない。図とcaptionもページ内の近接推定だけで、モデル解釈を科学的根拠として誤表示する危険がある。
+- Decision: 全文PDFだけを対象に、原本hash・抽出器版・model・prompt versionで版管理したExperimentProfileを比較実行時に生成する。観測結果、著者解釈、限界を別型にし、exact quote SourceSpanまたは検証可能なtable cellを必須にする。図はpage・bbox・caption・DocumentElementへ接続し、厳密に対応しない図は同一ページの参考として区別する。
+- Alternatives: 要旨だけから結果を推測する、図の見た目だけで数値を生成する、結果と考察を一つの要約欄へ混ぜる。
+- Consequences: 抽出できない項目は未報告となり、候補はreview_pendingから始まる。モデル費用は比較を明示実行した論文だけに発生し、同一版の結果はcacheされる。
+- Date: 2026-07-27
+
+## D-20260728-18 外部URL・実効モデル・部分比較を不変な監査境界で扱う
+
+- Status: accepted
+- Linked items: CI-032, CI-033, CI-034
+- Context: 学術provider由来のURLを未検証でリンク化すると危険schemeを実行し得る。選択した生成provider/modelだけを記録するとlocal fallback後の実体を識別できず、実験profileの一部生成失敗時に選択全件を保存しようとすると成功結果も残せない。また、監査・ExperimentProfileを持つmigration downgradeが黙示的にデータを破棄し得る。
+- Decision: provider URLはbackendで絶対HTTPSへ正規化し、frontendでも同じ条件を満たす場合だけリンク化する。ResearchRunとgeneration auditには要求したprovider/model、回答・SSE・会話messageには実際に本文を生成したprovider/modelを保存し、local fallbackは`local` / `extractive`（検索語未展開は`local` / `raw-query-v1`）として明示する。実験比較は成功profileが2件以上なら成功分だけを保存し、除外した論文と安定した失敗codeを比較snapshotへ残す。保存要求は画面で比較したimmutable profile IDを明示し、各evidence locatorを対応するSourceSpan IDへ固定する。監査、検索session、workspace生成設定、ExperimentProfile、ResearchRun生成情報が非空のdowngradeは変更前に拒否する。
+- Alternatives: provider URLをそのまま表示する、fallback時のmodelを空にする、全論文成功まで比較保存を禁止する、downgradeで監査データを無条件削除する。
+- Consequences: 一部providerの不正・非HTTPS URLはリンクとして表示されず、旧回答では生成情報が不明のまま残る。部分比較は失敗論文を除外したことが明示され、downgrade前には監査データの退避または明示解決が必要になる。
+- Date: 2026-07-28
+
+## D-20260729-19 編集可能なMindMapをKnowledge Graphと分離し明示確定で接続する
+
+- Status: accepted
+- Linked items: CI-035
+- Context: 現行のMind mapはKnowledge Graphの表示配置であり、単一root、親子順序、折りたたみ、部分木削除、生成候補の確定前レビューを表現できない。KnowledgeNodeとKnowledgeEdgeへ編集ツリーを混在させると、検証済み関係と構成用の親子関係が区別できず、削除時に研究資産を失う危険がある。
+- Decision: MindMap、MindMapNode、ノード根拠をworkspace scopedな独立集約として保存する。論文・選択根拠からの初期生成、枝展開、Research Action生成はResearchRunへ候補を記録するだけとし、利用者が選んだ候補だけを原子的に保存する。生成ノードは`review_pending`を維持し、Knowledge Graphへは明示操作で根拠付きKnowledgeNodeを作成してリンクする。MindMapの部分木削除はNote、Research Action、KnowledgeNode本体を削除しない。
+- Alternatives: Knowledge Graphのnode/edgeをMindMapの保存先として共用する、生成結果を自動保存する、MindMapとKnowledge Graphを常時双方向同期する。
+- Consequences: 専用schemaとAPIが増えるが、構成上の枝と研究上の根拠関係を混同せず、LLM停止時も手動編集と既存研究フローを維持できる。Graph昇格後の内容は自動同期しないため、利用者はそれぞれの成果物を明示的に更新する。
+- Date: 2026-07-29
+
+## D-20260801-20 DOI直接登録はCrossrefを主取得元に限定して可用性を上げる
+
+- Status: accepted
+- Linked items: CI-036
+- Context: 直接DOI登録はSemantic Scholar単独照会に失敗すると利用不能になり、利用者には取得中か失敗かが判別しづらかった。CrossrefはDOIの書誌情報を扱えるが、横断検索の順位へ加えるとCI-032のprovider設計と検索結果の性質を変えてしまう。
+- Decision: 明示入力されたDOIの書誌・要旨登録だけはCrossrefを主取得元にし、Crossrefが利用不能な場合に限りSemantic Scholarをfallbackとして利用する。両者の自動retryは行わず、実際に使用したproviderのsnapshot、license、rate policy、取得時刻を`abstract_only` Paperのprovenanceに固定する。CrossrefはCI-032の検索RRFへ加えない。
+- Alternatives: Semantic Scholar単独を維持する、DOIを全文PDFとして自動取得する、Crossrefを通常の検索providerにも追加する。
+- Consequences: DOI直接登録の可用性は上がるが、取得結果は書誌・要旨の範囲に留まる。提供元が両方利用不能または識別不能ならPaperを作成せず、利用者が再試行できる構造化エラーを返す。
+- Date: 2026-08-01
+
 ## 追記テンプレート
 
 ```text

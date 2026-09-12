@@ -11,9 +11,10 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 
 import type { EvidenceTarget } from "@/components/evidence-viewer";
+import { GenerationModelSelector } from "@/components/generation-model-selector";
 import {
   cancelResearchRun, createIdea, createResearchConversation, createResearchRun, exportConversationGraphDrafts, getLLMStatus, getResearchConversation, getResearchRun, importGraphSource, listGraphIdeaCandidates, listResearchConversations, previewSearch,
-  type AnswerClaim, type Citation, type GraphIdeaCandidate, type LLMStatus, type Paper, type ResearchConversation, type ResearchConversationDetail, type ResearchMessage, type SearchRequest,
+  type AnswerClaim, type Citation, type GenerationOverride, type GraphIdeaCandidate, type LLMStatus, type Paper, type ResearchConversation, type ResearchConversationDetail, type ResearchMessage, type SearchRequest,
 } from "@/lib/api/client";
 import { apiErrorMessage, toApiError } from "@/lib/api/error";
 import { normalizeResearchMarkdown } from "@/lib/markdown";
@@ -21,7 +22,13 @@ import { SEARCH_STAGES, streamSearch, type SearchStage, type SearchStreamMeta } 
 import { remarkCitationLinks } from "@/lib/remark-citations.mjs";
 import { UI_COPY } from "@/lib/copy";
 
-type Replay = { query: string; paperIds: string[]; revision: number; graphSeed?: { nodeId: string; content: string; intent: "explore" | "challenge" | "design" } } | null;
+type Replay = {
+  query: string;
+  paperIds: string[];
+  revision: number;
+  graphSeed?: { nodeId: string; content: string; intent: "explore" | "challenge" | "design" };
+  mindMapSeed?: { mindMapId: string; nodeId: string; content: string; intent: "explore" | "challenge" | "design" };
+} | null;
 type Phase = "idle" | "planning" | "answering" | "syncing";
 type EditorInteractionMode = Exclude<SearchRequest["interaction_mode"], "evidence">;
 type ClaimClassification = "evidence_backed" | "inference" | "general_knowledge" | "hypothesis" | "unverified";
@@ -31,7 +38,13 @@ const SEARCH_RESULT_LIMIT = 8;
 const HISTORY_STATIC_MEDIA_QUERY = "(min-width: 1280px)";
 const EVIDENCE_STATIC_MEDIA_QUERY = "(min-width: 1536px)";
 const TIMEOUT_CODES = new Set(["api_timeout", "model_timeout", "deadline_exceeded", "verification_skipped_timeout", "http_504"]);
-type AskAttempt = { query: string; paperIds: string[]; interactionMode: EditorInteractionMode; graphSeed: NonNullable<Replay>["graphSeed"] | null };
+type AskAttempt = {
+  query: string;
+  paperIds: string[];
+  interactionMode: EditorInteractionMode;
+  graphSeed: NonNullable<Replay>["graphSeed"] | null;
+  mindMapSeed: NonNullable<Replay>["mindMapSeed"] | null;
+};
 
 const EDITOR_INTERACTION_MODES: ReadonlyArray<{
   id: EditorInteractionMode;
@@ -134,8 +147,12 @@ function isNegativeCitation(citation: Citation) {
   return citation.retrieval_stance === "negative" || citation.evidence_role === "contradicts";
 }
 
+function isAbstractCitation(citation: Citation) {
+  return citation.evidence_scope === "abstract";
+}
+
 function canOpenPaperEvidence(citation: Citation) {
-  return citation.paper_id.trim().length > 0 && citation.chunk_id.trim().length > 0
+  return !isAbstractCitation(citation) && citation.paper_id.trim().length > 0 && citation.chunk_id.trim().length > 0
     && Number.isInteger(citation.page) && citation.page >= 1;
 }
 
@@ -146,6 +163,7 @@ function citationKey(citation: Citation) {
 function CitationBadges({ citation }: { citation: Citation }) {
   const negative = isNegativeCitation(citation);
   return <span className="inline-flex flex-wrap items-center gap-1">
+    {isAbstractCitation(citation) && <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[9px] font-bold text-amber-800">外部要旨</span>}
     {isGraphCitation(citation) && <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[9px] font-bold text-sky-800">知識グラフ由来</span>}
     {negative && <span className="rounded-full bg-red-50 px-2 py-0.5 text-[9px] font-bold text-red-800">反証根拠</span>}
     {!negative && citation.retrieval_stance === "positive" && isGraphCitation(citation) && <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] font-bold text-emerald-800">支持根拠</span>}
@@ -175,10 +193,10 @@ function CitationCard({ citation, openEvidence, compact = false }: {
   const content = <>
     <div className="flex items-start gap-2">
       <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-[#164f3b] text-[9px] font-bold text-white">{citation.index}</span>
-      <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-1"><p className="min-w-0 flex-1 truncate text-xs font-semibold text-[#26342e]">{citation.paper_title}</p><CitationBadges citation={citation}/></div><p className="mt-0.5 text-[10px] font-semibold text-[#a06a28]">抽出箇所: {citation.section} · p. {citation.page}</p></div>
+      <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-1"><p className="min-w-0 flex-1 truncate text-xs font-semibold text-[#26342e]">{citation.paper_title}</p><CitationBadges citation={citation}/></div><p className="mt-0.5 text-[10px] font-semibold text-[#a06a28]">{isAbstractCitation(citation) ? "外部要旨からの抜粋" : `抽出箇所: ${citation.section} · p. ${citation.page}`}</p></div>
       {openable && <ChevronRightIcon className="mt-1 h-3.5 w-3.5 shrink-0 text-[#35634f]"/>}
     </div>
-    <p className="mt-2 text-[10px] font-bold text-[#68736f]">{citation.source_quote ? "検索に使用した抜粋" : "原文抜粋"}</p>
+    <p className="mt-2 text-[10px] font-bold text-[#68736f]">{isAbstractCitation(citation) ? "要旨抜粋" : citation.source_quote ? "検索に使用した抜粋" : "原文抜粋"}</p>
     <p className={`mt-1 text-[11px] leading-5 text-[#52605b] ${compact ? "line-clamp-4" : "line-clamp-3"}`}>{citation.excerpt}</p>
     <CitationProvenance citation={citation}/>
     {openable && <span className="mt-2 inline-flex items-center gap-1 text-[10px] font-bold text-[#35634f]">対応する原文ページを確認<ChevronRightIcon className="h-3 w-3"/></span>}
@@ -219,7 +237,7 @@ function AnswerWithCitations({ text, citations, openEvidence }: { text: string; 
             const graph = isGraphCitation(citation); const contradictory = isNegativeCitation(citation);
             const className = `mx-0.5 inline-flex items-center gap-1 rounded px-1.5 py-0.5 align-baseline text-xs font-bold focus-visible:outline focus-visible:outline-2 ${contradictory ? "bg-red-100 text-red-800 focus-visible:outline-red-700" : "bg-[#dfeee6] text-[#164f3b] focus-visible:outline-[#164f3b]"}`;
             const label = <>{children}{graph && <span className="text-[8px]">グラフ</span>}{contradictory && <span className="rounded bg-white/70 px-1 text-[8px]">反証</span>}</>;
-            if (!canOpenPaperEvidence(citation)) return <span className={className} title="対応する原文ページがないグラフ根拠です">{label}</span>;
+            if (!canOpenPaperEvidence(citation)) return <span className={className} title={isAbstractCitation(citation) ? "外部要旨の根拠です。原文ページはありません。" : "対応する原文ページがないグラフ根拠です"}>{label}</span>;
             return <button type="button" onClick={() => openEvidence({ paperId:citation.paper_id, paperTitle:citation.paper_title, page:citation.page, chunkId:citation.chunk_id })} aria-label={`引用${citation.index}: ${citation.paper_title} ${citation.page}ページを開く`} className={`${className} hover:brightness-95`} title={`${citation.paper_title} p.${citation.page}`}>{label}</button>;
           }
           return <a href={href} target="_blank" rel="noreferrer noopener" className="font-semibold text-[#176143] underline decoration-[#8cb9a4] underline-offset-4">{children}</a>;
@@ -246,11 +264,18 @@ function AnswerClassificationBadges({ interactionMode, draft, claims }: {
   </div>;
 }
 
-function AssistantResponse({ text, citations, openEvidence, interactionMode, draft, claims, loading = false }: {
+function generationLabel(provider?: string | null, model?: string | null) {
+  if (!provider && !model) return null;
+  return [provider, model].filter((value): value is string => Boolean(value?.trim())).join(" · ") || null;
+}
+
+function AssistantResponse({ text, citations, openEvidence, interactionMode, draft, claims, generationProvider, generationModel, loading = false }: {
   text: string; citations: Citation[]; openEvidence: (target: EvidenceTarget) => void;
-  interactionMode?: SearchRequest["interaction_mode"] | null; draft?: boolean | null; claims?: AnswerClaim[]; loading?: boolean;
+  interactionMode?: SearchRequest["interaction_mode"] | null; draft?: boolean | null; claims?: AnswerClaim[];
+  generationProvider?: string | null; generationModel?: string | null; loading?: boolean;
 }) {
-  return <div className="grid grid-cols-[32px_minmax(0,1fr)] gap-3"><div className="grid h-8 w-8 place-items-center rounded-full bg-[#164f3b] text-white"><SparklesIcon className={`h-4 w-4 ${loading ? "animate-pulse" : ""}`}/></div><div className="min-w-0"><AnswerClassificationBadges interactionMode={interactionMode} draft={draft} claims={claims}/>{text ? <AnswerWithCitations text={text} citations={citations} openEvidence={openEvidence}/> : <div className="space-y-3 pt-2"><div className="h-3 w-10/12 animate-pulse rounded bg-[#dfe3dd]"/><div className="h-3 w-full animate-pulse rounded bg-[#dfe3dd]"/><div className="h-3 w-7/12 animate-pulse rounded bg-[#dfe3dd]"/></div>}</div></div>;
+  const generation = generationLabel(generationProvider, generationModel);
+  return <div className="grid grid-cols-[32px_minmax(0,1fr)] gap-3"><div className="grid h-8 w-8 place-items-center rounded-full bg-[#164f3b] text-white"><SparklesIcon className={`h-4 w-4 ${loading ? "animate-pulse" : ""}`}/></div><div className="min-w-0"><AnswerClassificationBadges interactionMode={interactionMode} draft={draft} claims={claims}/>{generation && <p className="mb-2 text-[10px] font-semibold text-[#52605b]" aria-label={`回答生成: ${generation}`}>生成: {generation}</p>}{text ? <AnswerWithCitations text={text} citations={citations} openEvidence={openEvidence}/> : <div className="space-y-3 pt-2"><div className="h-3 w-10/12 animate-pulse rounded bg-[#dfe3dd]"/><div className="h-3 w-full animate-pulse rounded bg-[#dfe3dd]"/><div className="h-3 w-7/12 animate-pulse rounded bg-[#dfe3dd]"/></div>}</div></div>;
 }
 
 function IdeaInboxActions({ message, canWrite, saveStates, saveErrors, saveClaim }: {
@@ -300,16 +325,18 @@ function AnswerEvidenceList({ citations, openEvidence }: { citations: Citation[]
   </section>;
 }
 
-export function AskWorkspace({ workspaceId, papers, selected, setSelected, openEvidence, replay, onReplayConsumed, canWrite }: {
+export function AskWorkspace({ workspaceId, papers, selected, setSelected, openEvidence, replay, onReplayConsumed, canWrite, canManageDefaults = false }: {
   workspaceId: string;
   papers: Paper[]; selected: string[]; setSelected: (ids: string[]) => void;
-  openEvidence: (target: EvidenceTarget) => void; replay: Replay; onReplayConsumed?: () => void; canWrite: boolean;
+  openEvidence: (target: EvidenceTarget) => void; replay: Replay; onReplayConsumed?: () => void; canWrite: boolean; canManageDefaults?: boolean;
 }) {
   const readyPapers = useMemo(() => papers.filter(paper => paper.status === "ready"), [papers]);
   const readyIds = useMemo(() => new Set(readyPapers.map(paper => paper.id)), [readyPapers]);
   const [query, setQuery] = useState("");
   const [graphSeed, setGraphSeed] = useState<NonNullable<Replay>["graphSeed"] | null>(null);
+  const [mindMapSeed, setMindMapSeed] = useState<NonNullable<Replay>["mindMapSeed"] | null>(null);
   const [interactionMode, setInteractionMode] = useState<EditorInteractionMode>("synthesis");
+  const [generationOverride, setGenerationOverride] = useState<GenerationOverride>({});
   const [conversations, setConversations] = useState<ResearchConversation[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const activeIdRef = useRef<string | null>(null);
@@ -380,6 +407,7 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
   const replaceQuery = (nextQuery: string) => {
     setQuery(nextQuery);
     setGraphSeed(null);
+    setMindMapSeed(null);
   };
 
   const selectConversation = (conversationId: string) => {
@@ -390,6 +418,7 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
     setActiveId(conversationId);
     setLastMeta(null);
     setGraphSeed(null);
+    setMindMapSeed(null);
     setLiveQuestion(""); setLiveAnswer(""); setLiveCitations([]);
     setSelected([]); setHistoryOpen(false); setEvidenceOpen(false); setError(""); setSyncNotice(""); setSourceNotice(""); setTimeoutRetry(null);
   };
@@ -528,7 +557,9 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
     setQuery(replay.query);
     setSelected(replay.paperIds.filter(id => readyIdsRef.current.has(id)).slice(0, MAX_SOURCE_PAPERS));
     setGraphSeed(replay.graphSeed ?? null);
+    setMindMapSeed(replay.mindMapSeed ?? null);
     if (replay.graphSeed) setInteractionMode(replay.graphSeed.intent);
+    if (replay.mindMapSeed) setInteractionMode(replay.mindMapSeed.intent);
     onReplayConsumed?.();
   }, [replay?.revision]);
   useEffect(() => { messageEndRef.current?.scrollIntoView({ block:"end", behavior:"smooth" }); }, [detail?.messages?.length, liveAnswer, liveQuestion]);
@@ -542,7 +573,7 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
     sourceChoiceRevisionRef.current += 1;
     sourceRestoreRevisionRef.current += 1;
     activeIdRef.current = null;
-    setActiveId(null); setDetail(null); setQuery(""); setGraphSeed(null); setLastMeta(null);
+    setActiveId(null); setDetail(null); setQuery(""); setGraphSeed(null); setMindMapSeed(null); setLastMeta(null); setGenerationOverride({});
     setLiveQuestion(""); setLiveAnswer(""); setLiveCitations([]);
     setSelected([]); setError(""); setSyncNotice(""); setSourceNotice(""); setTimeoutRetry(null); setHistoryOpen(false); setEvidenceOpen(false);
   };
@@ -553,11 +584,12 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
     const paperIds = retry?.paperIds ?? [...selected];
     const attemptMode = retry?.interactionMode ?? interactionMode;
     const attemptGraphSeed = retry?.graphSeed ?? graphSeed;
+    const attemptMindMapSeed = retry?.mindMapSeed ?? mindMapSeed;
     if (busy) return;
     if (Array.from(prompt).length < 2) { setError("質問は2文字以上で入力してください。"); return; }
     if (paperIds.length < 1) { setError(UI_COPY.ask.sourceEmpty); return; }
     if (paperIds.length > MAX_SOURCE_PAPERS) { setError(UI_COPY.ask.sourceMaximum); return; }
-    const attempt: AskAttempt = { query:prompt, paperIds:[...paperIds], interactionMode:attemptMode, graphSeed:attemptGraphSeed };
+    const attempt: AskAttempt = { query:prompt, paperIds:[...paperIds], interactionMode:attemptMode, graphSeed:attemptGraphSeed, mindMapSeed:attemptMindMapSeed };
     setTimeoutRetry(null);
     if (!canWrite) {
       setError(""); setSyncNotice(""); setLiveQuestion(prompt); setLiveAnswer(""); setLiveCitations([]);
@@ -583,12 +615,13 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
     let streamCompleted = false;
     let streamCancelled = false;
     const runGraphSeed = attemptGraphSeed;
+    const runMindMapSeed = attemptMindMapSeed;
     try {
       const researchRun = await createResearchRun({
         source_paper_ids:paperIds,
         purpose:prompt,
         success_criteria:"質問に対する根拠付き回答を記録する",
-        plan:{ origin:"ask_workspace", interaction_mode:attemptMode, ...(runGraphSeed ? { graph_seed:{ node_id:runGraphSeed.nodeId, content:runGraphSeed.content, intent:runGraphSeed.intent } } : {}) },
+        plan:{ origin:"ask_workspace", interaction_mode:attemptMode, ...(runGraphSeed ? { graph_seed:{ node_id:runGraphSeed.nodeId, content:runGraphSeed.content, intent:runGraphSeed.intent } } : {}), ...(runMindMapSeed ? { mind_map_seed:{ mind_map_id:runMindMapSeed.mindMapId, node_id:runMindMapSeed.nodeId } } : {}) },
         model:llmStatus?.model ?? "",
         prompt_version:"ask-workspace-v1",
       }, controller.signal);
@@ -603,7 +636,7 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
           throw conversationError;
         }
       }
-      for await (const streamEvent of streamSearch({ query:prompt, paper_ids:paperIds, limit:SEARCH_RESULT_LIMIT, conversation_id:conversationId, research_run_id:researchRun.id, interaction_mode:attemptMode }, controller.signal)) {
+      for await (const streamEvent of streamSearch({ query:prompt, paper_ids:paperIds, limit:SEARCH_RESULT_LIMIT, conversation_id:conversationId, research_run_id:researchRun.id, interaction_mode:attemptMode, ...generationOverride } as SearchRequest, controller.signal)) {
         if (streamEvent.type === "token") { setPhase("answering"); setLiveAnswer(current => current + streamEvent.value); }
         if (streamEvent.type === "citations") setLiveCitations(streamEvent.value);
         if (streamEvent.type === "stage") setSearchStage(streamEvent.value);
@@ -612,6 +645,7 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
         if (streamEvent.type === "cancelled") { streamCompleted = true; streamCancelled = true; }
       }
       if (streamCancelled) setSyncNotice("回答表示を中断しました。保存済みの会話を同期しています。");
+      setMindMapSeed(null);
       setQuery(""); setGraphSeed(null); setPhase("syncing"); setSearchStage("saving");
       try {
         detailAbortRef.current?.abort();
@@ -773,7 +807,7 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
     : Boolean(llmStatus?.configured && llmStatus.agentic_dependencies_available && !llmFailure);
   const llmLabel = lastMeta
     ? lastMeta.grounded
-      ? `${lastMeta.model ?? "LLM"} · 引用検証済み`
+      ? `${generationLabel(lastMeta.generation_provider, lastMeta.model) ?? "LLM"} · 引用検証済み`
       : `${lastMeta.llm_succeeded ? (lastMeta.fallback_reason ? "LLM使用 · 根拠監査で保留" : "LLM使用 · 引用形式チェック済み") : "ローカル回答"}${llmFailure ? ` · ${llmFailure}` : ""}`
     : llmStatus
       ? !llmStatus.configured ? "LLM未接続 · APIキー未反映"
@@ -821,9 +855,9 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
               <div className="mx-auto max-w-3xl space-y-7">
                 {!messages.length && !liveQuestion && !detailLoading && <div className="grid min-h-[42vh] place-items-center text-center"><div><div className="mx-auto grid h-12 w-12 place-items-center rounded-2xl bg-[#e1eee7] text-[#164f3b]"><SparklesIcon className="h-6 w-6"/></div><h1 className="serif mt-5 text-3xl font-semibold">何を一緒に考えますか？</h1><p className="mx-auto mt-3 max-w-xl text-sm leading-7 text-[#68736f]">論文を横断して詳しくまとめ、LLMの知識で補足します。根拠にした原文は引用番号から直接確認できます。</p></div></div>}
                 {detailLoading && <div role="status" className="py-20 text-center text-sm text-[#68736f]">会話履歴を読み込んでいます…</div>}
-                {messages.map(message => <article key={message.id} aria-label={message.role === "user" ? "あなた" : "PaperPilot"} className={message.role === "user" ? "ml-auto max-w-[88%] rounded-3xl rounded-br-md bg-[#e6e8e3] px-5 py-3 text-sm leading-7 text-[#26312c]" : "max-w-full"}>{message.role === "assistant" ? <><AssistantResponse text={message.content} citations={message.citations ?? []} openEvidence={openEvidence} interactionMode={message.interaction_mode} draft={message.draft} claims={message.claims}/><IdeaInboxActions message={message} canWrite={canWrite} saveStates={ideaSaveStates} saveErrors={ideaSaveErrors} saveClaim={saveClaimToIdeaInbox}/><AnswerEvidenceList citations={message.citations ?? []} openEvidence={openEvidence}/><div className="ml-11 mt-3"><button type="button" disabled={!canWrite || busy || graphSaving} onClick={() => void openGraphCandidates(message)} className="rounded-full border border-[#9ab7a7] px-3 py-1.5 text-[11px] font-semibold text-[#24523e] hover:bg-[#edf5f0] disabled:cursor-not-allowed disabled:opacity-45">研究アイデアをグラフへ</button></div></> : <p className="whitespace-pre-wrap">{message.content}</p>}</article>)}
+                {messages.map(message => <article key={message.id} aria-label={message.role === "user" ? "あなた" : "PaperPilot"} className={message.role === "user" ? "ml-auto max-w-[88%] rounded-3xl rounded-br-md bg-[#e6e8e3] px-5 py-3 text-sm leading-7 text-[#26312c]" : "max-w-full"}>{message.role === "assistant" ? <><AssistantResponse text={message.content} citations={message.citations ?? []} openEvidence={openEvidence} interactionMode={message.interaction_mode} draft={message.draft} claims={message.claims} generationProvider={message.generation_provider} generationModel={message.generation_model}/><IdeaInboxActions message={message} canWrite={canWrite} saveStates={ideaSaveStates} saveErrors={ideaSaveErrors} saveClaim={saveClaimToIdeaInbox}/><AnswerEvidenceList citations={message.citations ?? []} openEvidence={openEvidence}/><div className="ml-11 mt-3"><button type="button" disabled={!canWrite || busy || graphSaving} onClick={() => void openGraphCandidates(message)} className="rounded-full border border-[#9ab7a7] px-3 py-1.5 text-[11px] font-semibold text-[#24523e] hover:bg-[#edf5f0] disabled:cursor-not-allowed disabled:opacity-45">研究アイデアをグラフへ</button></div></> : <p className="whitespace-pre-wrap">{message.content}</p>}</article>)}
                 {liveQuestion && <article aria-label="あなた" className="ml-auto max-w-[88%] rounded-3xl rounded-br-md bg-[#e6e8e3] px-5 py-3 text-sm leading-7 text-[#26312c]"><p className="whitespace-pre-wrap">{liveQuestion}</p></article>}
-                {(liveAnswer || busy) && <article aria-label="PaperPilotの回答"><AssistantResponse text={liveAnswer} citations={liveCitations} openEvidence={openEvidence} interactionMode={lastMeta?.interaction_mode ?? interactionMode} draft={lastMeta?.draft} claims={lastMeta?.claims} loading={!liveAnswer}/></article>}
+                {(liveAnswer || busy) && <article aria-label="PaperPilotの回答"><AssistantResponse text={liveAnswer} citations={liveCitations} openEvidence={openEvidence} interactionMode={lastMeta?.interaction_mode ?? interactionMode} draft={lastMeta?.draft} claims={lastMeta?.claims} generationProvider={lastMeta?.generation_provider} generationModel={lastMeta?.model} loading={!liveAnswer}/></article>}
                 <div ref={messageEndRef}/>
               </div>
             </div>
@@ -835,6 +869,7 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
               {timeoutRetry && <div role="status" className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-950"><span>{UI_COPY.ask.timeout}</span><button type="button" disabled={busy} onClick={() => void ask(undefined, timeoutRetry)} className="rounded-full border border-amber-500 px-3 py-1.5 font-bold disabled:opacity-40">{UI_COPY.ask.retrySame}</button></div>}
               {fallbackNotice && <div role="status" className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-medium leading-5 text-amber-950"><span className="font-bold">代替回答について:</span> {fallbackNotice}</div>}
               {graphSeed && <div role="status" className="mb-3 rounded-xl border border-[#b9d4c5] bg-[#edf7f1] px-4 py-3 text-xs leading-5 text-[#23513e]">グラフの選択項目から派生した質問です。項目の内容は研究実行記録に残り、回答は原文・引用から確認できます。</div>}
+              {mindMapSeed && <div role="status" className="mb-3 rounded-xl border border-[#b9d4c5] bg-[#edf7f1] px-4 py-3 text-xs leading-5 text-[#23513e]">マインドマップの選択項目から派生した質問です。map/node IDと再検証した本文スナップショットを研究実行記録に残します。</div>}
               <form onSubmit={event => void ask(event)} className="rounded-3xl border border-[#bfc9c2] bg-white p-2 shadow-[0_16px_50px_rgba(28,45,37,.13)]">
                 {canWrite && <fieldset disabled={busy} className="mb-2 rounded-2xl bg-[#f5f8f5] px-3 py-2.5">
                   <legend className="sr-only">今回の目的</legend>
@@ -848,6 +883,7 @@ export function AskWorkspace({ workspaceId, papers, selected, setSelected, openE
                   <p className="mt-1 truncate px-1 text-[10px] leading-4 text-[#52605b]">{EDITOR_INTERACTION_MODES.find(mode => mode.id === interactionMode)?.description}</p>
                   {interactionMode !== "synthesis" && <p role="status" className="mt-1 truncate px-1 text-[10px] leading-4 text-amber-900">未検証の下書きです。論文原文と引用を確認してから採否を判断してください。</p>}
                 </fieldset>}
+                <div className="mt-2 px-1"><GenerationModelSelector scope="ask" canOverride={canWrite && !busy} canManageDefaults={canManageDefaults} value={generationOverride} onChange={setGenerationOverride}/></div>
                 <textarea aria-label="研究について質問" disabled={busy} maxLength={4000} value={query} onChange={event => replaceQuery(event.target.value)} rows={3} placeholder={canWrite ? "論文をまとめる、仮説を反証する、次の実験を設計する…" : "論文の原文根拠を検索…（LLM回答は編集者のみ）"} className="min-h-20 w-full resize-none rounded-2xl bg-transparent px-4 py-3 text-base outline-none placeholder:text-[#9ba19e]"/>
                 <div className="flex items-center justify-between gap-3 px-2 pb-1"><span className="flex min-w-0 items-center gap-1.5 truncate text-[11px] font-medium text-[#52605b]"><CircleStackIcon className="h-3.5 w-3.5 shrink-0 text-[#35634f]"/><span className="truncate">{UI_COPY.ask.sources} · {sourceScopeLabel}</span></span>{busy ? <button type="button" onClick={stopDisplay} className="inline-flex shrink-0 items-center gap-2 rounded-full border border-[#b8bfba] px-4 py-2 text-xs font-semibold"><StopIcon className="h-4 w-4"/>表示を中断</button> : <button disabled={Array.from(query.trim()).length < 2 || selected.length < 1 || selected.length > MAX_SOURCE_PAPERS} className="shrink-0 rounded-full bg-[#164f3b] px-5 py-2.5 text-xs font-semibold text-white disabled:opacity-40">{canWrite ? "質問する" : "原文を検索"}</button>}</div>
               </form>

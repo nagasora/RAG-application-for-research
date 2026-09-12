@@ -30,6 +30,7 @@ class Paper(BaseModel):
     abstract: str = ""
     source: str = "upload"
     external_id: str | None = None
+    content_scope: Literal["full_text", "abstract_only"] = "full_text"
     status: Literal["ready", "processing", "failed"] = "ready"
     page_count: int = 0
     created_at: str = Field(default_factory=utc_now)
@@ -49,6 +50,7 @@ class PaperSummary(BaseModel):
     abstract: str
     source: str
     external_id: str | None
+    content_scope: Literal["full_text", "abstract_only"] = "full_text"
     status: str
     page_count: int
     chunk_count: int
@@ -227,9 +229,9 @@ class HypothesisCardStatusUpdate(BaseModel):
 
 
 class DiscoveryItemCreate(BaseModel):
-    provider: Literal["semantic_scholar"] = "semantic_scholar"
+    provider: Literal["semantic_scholar", "openalex", "cinii", "jstage"] = "semantic_scholar"
     provider_paper_id: str = Field(min_length=1, max_length=256)
-    classification: Literal["supports", "contradicts", "boundary_condition", "method_alternative", "duplicate"]
+    classification: Literal["supports", "contradicts", "boundary_condition", "method_alternative", "duplicate", "unclassified"] = "unclassified"
     title: str = Field(min_length=1, max_length=20_000)
     abstract: str = ""
     source_quote: str = ""
@@ -243,6 +245,8 @@ class DiscoveryItem(DiscoveryItemCreate):
     id: str
     workspace_id: str
     created_by: str | None = None
+    paper_id: str | None = None
+    search_context: dict = Field(default_factory=dict)
     review_status: Literal["pending", "accepted", "rejected"] = "pending"
     fetched_at: str
     created_at: str
@@ -250,6 +254,149 @@ class DiscoveryItem(DiscoveryItemCreate):
 
 class DiscoveryReviewUpdate(BaseModel):
     review_status: Literal["accepted", "rejected"]
+
+
+class DiscoverySearchRequest(BaseModel):
+    query: str = Field(min_length=2, max_length=4_000)
+    search_mode: Literal["keyword", "question"] = "keyword"
+    year_from: int | None = Field(default=None, ge=1800, le=2200)
+    year_to: int | None = Field(default=None, ge=1800, le=2200)
+    sort: Literal["relevance", "newest", "citation_count"] = "relevance"
+    cursor: str | None = Field(default=None, max_length=2_000)
+    providers: list[Literal["semantic_scholar", "openalex", "cinii", "jstage"]] = Field(default_factory=lambda: ["semantic_scholar", "openalex", "jstage"], max_length=4)
+    generation_provider: str | None = Field(default=None, max_length=32)
+    generation_model: str | None = Field(default=None, max_length=128)
+
+    @model_validator(mode="after")
+    def valid_year_range(self):
+        if self.year_from is not None and self.year_to is not None and self.year_from > self.year_to:
+            raise ValueError("year_from must not exceed year_to")
+        return self
+
+    @field_validator("providers")
+    @classmethod
+    def unique_providers(cls, values):
+        if not values or len(values) != len(set(values)):
+            raise ValueError("providers must be unique and non-empty")
+        return values
+
+
+class DiscoverySearchContext(BaseModel):
+    query: str = Field(min_length=2, max_length=4_000)
+    year_from: int | None = Field(default=None, ge=1800, le=2200)
+    year_to: int | None = Field(default=None, ge=1800, le=2200)
+    sort: Literal["relevance", "newest", "citation_count"] = "relevance"
+
+    @model_validator(mode="after")
+    def valid_year_range(self):
+        if self.year_from is not None and self.year_to is not None and self.year_from > self.year_to:
+            raise ValueError("year_from must not exceed year_to")
+        return self
+
+
+class DiscoverySearchItem(BaseModel):
+    candidate_id: str
+    provider_paper_id: str
+    provider: str = "semantic_scholar"
+    provider_ids: dict[str, str] = Field(default_factory=dict)
+    source_providers: list[str] = Field(default_factory=list)
+    language: str | None = None
+    match_reasons: list[str] = Field(default_factory=list)
+    possible_duplicate_of: str | None = None
+    title: str
+    authors: list[str] = Field(default_factory=list)
+    year: int | None = None
+    publication_date: str | None = None
+    venue: str | None = None
+    abstract: str = ""
+    citation_count: int = Field(default=0, ge=0)
+    external_ids: dict[str, str] = Field(default_factory=dict)
+    source_url: str = ""
+    existing_paper_id: str | None = None
+    content_scope: Literal["abstract_only"] = "abstract_only"
+
+
+class DiscoverySearchResponse(BaseModel):
+    provider: Literal["semantic_scholar"] = "semantic_scholar"
+    fetched_at: str
+    total_estimate: int | None = Field(default=None, ge=0)
+    next_cursor: str | None = None
+    items: list[DiscoverySearchItem] = Field(default_factory=list)
+    search_session_id: str | None = None
+    expires_at: str | None = None
+    providers: list["DiscoveryProviderStatus"] = Field(default_factory=list)
+    partial: bool = False
+    warnings: list[str] = Field(default_factory=list)
+    query_plan: list[str] = Field(default_factory=list)
+    search_plan: dict = Field(default_factory=dict)
+    providers_used: list[str] = Field(default_factory=list)
+    degraded_providers: list[str] = Field(default_factory=list)
+    generation_provider: str | None = None
+    generation_model: str | None = None
+
+
+class DiscoveryProviderStatus(BaseModel):
+    provider: str
+    status: Literal["succeeded", "failed", "disabled"]
+    item_count: int = Field(default=0, ge=0)
+    error: Literal["timeout", "rate_limited", "unavailable", "invalid_response", "disabled"] | None = None
+    warning: str | None = None
+
+
+class DiscoverySessionImportRequest(BaseModel):
+    session_id: str
+    candidate_ids: list[str] = Field(min_length=1, max_length=20)
+
+    @field_validator("candidate_ids")
+    @classmethod
+    def unique_candidate_ids(cls, values: list[str]) -> list[str]:
+        if len(set(values)) != len(values):
+            raise ValueError("candidate_ids must be unique")
+        return values
+
+
+class DiscoveryImportRequest(BaseModel):
+    provider_paper_ids: list[str] = Field(default_factory=list, max_length=20)
+    search_context: DiscoverySearchContext | None = None
+    search_session_id: str | None = None
+    candidate_ids: list[str] = Field(default_factory=list, max_length=20)
+
+    @field_validator("provider_paper_ids")
+    @classmethod
+    def unique_provider_ids(cls, values: list[str]) -> list[str]:
+        normalized = [value.strip() for value in values]
+        if not all(normalized) or len(set(normalized)) != len(normalized):
+            raise ValueError("provider_paper_ids must be unique non-empty values")
+        return normalized
+
+    @field_validator("candidate_ids")
+    @classmethod
+    def unique_candidate_ids(cls, values: list[str]) -> list[str]:
+        normalized = [value.strip() for value in values]
+        if not all(normalized) or len(set(normalized)) != len(normalized):
+            raise ValueError("candidate_ids must be unique non-empty values")
+        return normalized
+
+    @model_validator(mode="after")
+    def import_source(self):
+        legacy=bool(self.provider_paper_ids)
+        session=bool(self.search_session_id or self.candidate_ids)
+        if legacy == session or (legacy and self.search_context is None) or (session and (not self.search_session_id or not self.candidate_ids)):
+            raise ValueError("provide legacy provider_paper_ids with search_context or search_session_id with candidate_ids")
+        return self
+
+
+class DiscoveryImportItem(BaseModel):
+    candidate_id: str | None = Field(default=None, exclude=True)
+    provider_paper_id: str
+    status: Literal["imported", "duplicate", "failed"]
+    paper_id: str | None = None
+    discovery_item_id: str | None = None
+    error: str | None = None
+
+
+class DiscoveryImportResponse(BaseModel):
+    items: list[DiscoveryImportItem] = Field(default_factory=list)
 
 
 class BeliefEventCreate(BaseModel):
@@ -741,6 +888,7 @@ class ResearchRun(BaseModel):
     success_criteria: str = ""
     plan: dict | list = Field(default_factory=dict)
     model: str = ""
+    generation_provider: str = ""
     prompt_version: str = ""
     status: Literal["queued", "running", "succeeded", "failed", "cancelled"]
     cancel_requested: bool = False
@@ -748,6 +896,27 @@ class ResearchRun(BaseModel):
     completed_at: str | None = None
     created_at: str
     artifacts: list[RunArtifact] = Field(default_factory=list)
+
+
+class GenerationScopeSetting(BaseModel):
+    provider: Literal["openai", "gemini"]
+    model: str
+
+
+class GenerationModelOption(GenerationScopeSetting):
+    available: bool
+    reason: str | None = None
+
+
+class WorkspaceGenerationSettings(BaseModel):
+    scopes: dict[Literal["ask", "discovery", "analysis", "mind_map"], GenerationScopeSetting]
+    options: list[GenerationModelOption] = Field(default_factory=list)
+    updated_at: str | None = None
+    updated_by: str | None = None
+
+
+class WorkspaceGenerationSettingsUpdate(BaseModel):
+    scopes: dict[Literal["ask", "discovery", "analysis", "mind_map"], GenerationScopeSetting]
 
 
 class ResearchRunGraphSeed(BaseModel):
@@ -766,11 +935,17 @@ class ResearchRunGraphSeed(BaseModel):
         return value
 
 
+class ResearchRunMindMapSeed(BaseModel):
+    mind_map_id: str = Field(min_length=1, max_length=128)
+    node_id: str | None = Field(default=None, max_length=128)
+
+
 class ResearchRunPlan(BaseModel):
     """Free-form run plan with an optional, governed graph seed."""
 
     model_config = ConfigDict(extra="allow")
     graph_seed: ResearchRunGraphSeed | None = None
+    mind_map_seed: ResearchRunMindMapSeed | None = None
 
 
 class ResearchRunCreate(BaseModel):
@@ -867,6 +1042,8 @@ class ResearchActionCreate(BaseModel):
     source_span_id: str | None = None
     evidence_ref_id: str | None = None
     origin_node_id: str | None = None
+    mind_map_node_id: str | None = None
+    origin_kind: Literal["mind_map"] | None = None
     experiment_plan_id: str | None = None
     due_date: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
     generation_class: Literal["hypothesis", "inference", "unverified"] = "unverified"
@@ -882,11 +1059,11 @@ class ResearchActionCreate(BaseModel):
     @model_validator(mode="after")
     def mind_map_extraction_has_a_stable_identity(self):
         """Keep the DB idempotency key complete for deterministic map tasks."""
-        if self.generation_metadata.get("source") != "mind_map_task_extraction_v1":
+        if not str(self.generation_metadata.get("source") or "").startswith("mind_map_task_extraction_v1"):
             return self
         ordinal = self.generation_metadata.get("ordinal")
-        if not self.origin_node_id:
-            raise ValueError("mind-map task extraction requires origin_node_id")
+        if not self.origin_node_id and not self.mind_map_node_id:
+            raise ValueError("mind-map task extraction requires origin_node_id or mind_map_node_id")
         if isinstance(ordinal, bool) or not isinstance(ordinal, int) or ordinal < 0:
             raise ValueError("mind-map task extraction requires a non-negative integer ordinal")
         return self
@@ -910,6 +1087,8 @@ class ResearchAction(BaseModel):
     source_span_id: str | None = None
     evidence_ref_id: str | None = None
     origin_node_id: str | None = None
+    mind_map_node_id: str | None = None
+    origin_kind: Literal["mind_map"] | None = None
     experiment_plan_id: str | None = None
     title: str
     description: str = ""
@@ -1083,7 +1262,10 @@ class SearchRequest(BaseModel):
     limit: int = Field(default=8, ge=1, le=20)
     conversation_id: str | None = None
     research_run_id: str | None = None
+    mind_map_seed: ResearchRunMindMapSeed | None = None
     interaction_mode: Literal["evidence", "synthesis", "explore", "challenge", "design", "update"] = "synthesis"
+    generation_provider: str | None = Field(default=None, max_length=32)
+    generation_model: str | None = Field(default=None, max_length=128)
 
 
 class Citation(BaseModel):
@@ -1095,6 +1277,7 @@ class Citation(BaseModel):
     section: str
     excerpt: str
     score: float
+    evidence_scope: Literal["full_text", "abstract"] = "full_text"
     # Existing paper citations keep the original required fields above.  The
     # optional provenance fields let graph-backed evidence travel through the
     # same API and AgenticRAG pipeline without breaking older clients.
@@ -1147,6 +1330,7 @@ class SearchResponse(BaseModel):
     draft: bool = False
     generation_mode: Literal["agentic_rag", "local_fallback"] = "local_fallback"
     model: str | None = None
+    generation_provider: str | None = None
     retrieval_queries: list[str] = Field(default_factory=list)
     grounded: bool = False
     llm_attempted: bool = False
@@ -1220,6 +1404,12 @@ class ResearchMessage(BaseModel):
     draft: bool | None = None
     claims: list[AnswerClaim] = Field(default_factory=list)
     research_run_id: str | None = None
+    # Effective generator of this persisted answer. The requested governed
+    # selection is retained in the ResearchRun and generation audit instead.
+    generation_provider: str | None = None
+    generation_model: str | None = None
+    generation_mode: Literal["agentic_rag", "local_fallback"] | None = None
+    fallback_reason: str | None = None
     created_at: str
 
 
@@ -1251,6 +1441,107 @@ class AnalysisRequest(BaseModel):
     # Kept for request compatibility only; authorization always uses the authenticated principal.
     user_id: str | None = None
     paper_ids: list[str] = Field(min_length=1)
+
+
+class ExperimentComparisonRequest(BaseModel):
+    paper_ids: list[str] = Field(min_length=2, max_length=5)
+    generation_provider: str | None = None
+    generation_model: str | None = None
+
+    @field_validator("paper_ids")
+    @classmethod
+    def unique_papers(cls, values: list[str]) -> list[str]:
+        if len(set(values)) != len(values): raise ValueError("paper_ids must be unique")
+        return values
+
+
+class ExperimentComparisonResponse(BaseModel):
+    profiles: list["ExperimentProfileResponse"] = Field(default_factory=list)
+    matrix: list["ExperimentMatrixRowResponse"] = Field(default_factory=list)
+    errors: list["ExperimentAnalysisErrorResponse"] = Field(default_factory=list)
+    generation_provider: str | None = None
+    generation_model: str | None = None
+
+
+class ExperimentMeasurementResponse(BaseModel):
+    raw: str
+    value: float | None = None
+    unit: str | None = None
+    kind: str = "reported_value"
+
+
+class ExperimentEvidenceLocatorResponse(BaseModel):
+    page: int = Field(ge=1)
+    quote: str
+    source_kind: str = "page_text"
+    source_span_id: str | None = None
+    element_id: str | None = None
+    bbox: list[float] | None = None
+    cell: dict[str, int] | None = None
+
+
+class ExperimentEvidenceResponse(BaseModel):
+    kind: str
+    text: str
+    locator: ExperimentEvidenceLocatorResponse
+    measurements: list[ExperimentMeasurementResponse] = Field(default_factory=list)
+    comparator: str | None = None
+    quality: str = "unknown"
+
+
+class ExperimentFigureTableResponse(BaseModel):
+    page: int = Field(ge=1)
+    target_element_id: str | None = None
+    caption_element_id: str | None = None
+    target_kind: Literal["figure", "table"]
+    label: str | None = None
+    caption: str
+    relation: Literal["caption_for", "unresolved"]
+    confidence: Literal["high", "medium", "unknown"]
+
+
+class ExperimentProfileResponse(BaseModel):
+    profile_id: str | None = None
+    paper_id: str
+    title: str
+    status: Literal["ready", "cached", "failed"]
+    cached: bool
+    progress: Literal["cached", "extracting", "completed", "failed"]
+    review_status: str = "review_pending"
+    source_version_id: str
+    derived_source_version_id: str | None = None
+    source_span_ids: list[str] = Field(default_factory=list)
+    generation_provider: str = "local"
+    generation_model: str = "evidence-extractor-v1"
+    generation_prompt_version: str = "experiment-analysis-v1"
+    generation_usage: dict = Field(default_factory=dict)
+    extraction_mode: Literal["llm_verified", "deterministic_local"] = "deterministic_local"
+    proposal_candidates_accepted: int = Field(default=0, ge=0)
+    proposal_candidates_rejected: int = Field(default=0, ge=0)
+    purpose: list[ExperimentEvidenceResponse] = Field(default_factory=list)
+    design: list[ExperimentEvidenceResponse] = Field(default_factory=list)
+    observations: list[ExperimentEvidenceResponse] = Field(default_factory=list)
+    author_interpretations: list[ExperimentEvidenceResponse] = Field(default_factory=list)
+    limitations: list[ExperimentEvidenceResponse] = Field(default_factory=list)
+    figure_table_refs: list[ExperimentFigureTableResponse] = Field(default_factory=list)
+
+
+class ExperimentComparisonCellResponse(BaseModel):
+    key: str
+    text: str
+    evidence: list[ExperimentEvidenceResponse] = Field(default_factory=list)
+    status: Literal["grounded", "unresolved"] = "grounded"
+
+
+class ExperimentMatrixRowResponse(BaseModel):
+    paper_id: str
+    cells: list[ExperimentComparisonCellResponse] = Field(default_factory=list)
+
+
+class ExperimentAnalysisErrorResponse(BaseModel):
+    paper_id: str
+    code: str
+    message: str
 
 
 class ComparisonRow(BaseModel):
@@ -1304,6 +1595,8 @@ class NoteCreate(BaseModel):
     # This is deliberately immutable after creation: it records why the note
     # exists, rather than being a mutable display label.
     origin_kind: Literal["mind_map"] | None = None
+    mind_map_node_id: str | None = None
+    origin_snapshot: dict | None = None
 
 
 class NoteUpdate(BaseModel):
@@ -1318,8 +1611,158 @@ class Note(BaseModel):
     title: str
     content: str
     origin_kind: Literal["mind_map"] | None = None
+    mind_map_node_id: str | None = None
+    origin_snapshot: dict | None = None
     created_at: str
     updated_at: str
+
+
+MindMapKind = Literal["root", "theme", "claim", "question", "method", "finding", "task", "note", "link"]
+MindMapStatus = Literal["review_pending", "active", "rejected"]
+
+
+class MindMapNodeDraft(BaseModel):
+    """A client-side tree.  IDs/depth/order are server assigned."""
+    client_id: str = Field(min_length=1, max_length=128)
+    parent_client_id: str | None = Field(default=None, max_length=128)
+    kind: MindMapKind = "theme"
+    title: str = Field(min_length=1, max_length=200)
+    body: str = Field(default="", max_length=4_000)
+    evidence_ref_ids: list[str] = Field(default_factory=list, max_length=100)
+    source_span_ids: list[str] = Field(default_factory=list, max_length=100)
+    generated: bool = False
+
+    @field_validator("title")
+    @classmethod
+    def mind_map_title(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("mind map node title is required")
+        return value
+
+
+class MindMapCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    source_scope: dict = Field(default_factory=dict)
+    generation_kind: Literal["manual", "ai"] = "manual"
+    generation_run_id: str | None = None
+    nodes: list[MindMapNodeDraft] = Field(min_length=1, max_length=250)
+
+    @field_validator("title")
+    @classmethod
+    def mind_map_title(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("mind map title is required")
+        return value
+
+    @model_validator(mode="after")
+    def generation_confirmation_is_auditable(self):
+        if self.generation_kind == "ai" and not self.generation_run_id:
+            raise ValueError("AI mind map confirmation requires generation_run_id")
+        if self.generation_kind == "manual" and self.generation_run_id:
+            raise ValueError("manual mind maps cannot claim an AI generation run")
+        return self
+
+
+class MindMapNode(BaseModel):
+    id: str
+    mind_map_id: str
+    parent_id: str | None = None
+    kind: MindMapKind
+    title: str
+    body: str = ""
+    depth: int = Field(ge=0, le=8)
+    order_index: int = Field(ge=0)
+    status: MindMapStatus
+    generation_run_id: str | None = None
+    knowledge_node_id: str | None = None
+    evidence_ref_ids: list[str] = Field(default_factory=list)
+    source_span_ids: list[str] = Field(default_factory=list)
+    created_at: str
+    updated_at: str
+
+
+class MindMap(BaseModel):
+    id: str
+    workspace_id: str
+    title: str
+    source_scope: dict = Field(default_factory=dict)
+    generation_run_id: str | None = None
+    generation_kind: Literal["manual", "ai"] = "manual"
+    created_by: str | None = None
+    created_at: str
+    updated_at: str
+    nodes: list[MindMapNode] = Field(default_factory=list)
+
+
+class MindMapNodeUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    body: str | None = Field(default=None, max_length=4_000)
+    kind: MindMapKind | None = None
+    status: MindMapStatus | None = None
+    evidence_ref_ids: list[str] | None = Field(default=None, max_length=100)
+    source_span_ids: list[str] | None = Field(default=None, max_length=100)
+
+    @field_validator("title")
+    @classmethod
+    def mind_map_title(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("mind map node title is required")
+        return value
+
+
+class MindMapChildrenCreate(BaseModel):
+    nodes: list[MindMapNodeDraft] = Field(min_length=1, max_length=8)
+    generation_run_id: str | None = None
+
+
+class MindMapGenerationRequest(BaseModel):
+    title: str | None = Field(default=None, max_length=200)
+    paper_id: str | None = None
+    evidence_ref_ids: list[str] = Field(default_factory=list, max_length=100)
+    source_span_ids: list[str] = Field(default_factory=list, max_length=100)
+    generation_provider: str | None = Field(default=None, max_length=32)
+    generation_model: str | None = Field(default=None, max_length=128)
+
+    @model_validator(mode="after")
+    def one_source_scope(self):
+        paper = bool(self.paper_id)
+        evidence = bool(self.evidence_ref_ids or self.source_span_ids)
+        if paper == evidence:
+            raise ValueError("provide exactly one paper_id or evidence/source-span scope")
+        return self
+
+
+class MindMapCandidateResponse(BaseModel):
+    research_run_id: str
+    title: str
+    source_scope: dict
+    nodes: list[MindMapNodeDraft]
+
+
+class MindMapActionCandidate(BaseModel):
+    client_id: str = Field(min_length=1, max_length=128)
+    title: str = Field(min_length=1, max_length=500)
+    description: str = Field(default="", max_length=20_000)
+    ordinal: int = Field(default=0, ge=0, le=4)
+
+
+class MindMapActionCandidates(BaseModel):
+    research_run_id: str
+    candidates: list[MindMapActionCandidate] = Field(default_factory=list, max_length=5)
+
+
+class MindMapActionConfirm(BaseModel):
+    research_run_id: str
+    actions: list[MindMapActionCandidate] = Field(min_length=1, max_length=5)
+
+
+class MindMapGraphNodeCreate(BaseModel):
+    node_type: Literal["source", "idea", "constraint", "hypothesis", "experiment"]
 
 
 class SearchHistory(BaseModel):
@@ -1334,10 +1777,24 @@ class SearchHistory(BaseModel):
 class SavedComparisonCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     paper_ids: list[str] = Field(min_length=1)
+    experiment_analysis: bool = False
     source_set_id: str | None = None
     citation_snapshot: list[dict] = Field(default_factory=list)
+    experiment_profile_ids: list[str] = Field(default_factory=list)
+    analysis_errors: list[ExperimentAnalysisErrorResponse] = Field(default_factory=list)
     human_judgment: Literal["accepted", "held", "rejected", "unreviewed"] = "unreviewed"
     judgment_reason: str = Field(default="", max_length=10_000)
+
+    @model_validator(mode="after")
+    def analysis_errors_are_scoped(self):
+        paper_ids = set(self.paper_ids)
+        if len(set(self.experiment_profile_ids)) != len(self.experiment_profile_ids):
+            raise ValueError("experiment_profile_ids must be unique")
+        if any(item.paper_id in paper_ids for item in self.analysis_errors):
+            raise ValueError("analysis_errors must not overlap successfully compared paper_ids")
+        if len({item.paper_id for item in self.analysis_errors}) != len(self.analysis_errors):
+            raise ValueError("analysis_errors must contain at most one entry per paper")
+        return self
 
 
 class SavedComparison(BaseModel):
@@ -1349,5 +1806,6 @@ class SavedComparison(BaseModel):
     created_at: str
     source_set_id: str | None = None
     citation_snapshot: list[dict] = Field(default_factory=list)
+    analysis_errors: list[ExperimentAnalysisErrorResponse] = Field(default_factory=list)
     human_judgment: Literal["accepted", "held", "rejected", "unreviewed"] = "unreviewed"
     judgment_reason: str = ""

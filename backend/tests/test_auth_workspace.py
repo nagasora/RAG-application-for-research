@@ -137,7 +137,7 @@ def test_llm_status_is_authenticated_and_never_exposes_credentials_or_cross_work
         assert allowed.status_code == 200
         assert allowed.json() == {
             "configured": False,
-            "model": "gpt-5.4-nano",
+            "model": "gpt-5.6-luna",
             "embedding_model": "local-hash-v1",
             "agentic_dependencies_available": True,
             "last_failure_code": None,

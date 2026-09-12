@@ -18,7 +18,7 @@ async function loadSearchStreamModule(fetchImpl = globalThis.fetch) {
     AbortController, DOMException, ReadableStream, TextDecoder, Uint8Array, fetch:fetchImpl,
     exports:module.exports, module,
     require(specifier) {
-      if (specifier === "./client") return { API_BASE_URL:"http://localhost" };
+      if (specifier === "./client") return { API_BASE_URL:"http://localhost", apiUrl:path => `http://localhost${path}` };
       if (specifier === "./auth") return { authenticatedHeaders:() => ({}) };
       if (specifier === "./error") return { ApiError, errorFromFetchResponse:async () => new ApiError("http"), toApiError:error => error };
       throw new Error(`unexpected import: ${specifier}`);
@@ -56,7 +56,7 @@ test("legacy token/done events remain compatible and a top-level stage is accept
 test("run metadata is decoded before token, citations, meta, and done events", async () => {
   const api = await loadSearchStreamModule();
   const meta = {
-    generation_mode:"agentic_rag", model:"gpt-5.4-nano", retrieval_queries:["query"], grounded:true,
+    generation_mode:"agentic_rag", generation_provider:"openai", model:"gpt-5.6-luna", retrieval_queries:["query"], grounded:true,
     llm_attempted:true, llm_succeeded:true, grounding_status:"verified", fallback_reason:null,
     research_run_id:"run-1", interaction_mode:"synthesis", draft:false,
     claims:[], memory_delta:{}, model_calls:1,
@@ -70,6 +70,7 @@ test("run metadata is decoded before token, citations, meta, and done events", a
   assert.deepEqual(received.map(event => event.type), ["run", "token", "citations", "meta", "done"]);
   assert.equal(received[0].run_id, "run-1");
   assert.equal(received[3].value.research_run_id, "run-1");
+  assert.equal(received[3].value.generation_provider, "openai");
 });
 
 test("run and cancelled events reject missing or blank run ids", async () => {
@@ -146,7 +147,7 @@ test("unknown stages are rejected instead of silently corrupting progress", asyn
 test("structured RAG metadata is preserved", async () => {
   const api = await loadSearchStreamModule();
   const value = {
-    generation_mode:"agentic_rag", model:"gpt-5.4-nano", retrieval_queries:["query"],
+    generation_mode:"agentic_rag", generation_provider:"gemini", model:"gpt-5.6-luna", retrieval_queries:["query"],
     grounded:true, llm_attempted:true, llm_succeeded:true, grounding_status:"verified",
     fallback_reason:null, research_run_id:"run-1", interaction_mode:"challenge", draft:true,
     claims:[{ claim_id:"c1", text:"claim", kind:"paper", citation_ids:[1], classification:"evidence_backed" }],
@@ -159,12 +160,26 @@ test("structured RAG metadata is preserved", async () => {
   assert.equal(received[0].value.interaction_mode, "challenge");
   assert.equal(received[0].value.draft, true);
   assert.equal(received[0].value.research_run_id, "run-1");
+  assert.equal(received[0].value.generation_provider, "gemini");
+});
+
+test("legacy metadata without provider or model is normalized for rolling API compatibility", async () => {
+  const api = await loadSearchStreamModule();
+  const value = {
+    generation_mode:"local_fallback", retrieval_queries:["query"], grounded:false,
+    llm_attempted:false, llm_succeeded:false, grounding_status:"no_evidence", fallback_reason:"no_evidence",
+    research_run_id:null, interaction_mode:"synthesis", draft:false, claims:[], memory_delta:{}, model_calls:0,
+  };
+  const received = [];
+  for await (const event of api.parseEventStream(eventStream(`data: ${JSON.stringify({type:"meta",value})}\n\n`))) received.push(event);
+  assert.equal(received[0].value.generation_provider, null);
+  assert.equal(received[0].value.model, null);
 });
 
 test("metadata rejects unknown claim classifications and interaction modes", async () => {
   const api = await loadSearchStreamModule();
   const base = {
-    generation_mode:"agentic_rag", model:"gpt-5.4-nano", retrieval_queries:["query"],
+    generation_mode:"agentic_rag", generation_provider:"openai", model:"gpt-5.6-luna", retrieval_queries:["query"],
     grounded:true, llm_attempted:true, llm_succeeded:true, grounding_status:"verified", fallback_reason:null,
     research_run_id:null, interaction_mode:"synthesis", draft:false,
     claims:[{ claim_id:"c1", text:"claim", kind:"paper", citation_ids:[1], classification:"evidence_backed" }],
@@ -175,6 +190,9 @@ test("metadata rejects unknown claim classifications and interaction modes", asy
     { ...base, claims:[{ ...base.claims[0], classification:"unsupported" }] },
     { ...base, draft:"false" },
     { ...base, research_run_id:42 },
+    { ...base, generation_provider:42 },
+    { ...base, generation_provider:"  " },
+    { ...base, model:"  " },
   ]) {
     await assert.rejects(async () => {
       for await (const _event of api.parseEventStream(eventStream(`data: ${JSON.stringify({type:"meta",value})}\n\n`))) { /* consume */ }
@@ -185,7 +203,7 @@ test("metadata rejects unknown claim classifications and interaction modes", asy
 test("incomplete RAG metadata is rejected", async () => {
   const api = await loadSearchStreamModule();
   const value = {
-    generation_mode:"agentic_rag", model:"gpt-5.4-nano", retrieval_queries:[], grounded:true,
+    generation_mode:"agentic_rag", generation_provider:"openai", model:"gpt-5.6-luna", retrieval_queries:[], grounded:true,
     llm_attempted:true, llm_succeeded:true, grounding_status:"verified", fallback_reason:null,
     research_run_id:null, interaction_mode:"synthesis", draft:false,
   };

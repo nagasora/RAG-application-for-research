@@ -55,6 +55,11 @@ test("structured codes reach public copy while unsafe codes fall back to HTTP co
     source_scope_required:"検索する論文を1〜5件選んでください。",
     source_scope_too_large:"検索する論文は5件まで選べます。",
     research_run_scope_mismatch:"検索する論文が変わりました。もう一度質問してください。",
+    invalid_external_identifier:"DOI または arXiv ID の形式を確認してください。",
+    external_paper_not_found:"外部データベースで論文情報が見つかりませんでした。DOI または arXiv ID を確認してください。",
+    external_provider_rate_limited:"外部データベースの利用上限に達しました。少し時間をおいて、もう一度お試しください。",
+    external_provider_unavailable:"外部データベースを一時的に利用できません。時間をおいて、もう一度お試しください。",
+    invalid_provider_response:"外部データベースから有効な論文情報を取得できませんでした。DOI または arXiv ID を確認して、もう一度お試しください。",
   };
   for (const [code, message] of Object.entries(expected)) {
     const error = api.apiErrorFromResponse(new Response(null, { status:422 }), { detail:{ code, message:"backend detail" } }, "fallback");

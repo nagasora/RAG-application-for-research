@@ -41,6 +41,22 @@ R2/S3 と OIDC の設定は `.env.example` に残しており、外部環境を�
 その論文だけを対象にします。レスポンスのjob statusが `succeeded` になってからAskを
 実行してください。APIキーはこのAPIやjob statusのレスポンスには含まれません。
 
+Libraryの外部論文検索はSemantic Scholar、OpenAlex、CiNii Research、J-STAGEを
+provider境界越しに利用します。`SEMANTIC_SCHOLAR_API_KEY`は任意で、未設定時は共有anonymous
+quotaを使用します。CiNiiは利用登録で発行された`CINII_APP_ID`がある環境だけで有効になり、
+未設定時も他providerの部分結果を返します。Crossrefは検索順位には使わず、DOI、ライセンス、
+訂正・撤回metadataの検証にだけ使います。J-STAGEとCiNiiの利用条件、帰属表示、商用利用時の
+許諾要否は公開前に確認してください。キーはAPIコンテナだけへ設定し、フロントエンド、
+レスポンス、ログ、コミットへ含めないでください。外部検索と要旨登録はowner/editorに限定され、
+providerのrate limitや障害時には未選択のPaperを作成しません。
+
+生成モデルはOpenAI `gpt-5.6-luna`とGemini `gemini-3.5-flash-lite`をserver allowlistから
+選択できます。Geminiを利用する場合は`GEMINI_API_KEY`をAPIコンテナだけへ設定します。
+生成モデルの設定は回答・検索語生成・比較抽出だけに適用され、`EMBEDDING_PROVIDER`や既存vectorを
+自動変更しません。workspace既定の変更はowner、実行時の一時選択はowner/editorに限定されます。
+本番ではページングcursorの暗号化・改変検知に使う`DISCOVERY_CURSOR_SECRET`も、全API
+replicaで共通のランダム値として設定してください。OIDC環境では必須です。
+
 ---
 
 The backend requires an explicit PostgreSQL connection. It never silently falls back to SQLite.

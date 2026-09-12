@@ -289,7 +289,7 @@ def require_live_benchmark_opt_in() -> None:
         raise RuntimeError("live benchmark requires CI014_LIVE_BENCHMARK=1 and OPENAI_API_KEY")
 
 
-def run_live_model_benchmark(model: str = "gpt-5.4-nano") -> dict[str, Any]:
+def run_live_model_benchmark(model: str = "gpt-5.6-luna") -> dict[str, Any]:
     """One explicit provider probe, never invoked by the offline harness/tests."""
     require_live_benchmark_opt_in()
     adapter = get_openai_adapter()

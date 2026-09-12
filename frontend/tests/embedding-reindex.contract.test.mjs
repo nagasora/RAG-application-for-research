@@ -18,5 +18,5 @@ test("multilingual reindex UI limits the action to ready papers and respects vie
   assert.match(panel, /viewer 権限では検索と状態の確認のみできます/);
   assert.match(panel, /role="status"/);
   assert.match(panel, /role="alert"/);
-  assert.match(page, /<EmbeddingReindexPanel key=\{session\.activeWorkspace\.id\} papers=\{papers\} canWrite=\{session\.activeWorkspace\.role !== "viewer"\}/);
+  assert.match(page, /<EmbeddingReindexPanel key=\{`reindex:\$\{session\.activeWorkspace\.id\}`\} papers=\{papers\} canWrite=\{session\.activeWorkspace\.role !== "viewer"\}/);
 });

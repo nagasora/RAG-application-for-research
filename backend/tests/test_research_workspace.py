@@ -524,7 +524,7 @@ def test_search_uses_agentic_rag_and_returns_generation_metadata(tmp_path, monke
 
         assert response.status_code == 200
         assert response.json()["generation_mode"] == "agentic_rag"
-        assert response.json()["model"] == "gpt-5.4-nano"
+        assert response.json()["model"] == "gpt-5.6-luna"
         assert response.json()["retrieval_queries"] == ["rewritten retrieval query"]
         assert response.json()["grounded"] is True
         assert response.json()["fallback_reason"] is None

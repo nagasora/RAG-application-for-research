@@ -16,11 +16,16 @@ STOP_WORDS = {
     "に", "の", "は", "を", "が", "と", "で", "た", "する", "した", "して", "ある", "いる",
 }
 
-ANSWER_MODEL = "gpt-5.4-nano"
+ANSWER_MODEL = "gpt-5.6-luna"
+
+
+def strip_nul(text: str) -> str:
+    """Remove the control character PostgreSQL cannot represent in text values."""
+    return text.replace("\x00", "")
 
 
 def normalize(text: str) -> str:
-    return re.sub(r"\s+", " ", text).strip()
+    return re.sub(r"\s+", " ", strip_nul(text)).strip()
 
 
 def tokens(text: str) -> list[str]:
@@ -40,7 +45,9 @@ def chunk_pages(pages: Iterable[tuple[int, str]], paper_id: str, size: int = 105
         max_size=max(size, int(size * 1.45)),
         overlap=min(overlap, max(0, int(size * 0.35))),
     )
-    return dynamic_chunk_pages(pages, paper_id, config)
+    return dynamic_chunk_pages(
+        ((page, strip_nul(text)) for page, text in pages), paper_id, config,
+    )
 
 
 def _score(query_tokens: list[str], text: str) -> float:
@@ -194,6 +201,7 @@ def citations_from(
             section=chunk.section,
             excerpt=_evidence_excerpt(chunk.text, query),
             score=round(score, 4),
+            evidence_scope="abstract" if paper.content_scope == "abstract_only" else "full_text",
             source_kind="paper_chunk",
             retrieval_channels=["paper"],
         )

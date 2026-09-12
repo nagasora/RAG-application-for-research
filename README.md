@@ -16,7 +16,8 @@
 - inline または Celery + Redis による取り込みジョブと進捗表示
 - PDF / TXT / Markdown の原本保存、ページ・チャンク・引用根拠ビューア
 - OpenAPIから生成するTypeScript API型と統一エラー処理
-- キーワード検索、根拠付き回答、論文比較、Research Gap抽出
+- 日本語の研究質問からSemantic Scholar・OpenAlex・CiNii・J-STAGEを横断する外部論文探索
+- OpenAI / Geminiの生成モデル切替、根拠付き回答、実験結果・手法・図表比較、Research Gap抽出
 - タグ、論文ノート、検索履歴、比較結果保存
 - BibTeX / RIS / CSVエクスポート
 - オプションの日本語・英語OCR、表の構造化、図・caption抽出
@@ -50,6 +51,10 @@ python -m uvicorn app.main:app --reload --port 8000
 ```
 
 `.env.example` はローカル用に `AUTH_MODE=dev` を指定します。本番環境では `AUTH_MODE=oidc` とし、issuer、audience、JWKS URLを設定してください。OCRは既定で無効です。
+外部論文検索はSemantic Scholar・OpenAlex・J-STAGEを利用でき、Semantic Scholarの専用枠を使う場合だけ
+バックエンドの`.env`へ`SEMANTIC_SCHOLAR_API_KEY`を設定します。CiNiiは利用登録後に
+`CINII_APP_ID`を設定した環境だけで有効になります。検索語の自動展開と回答・比較でGeminiを
+選択する場合は、サーバー側だけに`GEMINI_API_KEY`を設定してください。
 
 ### 3. フロントエンド
 
@@ -61,6 +66,8 @@ corepack pnpm dev
 ```
 
 ブラウザは `http://localhost:3000`、API仕様は `http://localhost:8000/docs` です。
+
+ローカルでは `NEXT_PUBLIC_API_URL` を設定せずに起動してください。Next.js が同一オリジンの `/api/*` をローカル API (`http://localhost:8000`) へ中継するため、`localhost` と `127.0.0.1` の違いや CORS 設定差で外部論文検索が失敗しません。別ホストの本番 API を使う場合だけ、ビルド前に `NEXT_PUBLIC_API_URL` を設定します。
 
 ## OpenAPI型の更新
 

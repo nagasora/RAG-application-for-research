@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
+import base64
 import io
 import csv
+from dataclasses import asdict
 import hashlib
 import importlib.util
 import json
@@ -13,6 +16,7 @@ import time
 import xml.etree.ElementTree as ET
 from xml.sax.saxutils import escape as xml_escape
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 from threading import Event, Lock
@@ -20,6 +24,7 @@ from typing import Callable, Literal
 from uuid import uuid4
 
 import httpx
+from cryptography.fernet import Fernet, InvalidToken
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,7 +34,7 @@ from pypdf import PdfReader
 from .auth import get_current_principal
 from .agentic_rag import AgenticRAG
 from .models import (
-    AnalysisRequest, Chunk, ComparisonRow, EmbeddingJobStatus, EmbeddingReindexRequest, EmbeddingReindexResponse, ExternalPaperRequest, LLMStatus, OperationsStatus, MeResponse, Paper, PaperDetail, PaperMarkdownSummary,
+    AnalysisRequest, ExperimentComparisonRequest, ExperimentComparisonResponse, ExperimentProfileResponse, ExperimentMatrixRowResponse, ExperimentAnalysisErrorResponse, Chunk, ComparisonRow, EmbeddingJobStatus, EmbeddingReindexRequest, EmbeddingReindexResponse, ExternalPaperRequest, LLMStatus, OperationsStatus, MeResponse, Paper, PaperDetail, PaperMarkdownSummary,
     DocumentElement, IngestionJob, Note, NoteCreate, NoteUpdate, PaperDecision, PaperDecisionUpdate, PaperLibraryPage, PaperPage, PaperSummary, PaperTagsBulkUpdate, PaperTagsUpdate, Principal,
     Citation, ResearchGap, SavedComparison, SavedComparisonCreate, SearchHistory, SearchPreviewResponse, SearchRequest,
     SearchResponse, Tag, TagCreate, UploadResult, User, Workspace, WorkspaceCreate,
@@ -44,9 +49,10 @@ from .models import (
     NodeFeedbackCreate, ReasoningRun, ReasoningRunCreate, SourceSpan,
     SourceImportCreate, SourceImportResult, SourceVersion, SourceVersionCreate,
     HypothesisCard, HypothesisCardCreate, HypothesisCardStatusUpdate,
-    DiscoveryItem, DiscoveryItemCreate, DiscoveryReviewUpdate,
+    DiscoveryImportItem, DiscoveryImportRequest, DiscoveryImportResponse, DiscoveryItem, DiscoveryItemCreate, DiscoveryReviewUpdate, DiscoverySearchItem, DiscoverySearchRequest, DiscoverySearchResponse, DiscoveryProviderStatus, DiscoverySessionImportRequest, WorkspaceGenerationSettings, WorkspaceGenerationSettingsUpdate, GenerationModelOption,
     BeliefEvent, BeliefEventCreate, ExperimentPlan, ExperimentPlanCreate, ExperimentPlanSnapshot, ExperimentResultCreate, Idea, IdeaCreate, IdeaUpdate, ResearchAction, ResearchActionCreate, ResearchActionUpdate,
     ConversationGraphExportCreate, GraphIdeaCandidate, ReviewAssignmentUpdate, ReviewCandidate, ReviewCommentCreate, ReviewDecisionCreate, ReviewThread, ReviewThreadCreate,
+    MindMap, MindMapActionCandidate, MindMapActionCandidates, MindMapActionConfirm, MindMapCandidateResponse, MindMapChildrenCreate, MindMapCreate, MindMapGenerationRequest, MindMapGraphNodeCreate, MindMapNode, MindMapNodeUpdate,
 )
 from .graph_rag import GraphEdge as RetrievalGraphEdge, PrunedTwoHopConfig, RetrievalSeed, pruned_two_hop_retrieve
 from .source_parsers import SourceParseLimitError, parse_source
@@ -56,6 +62,24 @@ from .rag import (
 )
 from .ingestion import process_embedding_job, process_ingestion_job
 from .storage import ImmutableObjectExists, LocalOriginalStorage, OriginalStorage, storage_from_environment
+from .semantic_scholar import PROVIDER as SEMANTIC_SCHOLAR_PROVIDER, SemanticScholarError, fetch_paper as fetch_semantic_scholar_paper, search_papers as search_semantic_scholar_papers
+from .discovery_providers import (
+    DiscoveryProviderError,
+    _https_url,
+    canonical_doi,
+    fetch_doi_metadata,
+    fetch_provider_paper as fetch_discovery_provider_paper,
+    search_provider as search_discovery_provider,
+    verify_doi as verify_crossref_doi,
+)
+from .generation_settings import catalog as generation_catalog, defaults as generation_defaults, resolve as resolve_generation, validate as validate_generation
+from .generation_service import record_generation_outcome, resolve_workspace_generation
+from .mind_map_generation import generate_candidate
+from .discovery_workflow import federate_provider_rows, session_page_items
+from .experiment_analysis import ExperimentAnalysisError, analyze_full_text_paper, apply_verified_proposals, build_comparison_matrix, cache_key_for, profile_from_snapshot, profile_snapshot
+from .experiment_proposal import PROMPT_VERSION as EXPERIMENT_PROPOSAL_PROMPT_VERSION, generate_experiment_proposals
+from .experiment_comparison_service import compare_experiment_profiles
+from .discovery_planner import plan_queries
 from .openai_client import OpenAIDeadlineExceeded, classify_openai_error, get_openai_adapter
 from .store import (
     DuplicatePaperError, PaperNotFoundError, PaperStore, ResourceConflictError,
@@ -64,6 +88,10 @@ from .store import (
 )
 
 load_dotenv()
+
+# A reversible operational kill switch.  It intentionally hides the feature
+# without touching persisted maps, so recovery is a configuration change.
+MIND_MAPS_ENABLED = os.getenv("MIND_MAPS_ENABLED", "true").strip().lower() not in {"0", "false", "no", "off"}
 
 logger = logging.getLogger("paperpilot.rag")
 
@@ -145,12 +173,17 @@ def _classify_llm_failure(exc: Exception) -> FallbackReason:
     }.get(category, "model_api_error")
 
 
-def _build_agentic_chat_model(timeout_seconds: float = 18.0):
+def _build_agentic_chat_model(timeout_seconds: float = 18.0, *, provider: str = "openai", model: str = ANSWER_MODEL):
+    if provider == "gemini":
+        from langchain_core.messages import AIMessage
+        from langchain_core.runnables import RunnableLambda
+        from .gemini_gateway import generate_text
+        return RunnableLambda(lambda prompt: AIMessage(content=generate_text(model, prompt, timeout_seconds)))
     from langchain_openai import ChatOpenAI
 
     adapter = get_openai_adapter()
     return ChatOpenAI(
-        model=ANSWER_MODEL,
+        model=model,
         api_key=os.environ["OPENAI_API_KEY"],
         # LangChain's Responses client is rooted in the same SDK client used by
         # direct Responses and embeddings, so connections are pooled process-wide.
@@ -370,6 +403,145 @@ def require_workspace_write(context: WorkspaceContext) -> None:
     if context.workspace.role not in {"owner", "editor"}:
         raise HTTPException(status_code=403, detail="workspace write access is required")
 
+
+def require_mind_maps_enabled() -> None:
+    if not MIND_MAPS_ENABLED:
+        raise HTTPException(status_code=503, detail={"code": "mind_maps_disabled", "message": "マインドマップ機能は一時的に停止しています。"})
+
+
+def _discovery_cursor_cipher() -> Fernet:
+    configured = os.getenv("DISCOVERY_CURSOR_SECRET", "").strip()
+    if not configured and os.getenv("AUTH_MODE", "dev").strip().casefold() == "oidc":
+        raise RuntimeError("DISCOVERY_CURSOR_SECRET is required when AUTH_MODE=oidc")
+    material = configured or "paperpilot-local-discovery-cursor-v1"
+    key = base64.urlsafe_b64encode(hashlib.sha256(material.encode("utf-8")).digest())
+    return Fernet(key)
+
+
+def _discovery_criteria_hash(body: DiscoverySearchRequest) -> str:
+    criteria = json.dumps({
+        "query": body.query.strip(), "year_from": body.year_from,
+        "year_to": body.year_to, "sort": body.sort,
+    }, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return hashlib.sha256(criteria).hexdigest()
+
+
+def _discovery_cursor(body: DiscoverySearchRequest, *, offset: int | None = None, token: str | None = None) -> str:
+    mode = "relevance" if body.sort == "relevance" else "bulk"
+    payload = json.dumps({
+        "mode": mode, "offset": offset, "token": token,
+        "criteria_hash": _discovery_criteria_hash(body),
+    }, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return f"v1.{_discovery_cursor_cipher().encrypt(payload).decode('ascii')}"
+
+
+def _discovery_position(body: DiscoverySearchRequest) -> tuple[int, str | None]:
+    if not body.cursor:
+        return 0, None
+    try:
+        version, encoded = body.cursor.split(".", 1)
+        if version != "v1":
+            raise ValueError("unsupported cursor version")
+        payload = json.loads(_discovery_cursor_cipher().decrypt(encoded.encode("ascii"), ttl=3600))
+        mode = "relevance" if body.sort == "relevance" else "bulk"
+        if not isinstance(payload, dict) or payload.get("mode") != mode:
+            raise ValueError("invalid cursor payload")
+        if payload.get("criteria_hash") != _discovery_criteria_hash(body):
+            raise ValueError("cursor does not match search")
+        if mode == "relevance":
+            if not isinstance(payload.get("offset"), int) or payload["offset"] < 0:
+                raise ValueError("invalid relevance cursor")
+            return payload["offset"], None
+        if not isinstance(payload.get("token"), str) or not payload["token"]:
+            raise ValueError("invalid bulk cursor")
+        return 0, payload["token"]
+    except (InvalidToken, UnicodeError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=422, detail={"code": "invalid_discovery_cursor", "message": "検索カーソルが無効です。"}) from exc
+
+
+def _discovery_session_cursor(session_id: str, offset: int) -> str:
+    payload=json.dumps({"session_id":session_id,"offset":offset},separators=(",",":"),sort_keys=True).encode("utf-8")
+    return "v2." + _discovery_cursor_cipher().encrypt(payload).decode("ascii")
+
+
+def _discovery_session_position(cursor: str) -> tuple[str, int] | None:
+    if not cursor.startswith("v2."): return None
+    try:
+        payload=json.loads(_discovery_cursor_cipher().decrypt(cursor.split(".",1)[1].encode("ascii"),ttl=3600))
+        if not isinstance(payload,dict) or not isinstance(payload.get("session_id"),str) or not isinstance(payload.get("offset"),int) or payload["offset"] < 0: raise ValueError("invalid")
+        return payload["session_id"],payload["offset"]
+    except (InvalidToken, UnicodeError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=422,detail={"code":"invalid_discovery_cursor","message":"検索カーソルが無効です。"}) from exc
+
+
+def _semantic_error_response(exc: SemanticScholarError) -> HTTPException:
+    if exc.code == "rate_limited":
+        return HTTPException(status_code=429, detail={"code": "external_provider_rate_limited", "message": "論文検索サービスの利用上限に達しました。しばらくしてから再試行してください。"})
+    return HTTPException(status_code=503, detail={"code": "external_provider_unavailable", "message": "論文検索サービスを利用できません。"})
+
+
+def _external_metadata_error_response(exc: DiscoveryProviderError) -> HTTPException:
+    """Map DOI gateway failures to a stable, non-provider-leaking contract."""
+    if exc.code == "invalid_response":
+        return HTTPException(status_code=502, detail={"code": "invalid_provider_response", "message": "論文メタデータサービスから有効な書誌情報を取得できませんでした。"})
+    if exc.code == "not_found":
+        return HTTPException(status_code=404, detail={"code": "external_paper_not_found", "message": "指定した DOI の論文が見つかりません。"})
+    if exc.code == "rate_limited":
+        return HTTPException(status_code=429, detail={"code": "external_provider_rate_limited", "message": "論文メタデータサービスの利用上限に達しました。しばらくしてから再試行してください。"})
+    return HTTPException(status_code=503, detail={"code": "external_provider_unavailable", "message": "論文メタデータサービスを利用できません。"})
+
+
+def _arxiv_error_response(exc: Exception) -> HTTPException:
+    """Keep arXiv gateway failures compatible with the DOI error contract."""
+    if isinstance(exc, LookupError):
+        return HTTPException(status_code=404, detail={"code": "external_paper_not_found", "message": "指定した arXiv 論文が見つかりません。"})
+    if isinstance(exc, httpx.HTTPStatusError):
+        if exc.response.status_code == 404:
+            return HTTPException(status_code=404, detail={"code": "external_paper_not_found", "message": "指定した arXiv 論文が見つかりません。"})
+        if exc.response.status_code == 429:
+            return HTTPException(status_code=429, detail={"code": "external_provider_rate_limited", "message": "論文メタデータサービスの利用上限に達しました。しばらくしてから再試行してください。"})
+    if isinstance(exc, (ET.ParseError, TypeError, ValueError)):
+        return HTTPException(status_code=502, detail={"code": "invalid_provider_response", "message": "論文メタデータサービスから有効な書誌情報を取得できませんでした。"})
+    return HTTPException(status_code=503, detail={"code": "external_provider_unavailable", "message": "論文メタデータサービスを利用できません。"})
+
+
+def _canonical_arxiv_identifier(value: object) -> str:
+    candidate = re.sub(
+        r"^(arxiv:|https?://(?:www\.)?arxiv\.org/abs/)", "",
+        str(value or "").strip(), flags=re.I,
+    ).split("?", 1)[0]
+    return re.sub(r"v\d+$", "", candidate, flags=re.I).casefold()
+
+
+def _semantic_external_ids(snapshot: dict) -> dict[str, str]:
+    raw_identifiers = snapshot.get("externalIds")
+    if raw_identifiers is None:
+        raw_identifiers = {}
+    if not isinstance(raw_identifiers, dict):
+        raise ValueError("provider externalIds must be an object")
+    identifiers = {
+        str(key).casefold(): str(value).strip()
+        for key, value in raw_identifiers.items()
+        if isinstance(key, str) and isinstance(value, (str, int)) and str(value).strip()
+    }
+    paper_id = str(snapshot.get("paperId") or "").strip()
+    if paper_id:
+        identifiers[SEMANTIC_SCHOLAR_PROVIDER] = paper_id
+    return identifiers
+
+
+def _semantic_authors(snapshot: dict) -> list[str]:
+    raw_authors = snapshot.get("authors")
+    if raw_authors is None:
+        raw_authors = []
+    if not isinstance(raw_authors, list):
+        raise ValueError("provider authors must be a list")
+    return [
+        str(author.get("name") or "").strip()
+        for author in raw_authors
+        if isinstance(author, dict) and str(author.get("name") or "").strip()
+    ]
+
 app = FastAPI(title="PaperPilot API", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
@@ -433,6 +605,37 @@ def operations_status(current: CurrentUser = Depends(get_current_user)) -> Opera
 @app.get("/api/me", response_model=MeResponse)
 def me(current: CurrentUser = Depends(get_current_user)) -> MeResponse:
     return MeResponse(user=current.user, personal_workspace=current.personal_workspace)
+
+
+def _generation_settings_response(store: PaperStore, workspace_id: str) -> WorkspaceGenerationSettings:
+    scopes, updated_at, updated_by = store.generation_settings(workspace_id)
+    return WorkspaceGenerationSettings(
+        scopes=scopes,
+        options=[GenerationModelOption(**item) for item in generation_catalog()],
+        updated_at=updated_at, updated_by=updated_by,
+    )
+
+
+@app.get("/api/workspace/generation-settings", response_model=WorkspaceGenerationSettings)
+def get_workspace_generation_settings(store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    return _generation_settings_response(store, context.workspace.id)
+
+
+@app.put("/api/workspace/generation-settings", response_model=WorkspaceGenerationSettings)
+def put_workspace_generation_settings(body: WorkspaceGenerationSettingsUpdate, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    if context.workspace.role != "owner":
+        raise HTTPException(status_code=403, detail="workspace owner access is required")
+    normalized={}
+    try:
+        for scope, choice in body.scopes.items():
+            selected=validate_generation(choice.provider, choice.model, require_available=True)
+            normalized[scope]={"provider":selected.provider,"model":selected.model}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"code":"invalid_generation_selection","message":str(exc)}) from exc
+    if set(normalized)!={"ask","discovery","analysis","mind_map"}:
+        raise HTTPException(status_code=422, detail={"code":"invalid_generation_settings","message":"ask, discovery, analysis, and mind_map are required"})
+    store.set_generation_settings(context.workspace.id, context.user.id, normalized)
+    return _generation_settings_response(store, context.workspace.id)
 
 
 @app.get("/api/llm/status", response_model=LLMStatus)
@@ -765,6 +968,149 @@ def promote_idea(idea_id: str, store: PaperStore = Depends(get_store), context: 
 @app.get("/api/research-actions", response_model=list[ResearchAction])
 def list_research_actions(store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
     return store.list_research_actions(context.workspace.id)
+
+
+@app.get("/api/mind-maps", response_model=list[MindMap])
+def list_mind_maps(store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    """Saved maps remain readable even when the emergency flag stops new work."""
+    return store.list_mind_maps(context.workspace.id)
+
+
+@app.post("/api/mind-maps", response_model=MindMap, status_code=201)
+def create_mind_map(body: MindMapCreate, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    require_mind_maps_enabled(); require_workspace_write(context)
+    try: return store.create_mind_map(context.workspace.id, context.user.id, body)
+    except PaperNotFoundError as exc: raise HTTPException(status_code=404, detail="mind map source or generation run not found") from exc
+    except ValueError as exc: raise HTTPException(status_code=422, detail={"code":"invalid_mind_map", "message":str(exc)}) from exc
+
+
+@app.get("/api/mind-maps/{mind_map_id}", response_model=MindMap)
+def get_mind_map(mind_map_id: str, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    try: return store.get_mind_map(context.workspace.id, mind_map_id)
+    except PaperNotFoundError as exc: raise HTTPException(status_code=404, detail="mind map not found") from exc
+
+
+@app.delete("/api/mind-maps/{mind_map_id}", status_code=204)
+def delete_mind_map(mind_map_id: str, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    require_mind_maps_enabled(); require_workspace_write(context)
+    if not store.delete_mind_map(context.workspace.id, mind_map_id): raise HTTPException(status_code=404, detail="mind map not found")
+
+
+@app.post("/api/mind-maps/generate", response_model=MindMapCandidateResponse)
+def generate_mind_map(body: MindMapGenerationRequest, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    """Return an auditable candidate only; persistence requires POST /mind-maps."""
+    require_mind_maps_enabled(); require_workspace_write(context)
+    try:
+        selection = resolve_workspace_generation(store, context.workspace.id, "mind_map", body.generation_provider, body.generation_model)
+        if body.paper_id:
+            paper = store.get_owned(context.workspace.id, body.paper_id)
+            if paper.content_scope != "full_text":
+                raise HTTPException(status_code=422, detail={"code":"full_text_required", "message":"abstract_only の論文からはマインドマップを生成できません。"})
+            source_version_id=store.paper_source_version_id(context.workspace.id, paper.id)
+            resolved_span_ids=[span.id for span in store.list_source_spans(context.workspace.id, source_version_id)]
+            source_text, _, _, included_span_ids=store.mind_map_generation_material(
+                context.workspace.id, [], resolved_span_ids,
+            )
+            scope={"mode":"paper", "paper_id":paper.id, "source_span_ids":included_span_ids}
+            title=body.title or paper.title
+            root_body=paper.abstract[:4_000]
+            source_paper_ids=[paper.id]
+        else:
+            scope={"mode":"evidence", "evidence_ref_ids":list(dict.fromkeys(body.evidence_ref_ids)), "source_span_ids":list(dict.fromkeys(body.source_span_ids))}
+            title=body.title or "根拠からのマインドマップ"
+            root_body="選択した根拠を起点に、確認可能な論点を整理します。"
+            source_text, source_paper_ids, included_ref_ids, included_span_ids=store.mind_map_generation_material(
+                context.workspace.id, scope["evidence_ref_ids"], scope["source_span_ids"],
+            )
+            scope["evidence_ref_ids"]=included_ref_ids
+            scope["source_span_ids"]=included_span_ids
+        run=store.create_research_run(context.workspace.id, context.user.id, source_paper_ids=source_paper_ids, purpose="mind_map_generation", plan={"mind_map_source_scope":scope}, model=selection.model, prompt_version="mind-map-v1")
+        store.append_run_artifact(context.workspace.id, run.id, kind="mind_map_candidate", payload={"source_scope":scope, "provider":selection.provider, "model":selection.model})
+        source_text=source_text[:12_000]
+        generated=generate_candidate(selection, title=title, source_text=source_text, source_scope=scope)
+        if generated.fallback_reason == "out_of_scope_evidence": raise HTTPException(status_code=422, detail={"code":"out_of_scope_evidence", "message":"生成候補に入力範囲外の根拠が含まれています。"})
+        record_generation_outcome(store, context.workspace.id, context.user.id, scope="mind_map", selection=selection, outcome="succeeded" if generated.attempted and not generated.fallback_reason else "fallback", reference_id=run.id, prompt_version="mind-map-v1", usage={"model_calls":1 if generated.attempted else 0, "fallback_reason":generated.fallback_reason})
+        return MindMapCandidateResponse(research_run_id=run.id, title=title, source_scope=scope, nodes=[MindMapNodeDraft.model_validate(item) for item in generated.nodes])
+    except PaperNotFoundError as exc: raise HTTPException(status_code=404, detail="paper not found") from exc
+    except ValueError as exc: raise HTTPException(status_code=422, detail={"code":"invalid_generation_selection", "message":str(exc)}) from exc
+
+
+@app.patch("/api/mind-map-nodes/{node_id}", response_model=MindMapNode)
+def update_mind_map_node(node_id: str, body: MindMapNodeUpdate, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    require_mind_maps_enabled(); require_workspace_write(context)
+    try: return store.update_mind_map_node(context.workspace.id, node_id, body)
+    except PaperNotFoundError as exc: raise HTTPException(status_code=404, detail="mind map node not found") from exc
+    except ValueError as exc: raise HTTPException(status_code=422, detail={"code":"invalid_mind_map", "message":str(exc)}) from exc
+
+
+@app.delete("/api/mind-map-nodes/{node_id}", status_code=204)
+def delete_mind_map_node(node_id: str, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    require_mind_maps_enabled(); require_workspace_write(context)
+    try: store.delete_mind_map_node(context.workspace.id, node_id)
+    except PaperNotFoundError as exc: raise HTTPException(status_code=404, detail="mind map node not found") from exc
+    except ValueError as exc: raise HTTPException(status_code=409, detail={"code":"root_delete_forbidden", "message":str(exc)}) from exc
+
+
+@app.post("/api/mind-map-nodes/{node_id}/expand", response_model=MindMapCandidateResponse)
+def expand_mind_map_node(node_id: str, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    require_mind_maps_enabled(); require_workspace_write(context)
+    try:
+        mapping=store.get_mind_map(context.workspace.id, next(node.mind_map_id for mind_map in store.list_mind_maps(context.workspace.id) for node in mind_map.nodes if node.id == node_id))
+        node=next(item for item in mapping.nodes if item.id == node_id)
+        if node.depth >= 8: raise ValueError("mind map depth must not exceed 8")
+        run=store.create_research_run(context.workspace.id, context.user.id, purpose="mind_map_expand", plan={"mind_map_source_scope":mapping.source_scope, "mind_map_parent_id":node.id}, prompt_version="mind-map-expand-v1")
+        selection=resolve_workspace_generation(store, context.workspace.id, "mind_map", None, None)
+        generated=generate_candidate(selection, title=node.title, source_text=(node.title+"\n"+node.body)[:12_000], source_scope=mapping.source_scope, parent_client_id=node.id, root=False)
+        if generated.fallback_reason == "out_of_scope_evidence": raise HTTPException(status_code=422, detail={"code":"out_of_scope_evidence", "message":"生成候補に入力範囲外の根拠が含まれています。"})
+        return MindMapCandidateResponse(research_run_id=run.id, title=node.title, source_scope=mapping.source_scope, nodes=[MindMapNodeDraft.model_validate(item) for item in generated.nodes])
+    except StopIteration as exc: raise HTTPException(status_code=404, detail="mind map node not found") from exc
+    except ValueError as exc: raise HTTPException(status_code=422, detail={"code":"invalid_mind_map", "message":str(exc)}) from exc
+
+
+@app.post("/api/mind-map-nodes/{node_id}/children", response_model=list[MindMapNode], status_code=201)
+def confirm_mind_map_children(node_id: str, body: MindMapChildrenCreate, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    require_mind_maps_enabled(); require_workspace_write(context)
+    try: return store.append_mind_map_children(context.workspace.id, context.user.id, node_id, body.nodes, body.generation_run_id)
+    except PaperNotFoundError as exc: raise HTTPException(status_code=404, detail="mind map node or generation run not found") from exc
+    except ValueError as exc: raise HTTPException(status_code=422, detail={"code":"invalid_mind_map", "message":str(exc)}) from exc
+
+
+@app.post("/api/mind-map-nodes/{node_id}/research-actions/generate", response_model=MindMapActionCandidates)
+def generate_mind_map_actions(node_id: str, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    require_mind_maps_enabled(); require_workspace_write(context)
+    try:
+        mapping=next(m for m in store.list_mind_maps(context.workspace.id) if any(n.id == node_id for n in m.nodes)); node=next(n for n in mapping.nodes if n.id == node_id)
+        run=store.create_research_run(context.workspace.id, context.user.id, purpose="mind_map_actions", plan={"mind_map_source_scope":mapping.source_scope}, prompt_version="mind-map-actions-v1")
+        selection=resolve_workspace_generation(store, context.workspace.id, "mind_map", None, None)
+        generated=generate_candidate(selection, title=node.title, source_text=(node.title+"\n"+node.body)[:12_000], source_scope=mapping.source_scope, parent_client_id=node.id, root=False)
+        if generated.fallback_reason == "out_of_scope_evidence": raise HTTPException(status_code=422, detail={"code":"out_of_scope_evidence", "message":"生成候補に入力範囲外の根拠が含まれています。"})
+        candidates=[MindMapActionCandidate(client_id=f"action-{index}", ordinal=index-1, title=f"{item['title']} を検証する", description=item.get("body") or "根拠と前提を確認し、次の調査手順を記録する。") for index,item in enumerate(generated.nodes[:5],1)]
+        return MindMapActionCandidates(research_run_id=run.id, candidates=candidates)
+    except StopIteration as exc: raise HTTPException(status_code=404, detail="mind map node not found") from exc
+
+
+@app.post("/api/mind-map-nodes/{node_id}/research-actions", response_model=list[ResearchAction], status_code=201)
+def confirm_mind_map_actions(node_id: str, body: MindMapActionConfirm, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    require_mind_maps_enabled(); require_workspace_write(context)
+    try:
+        store.get_research_run(context.workspace.id, body.research_run_id)
+        return [store.create_research_action(context.workspace.id, context.user.id, ResearchActionCreate(title=item.title, description=item.description, research_run_id=body.research_run_id, mind_map_node_id=node_id, origin_kind="mind_map", generation_metadata={"source":f"mind_map_task_extraction_v1:{body.research_run_id}", "ordinal":item.ordinal, "client_id":item.client_id})) for item in body.actions]
+    except PaperNotFoundError as exc: raise HTTPException(status_code=404, detail="mind map node not found") from exc
+
+
+@app.post("/api/mind-map-nodes/{node_id}/notes", response_model=Note, status_code=201)
+def create_mind_map_note(node_id: str, body: NoteCreate, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    require_mind_maps_enabled(); require_workspace_write(context)
+    try: return store.create_note(context.workspace.id, context.user.id, body.paper_id, body.title, body.content, "mind_map", node_id, body.origin_snapshot or {"title":body.title, "content":body.content})
+    except PaperNotFoundError as exc: raise HTTPException(status_code=404, detail="mind map node or paper not found") from exc
+    except ValueError as exc: raise HTTPException(status_code=422, detail={"code":"invalid_mind_map_note", "message":str(exc)}) from exc
+
+
+@app.post("/api/mind-map-nodes/{node_id}/graph-node", response_model=KnowledgeNode, status_code=201)
+def promote_mind_map_node(node_id: str, body: MindMapGraphNodeCreate, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
+    require_mind_maps_enabled(); require_workspace_write(context)
+    try: return store.promote_mind_map_node(context.workspace.id, context.user.id, node_id, body.node_type)
+    except PaperNotFoundError as exc: raise HTTPException(status_code=404, detail="mind map node not found") from exc
 
 
 @app.post("/api/research-actions", response_model=ResearchAction, status_code=201)
@@ -1126,34 +1472,85 @@ def add_external_paper(
     context: WorkspaceContext = Depends(get_workspace_context),
 ):
     require_workspace_write(context)
-    title, authors, year, abstract = body.title, body.authors, body.year, body.abstract
+    title: str | None = None
+    authors: list[str] = []
+    year: int | None = None
+    abstract = ""
     identifier = body.identifier.strip()
+    arxiv_id = re.sub(r"^(arxiv:|https?://arxiv.org/abs/)", "", identifier, flags=re.I)
+    doi_id = canonical_doi(identifier)
+    is_arxiv = bool(re.match(r"^\d{4}\.\d+(v\d+)?$", arxiv_id, re.I))
+    is_doi = doi_id is not None
+    if not is_arxiv and not is_doi:
+        raise HTTPException(status_code=422, detail={"code": "invalid_external_identifier", "message": "arXiv ID または DOI を指定してください。"})
+    canonical_identifier = ("arxiv", arxiv_id) if is_arxiv else ("doi", doi_id)
+    existing = store.find_paper_by_external_identifiers(
+        context.workspace.id, [canonical_identifier],
+    )
+    if existing is not None:
+        # Registration is idempotent even while metadata providers are down.
+        # This is a lookup, not a refresh operation, so an existing canonical
+        # identity should not incur another external API call.
+        return summary(existing)
+    external_provider = "arxiv" if is_arxiv else "doi"
+    metadata_provider = "arxiv"
+    metadata_id = arxiv_id
+    metadata: dict = {}
+    provider_snapshot: dict = {}
+    external_identifiers: list[tuple[str, str]] = []
     try:
-        arxiv_id = re.sub(r"^(arxiv:|https?://arxiv.org/abs/)", "", identifier, flags=re.I)
-        if re.match(r"^\d{4}\.\d+(v\d+)?$", arxiv_id, re.I):
+        if is_arxiv:
             response = httpx.get("https://export.arxiv.org/api/query", params={"id_list": arxiv_id}, timeout=15)
             response.raise_for_status()
             entry = ET.fromstring(response.text).find("{http://www.w3.org/2005/Atom}entry")
-            if entry is not None:
-                title = title or (entry.findtext("{http://www.w3.org/2005/Atom}title") or "").strip()
-                abstract = abstract or (entry.findtext("{http://www.w3.org/2005/Atom}summary") or "").strip()
-                authors = authors or [node.findtext("{http://www.w3.org/2005/Atom}name") or "" for node in entry.findall("{http://www.w3.org/2005/Atom}author")]
-                published = entry.findtext("{http://www.w3.org/2005/Atom}published") or ""
-                year = year or (int(published[:4]) if published[:4].isdigit() else None)
-        elif identifier.lower().startswith("10."):
-            response = httpx.get(
-                f"https://api.semanticscholar.org/graph/v1/paper/DOI:{identifier}",
-                params={"fields": "title,authors,year,abstract"}, timeout=15,
-            )
-            response.raise_for_status()
-            data = response.json()
-            title = title or data.get("title")
-            abstract = abstract or data.get("abstract") or ""
-            authors = authors or [author.get("name", "") for author in data.get("authors", [])]
-            year = year or data.get("year")
-    except (httpx.HTTPError, ET.ParseError, ValueError):
-        pass
-    title = title or f"External paper: {identifier}"
+            if entry is None:
+                raise LookupError("arXiv response is missing an entry")
+            response_identifier = entry.findtext("{http://www.w3.org/2005/Atom}id") or ""
+            if (
+                not response_identifier.strip()
+                or _canonical_arxiv_identifier(response_identifier)
+                != _canonical_arxiv_identifier(arxiv_id)
+            ):
+                raise ValueError("arXiv response identity does not match the requested paper")
+            provider_title = (entry.findtext("{http://www.w3.org/2005/Atom}title") or "").strip()
+            if not provider_title:
+                raise ValueError("arXiv response is missing a title")
+            provider_abstract = (entry.findtext("{http://www.w3.org/2005/Atom}summary") or "").strip()
+            provider_authors = [
+                node.findtext("{http://www.w3.org/2005/Atom}name") or ""
+                for node in entry.findall("{http://www.w3.org/2005/Atom}author")
+            ]
+            published = entry.findtext("{http://www.w3.org/2005/Atom}published") or ""
+            provider_year = int(published[:4]) if published[:4].isdigit() else None
+            title = provider_title
+            abstract = provider_abstract
+            authors = provider_authors
+            year = provider_year
+            provider_snapshot = {
+                "paperId": arxiv_id, "title": provider_title, "authors": provider_authors,
+                "year": provider_year, "abstract": provider_abstract,
+                "externalIds": {"ArXiv": arxiv_id},
+            }
+            external_identifiers = [("arxiv", arxiv_id)]
+        else:
+            metadata = fetch_doi_metadata(doi_id)
+            title = str(metadata["title"])
+            abstract = str(metadata.get("abstract") or "")
+            authors = list(metadata.get("authors") or [])
+            year = metadata.get("year") if isinstance(metadata.get("year"), int) else None
+            metadata_provider = str(metadata["provider"])
+            metadata_id = str(metadata["provider_paper_id"])
+            provider_snapshot = dict(metadata["provider_snapshot"])
+            external_identifiers = list(dict(metadata["external_ids"]).items())
+            external_provider = "doi"
+    except DiscoveryProviderError as exc:
+        raise _external_metadata_error_response(exc) from exc
+    except (httpx.HTTPError, ET.ParseError, LookupError, TypeError, ValueError) as exc:
+        if is_arxiv:
+            raise _arxiv_error_response(exc) from exc
+        raise HTTPException(status_code=502, detail={"code": "invalid_provider_response", "message": "論文メタデータサービスから有効な書誌情報を取得できませんでした。"}) from exc
+    if not title:
+        raise HTTPException(status_code=502, detail="external paper metadata could not be retrieved")
     paper = Paper(
         user_id=context.user.subject,
         workspace_id=context.workspace.id,
@@ -1162,10 +1559,11 @@ def add_external_paper(
         authors=authors,
         year=year,
         abstract=abstract,
-        source="arXiv" if "arxiv" in body.identifier.lower() or re.match(r"^\d{4}\.\d+", body.identifier) else "DOI",
-        external_id=identifier,
+        source="arXiv" if external_provider == "arxiv" else "DOI",
+        external_id=arxiv_id if external_provider == "arxiv" else doi_id,
+        content_scope="abstract_only",
         page_count=1 if abstract else 0,
-        content_hash=hashlib.sha256(f"external:{identifier.lower()}".encode("utf-8")).hexdigest(),
+        content_hash=hashlib.sha256(f"external:{(arxiv_id if external_provider == 'arxiv' else doi_id).casefold()}".encode("utf-8")).hexdigest(),
     )
     if abstract:
         paper.chunks = chunk_pages([(1, abstract)], paper.id)
@@ -1173,6 +1571,19 @@ def add_external_paper(
         embedding_provider, configured_model = embedding_config()
         store.upsert(
             paper, embedding_model=configured_model, embedding_provider=embedding_provider,
+            external_identifiers=external_identifiers,
+            external_metadata_provider=metadata_provider,
+            external_metadata_id=metadata_id,
+            external_metadata_snapshot={
+                "provider": metadata_provider,
+                "provider_paper_id": metadata_id,
+                "license": metadata.get("license", "provider_metadata") if external_provider == "doi" else "provider_metadata",
+                "rate_limit_policy": metadata.get("rate_limit_policy", "provider_default") if external_provider == "doi" else "provider_default",
+                "provider_snapshot": provider_snapshot,
+                "effective_metadata": {
+                    "title": title, "authors": authors, "year": year, "abstract": abstract,
+                },
+            },
         )
     except DuplicatePaperError as exc:
         return summary(exc.paper)
@@ -1271,7 +1682,7 @@ def get_figure_asset(
 ):
     try:
         element = store.get_document_element(context.workspace.id, paper_id, element_id)
-        if element.kind != "figure" or not element.asset_key:
+        if element.kind not in {"figure", "table"} or not element.asset_key:
             raise PaperNotFoundError(element_id)
         path = originals.path_for(element.asset_key)
     except (PaperNotFoundError, FileNotFoundError):
@@ -1438,6 +1849,11 @@ def _paper_backed_graph_citation(
         extraction_quality=evidence.extraction_quality,
         retrieval_reason=retrieval_reason, source_quote=quote,
         retrieval_stance=retrieval_stance,
+        evidence_scope=(
+            "abstract"
+            if paper.content_scope == "abstract_only" or version.metadata.get("evidence_scope") == "abstract"
+            else "full_text"
+        ),
     )
 
 
@@ -1866,6 +2282,10 @@ def _validate_search_source_scope(
             "ResearchRunに保存された検索対象と今回の論文選択が一致しません。新しいRunを作成してください。",
             status_code=409,
         )
+    if body.mind_map_seed:
+        expected = run.plan.get("mind_map_seed") if isinstance(run.plan, dict) else None
+        if not isinstance(expected, dict) or body.mind_map_seed.mind_map_id != expected.get("mind_map_id") or body.mind_map_seed.node_id != expected.get("node_id"):
+            raise _search_scope_error("mind_map_seed_mismatch", "ResearchRunに保存されたマインドマップ起点と一致しません。", status_code=409)
 
 
 def _build_research_memory_context(
@@ -1898,16 +2318,21 @@ def _build_research_memory_context(
 def _run_agentic_rag(
     body: SearchRequest, retrieve, conversation: ResearchConversation | None,
     memory_context: str, deadline: float, emit: Callable[[str], None],
-    cancel_event: Event | None = None,
+    cancel_event: Event | None = None, generation_provider: str = "openai", generation_model: str = ANSWER_MODEL,
 ):
     def build_model(timeout_seconds: float = 18.0):
         if _rag_request_stopped(deadline, cancel_event):
             raise OpenAIDeadlineExceeded("RAG request stopped before model dispatch")
-        return _build_agentic_chat_model(timeout_seconds)
+        # Preserve the established OpenAI builder seam used by integrations
+        # and tests. Provider/model arguments are only needed for a real
+        # per-run override (including Gemini).
+        if generation_provider == "openai" and generation_model == ANSWER_MODEL:
+            return _build_agentic_chat_model()
+        return _build_agentic_chat_model(timeout_seconds, provider=generation_provider, model=generation_model)
 
     _raise_if_rag_stopped(deadline, cancel_event)
     agent = AgenticRAG(
-        _build_agentic_chat_model(),
+        build_model(),
         retrieve,
         max_iterations=2,
         max_execution_seconds=RAG_REQUEST_DEADLINE_SECONDS,
@@ -1917,6 +2342,7 @@ def _run_agentic_rag(
         max_sources=8,
         max_evidence_chars=12_000,
         generation_reserve_seconds=RAG_GENERATION_RESERVE_SECONDS,
+        uses_openai_adapter=generation_provider == "openai",
         # Research memory is persisted only after the semantic audit.
         verify_clean_claims=conversation is not None,
         progress_callback=lambda stage: emit({
@@ -1937,6 +2363,7 @@ def _search_result_summary(response: SearchResponse) -> dict:
         "citations": [citation.model_dump(mode="json") for citation in response.citations],
         "generation_mode": response.generation_mode,
         "model": response.model,
+        "generation_provider": response.generation_provider,
         "retrieval_queries": response.retrieval_queries,
         "grounded": response.grounded,
         "llm_attempted": response.llm_attempted,
@@ -1998,6 +2425,10 @@ def _research_message_response_metadata(response: SearchResponse) -> dict:
         "interaction_mode": response.interaction_mode,
         "draft": response.draft,
         "claims": [claim.model_dump(mode="json") for claim in response.claims],
+        "generation_provider": response.generation_provider,
+        "generation_model": response.model,
+        "generation_mode": response.generation_mode,
+        "fallback_reason": response.fallback_reason,
     }
     if response.research_run_id:
         metadata["research_run_id"] = response.research_run_id
@@ -2073,6 +2504,10 @@ def _answer(
     """Answer within one absolute budget; retrieval never creates document vectors."""
     deadline = deadline or (time.monotonic() + RAG_REQUEST_DEADLINE_SECONDS)
     _validate_search_source_scope(body, store, context.workspace.id)
+    try:
+        generation_selection = resolve_workspace_generation(store, context.workspace.id, "ask", body.generation_provider, body.generation_model)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"code":"invalid_generation_selection", "message":str(exc)}) from exc
 
     def emit(stage: str) -> None:
         if progress is not None:
@@ -2209,7 +2644,7 @@ def _answer(
         )
         return citations
 
-    model_name = ANSWER_MODEL
+    model_name = generation_selection.model
     generated: str | None = None
     citations = []
     retrieval_queries = [body.query]
@@ -2240,7 +2675,7 @@ def _answer(
             logger.warning("rag_query_stage stage=graph code=deadline_exceeded")
         graph_candidate_cache[(body.query, body.limit)] = initial_graph
         initial_graph_available = any(initial_graph.values())
-    if not os.getenv("OPENAI_API_KEY"):
+    if not ((generation_selection.provider == "openai" and os.getenv("OPENAI_API_KEY")) or (generation_selection.provider == "gemini" and os.getenv("GEMINI_API_KEY"))):
         fallback_reason = "api_key_missing"
         _set_last_llm_failure(fallback_reason)
     elif not initial_chunks and not initial_graph_available:
@@ -2262,7 +2697,8 @@ def _answer(
             _raise_if_rag_stopped(deadline, cancel_event)
             agent_result = _run_agentic_rag(
                 body, retrieve, conversation, memory_context, deadline, emit,
-                cancel_event=cancel_event,
+                cancel_event=cancel_event, generation_provider=generation_selection.provider,
+                generation_model=generation_selection.model,
             )
             generated = agent_result.answer
             citations = agent_result.citations
@@ -2300,7 +2736,9 @@ def _answer(
         answer=generated, citations=citations, conversation_id=body.conversation_id,
         research_run_id=body.research_run_id,
         interaction_mode=body.interaction_mode, draft=mode_draft or (body.interaction_mode == "synthesis" and not grounded),
-        generation_mode=generation_mode, model=model_name if llm_succeeded else None,
+        generation_mode=generation_mode,
+        model=model_name if llm_succeeded else "extractive",
+        generation_provider=generation_selection.provider if llm_succeeded else "local",
         retrieval_queries=retrieval_queries, grounded=grounded,
         llm_attempted=llm_attempted, llm_succeeded=llm_succeeded,
         grounding_status=grounding_status, fallback_reason=fallback_reason,
@@ -2332,6 +2770,12 @@ def _answer(
         )
     result_summary = _search_result_summary(response)
     _persist_search_history_best_effort(store, context, body, response, result_summary)
+    try:
+        record_generation_outcome(store, context.workspace.id, context.user.id, scope="ask", selection=generation_selection, outcome="succeeded" if llm_succeeded else "fallback", reference_id=body.research_run_id, prompt_version="ask-v1", usage={"model_calls": model_calls})
+        if body.research_run_id:
+            store.set_research_run_generation(context.workspace.id, body.research_run_id, generation_selection.provider, generation_selection.model)
+    except Exception:
+        logger.warning("code=generation_audit_write_failed")
     return response
 
 
@@ -2523,7 +2967,7 @@ async def answer_stream(
             if word:
                 yield f"data: {json.dumps({'type': 'token', 'value': word}, ensure_ascii=False)}\n\n"
         yield f"data: {json.dumps({'type': 'citations', 'value': [c.model_dump() for c in response.citations]}, ensure_ascii=False)}\n\n"
-        yield f"data: {json.dumps({'type': 'meta', 'value': {'research_run_id': response.research_run_id, 'interaction_mode': response.interaction_mode, 'draft': response.draft, 'generation_mode': response.generation_mode, 'model': response.model, 'retrieval_queries': response.retrieval_queries, 'grounded': response.grounded, 'llm_attempted': response.llm_attempted, 'llm_succeeded': response.llm_succeeded, 'grounding_status': response.grounding_status, 'fallback_reason': response.fallback_reason, 'claims': [claim.model_dump(mode='json') for claim in response.claims], 'memory_delta': response.memory_delta, 'model_calls': response.model_calls}}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'type': 'meta', 'value': {'research_run_id': response.research_run_id, 'interaction_mode': response.interaction_mode, 'draft': response.draft, 'generation_mode': response.generation_mode, 'generation_provider': response.generation_provider, 'model': response.model, 'retrieval_queries': response.retrieval_queries, 'grounded': response.grounded, 'llm_attempted': response.llm_attempted, 'llm_succeeded': response.llm_succeeded, 'grounding_status': response.grounding_status, 'fallback_reason': response.fallback_reason, 'claims': [claim.model_dump(mode='json') for claim in response.claims], 'memory_delta': response.memory_delta, 'model_calls': response.model_calls}}, ensure_ascii=False)}\n\n"
         yield "data: {\"type\":\"done\"}\n\n"
 
     return StreamingResponse(events(), media_type="text/event-stream")
@@ -2543,6 +2987,20 @@ def compare(
     context: WorkspaceContext = Depends(get_workspace_context),
 ):
     return compare_papers(selected_papers(body, store, context.workspace.id))
+
+
+@app.post("/api/analysis/experiments/compare", response_model=ExperimentComparisonResponse)
+def compare_experiments(
+    body: ExperimentComparisonRequest,
+    store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context),
+):
+    if context.workspace.role not in {"owner", "editor"}:
+        raise HTTPException(status_code=403, detail="workspace write access is required to generate experiment analysis")
+    try:
+        selection = resolve_workspace_generation(store, context.workspace.id, "analysis", body.generation_provider, body.generation_model)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"code":"invalid_generation_selection", "message":str(exc)}) from exc
+    return compare_experiment_profiles(body, store, workspace_id=context.workspace.id, user_id=context.user.id, selection=selection, proposal_generator=generate_experiment_proposals)
 
 
 @app.post("/api/analysis/gaps", response_model=list[ResearchGap])
@@ -2725,6 +3183,233 @@ def get_hypothesis_card(card_id: str, store: PaperStore = Depends(get_store), co
 @app.get("/api/discovery/review-queue", response_model=list[DiscoveryItem])
 def list_discovery_review_queue(store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
     return store.list_discovery_items(context.workspace.id)
+
+
+@app.post("/api/discovery/search", response_model=DiscoverySearchResponse)
+def search_discovery_papers(
+    body: DiscoverySearchRequest, store: PaperStore = Depends(get_store),
+    context: WorkspaceContext = Depends(get_workspace_context),
+):
+    """Federated metadata discovery. Abstracts remain abstract-only evidence."""
+    require_workspace_write(context)
+    session_position=_discovery_session_position(body.cursor) if body.cursor else None
+    if session_position:
+        session_id, session_offset=session_position
+        try:
+            items,total,expires_at=session_page_items(store,context.workspace.id,session_id,session_offset,limit=20)
+        except PaperNotFoundError as exc:
+            raise HTTPException(status_code=404,detail={"code":"discovery_session_not_found","message":"検索セッションが見つからないか期限切れです。"}) from exc
+        next_cursor=_discovery_session_cursor(session_id,session_offset+len(items)) if session_offset+len(items)<total else None
+        return DiscoverySearchResponse(fetched_at=datetime.now(timezone.utc).isoformat(),total_estimate=total,next_cursor=next_cursor,items=items,search_session_id=session_id,expires_at=expires_at.isoformat(),query_plan=[],search_plan={},providers=[],partial=False,warnings=[])
+    offset, cursor_token = _discovery_position(body)
+    try:
+        selection = resolve_workspace_generation(store, context.workspace.id, "discovery", body.generation_provider, body.generation_model)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"code":"invalid_generation_selection", "message":str(exc)}) from exc
+    planner_configured=os.getenv("DISCOVERY_QUERY_PLANNER_ENABLED", "false").lower() in {"1","true","yes"}
+    provider_configured=(selection.provider == "openai" and bool(os.getenv("OPENAI_API_KEY"))) or (selection.provider == "gemini" and bool(os.getenv("GEMINI_API_KEY")))
+    planner_enabled=planner_configured and provider_configured
+    search_plan = plan_queries(
+        body.query.strip(), provider=selection.provider, model=selection.model,
+        enabled=planner_enabled,
+        disabled_reason="planner_disabled" if not planner_configured else "api_key_missing",
+    )
+    planner_attempted = bool(search_plan.pop("_generation_attempted", False))
+    planner_succeeded = bool(search_plan.pop("_generation_succeeded", False))
+    planner_fallback_reason = search_plan.pop("_fallback_reason", None)
+    effective_generation_provider = selection.provider if planner_succeeded else "local"
+    effective_generation_model = selection.model if planner_succeeded else "raw-query-v1"
+    record_generation_outcome(
+        store, context.workspace.id, context.user.id, scope="discovery",
+        selection=selection,
+        outcome="succeeded" if planner_succeeded else ("failed" if planner_attempted else "skipped"),
+        prompt_version="discovery-query-plan-v1",
+        usage={"fallback_reason": planner_fallback_reason} if planner_fallback_reason else None,
+    )
+    if not planner_succeeded:
+        store.record_generation_audit(
+            context.workspace.id, context.user.id, scope="discovery",
+            provider="local", model="raw-query-v1", outcome="succeeded",
+            prompt_version="raw-query-v1",
+            usage={"fallback_reason": planner_fallback_reason} if planner_fallback_reason else None,
+        )
+    query_plan = list(search_plan["queries"])
+    provider_batch_limit = 50 if len(query_plan) == 1 else 20
+    grouped: dict[str, dict] = {}
+    statuses: list[DiscoveryProviderStatus] = []
+    failures: list[DiscoveryProviderError] = []
+    legacy_payload: dict | None = None
+    def fetch_provider_rows(provider: str) -> tuple[str, list[dict], DiscoveryProviderStatus, DiscoveryProviderError | None, dict | None]:
+        provider_legacy_payload: dict | None = None
+        try:
+            if provider == "semantic_scholar":
+                # Keep this call seam for legacy callers and offline tests.
+                rows=[]
+                for query_rank, planned_query in enumerate(query_plan, 1):
+                    payload = search_semantic_scholar_papers(planned_query, offset=offset if query_rank == 1 else 0, limit=provider_batch_limit, sort=body.sort, cursor_token=cursor_token if query_rank == 1 else None, year_from=body.year_from, year_to=body.year_to)
+                    if query_rank == 1: provider_legacy_payload = payload
+                    for rank, snapshot in enumerate(payload.get("data", []), 1):
+                        if not isinstance(snapshot, dict): continue
+                        provider_id=str(snapshot.get("paperId") or "").strip(); title=str(snapshot.get("title") or "").strip()
+                        if not provider_id or not title: continue
+                        ids=_semantic_external_ids(snapshot)
+                        rows.append({"provider_paper_id":provider_id,"title":title,"authors":_semantic_authors(snapshot),"year":snapshot.get("year") if isinstance(snapshot.get("year"),int) else None,"publication_date":str(snapshot.get("publicationDate") or "") or None,"venue":str(snapshot.get("venue") or ""),"abstract":str(snapshot.get("abstract") or ""),"citation_count":max(0,int(snapshot.get("citationCount") or 0)),"external_ids":ids,"source_url":_https_url(snapshot.get("url")),"provider_snapshot":snapshot,"rrf":1/(60+rank+query_rank-1)})
+            else:
+                rows=[]
+                for query_rank, planned_query in enumerate(query_plan, 1):
+                    for rank, row in enumerate(search_discovery_provider(provider, planned_query, limit=provider_batch_limit, year_from=body.year_from, year_to=body.year_to, sort=body.sort, search_mode=body.search_mode), 1):
+                        rows.append({**row,"rrf":1/(60+rank+query_rank-1)})
+            return provider, rows, DiscoveryProviderStatus(provider=provider, status="succeeded", item_count=len(rows)), None, provider_legacy_payload
+        except SemanticScholarError as exc:
+            error=DiscoveryProviderError(exc.code); return provider, [], DiscoveryProviderStatus(provider=provider,status="failed",error=error.code,warning="provider_unavailable"), error, None
+        except DiscoveryProviderError as exc:
+            return provider, [], DiscoveryProviderStatus(provider=provider,status="disabled" if exc.code=="disabled" else "failed",error=exc.code,warning="provider_unavailable"), exc, None
+        except (TypeError, ValueError, AttributeError):
+            error=DiscoveryProviderError("invalid_response"); return provider, [], DiscoveryProviderStatus(provider=provider,status="failed",error=error.code,warning="provider_unavailable"), error, None
+
+    ordered, statuses, failures, legacy_payload = federate_provider_rows(body, fetch_provider_rows)
+    for item in ordered:
+        ids = item["provider_ids"]
+        if ids.get("doi") and os.getenv("DISCOVERY_CROSSREF_VERIFY_ENABLED", "false").lower() in {"1", "true", "yes"}:
+            try:
+                item["snapshot"]["crossref_verification"] = verify_crossref_doi(ids["doi"])
+                item["snapshot"]["match_reasons"].append("doi_verified")
+            except DiscoveryProviderError:
+                item["snapshot"]["crossref_verification"] = {"status": "unavailable"}
+    if not ordered and failures and not any(status.status == "succeeded" for status in statuses):
+        raise HTTPException(status_code=503, detail={"code": "external_provider_unavailable", "message": "論文検索サービスを利用できません。"})
+    persisted=store.create_discovery_search_session(context.workspace.id, context.user.id, criteria=body.model_dump(exclude={"cursor"}, mode="json"), query_plan=query_plan, generation_provider=effective_generation_provider, generation_model=effective_generation_model, candidates=ordered)
+    items=[]
+    title_candidates: dict[tuple[str, int | None], str] = {}
+    for item in persisted[:20]:
+        existing=store.find_paper_by_external_identifiers(context.workspace.id, list(item["provider_ids"].items()))
+        title_key=(re.sub(r"\W+", "", str(item["title"]).casefold()),item.get("year")); possible=title_candidates.get(title_key); title_candidates.setdefault(title_key,item["candidate_id"])
+        items.append(DiscoverySearchItem(candidate_id=item["candidate_id"],provider=item["provider"],provider_paper_id=item["provider_paper_id"],provider_ids=item["provider_ids"],source_providers=list(dict.fromkeys(item["source_providers"])),language=item.get("language"),match_reasons=item["match_reasons"],possible_duplicate_of=possible,title=item["title"],authors=item.get("authors",[]),year=item.get("year"),publication_date=item.get("publication_date"),venue=item.get("venue"),abstract=item.get("abstract", ""),citation_count=item.get("citation_count",0),external_ids=item["provider_ids"],source_url=item.get("source_url", ""),existing_paper_id=existing.id if existing else None))
+    partial=any(status.status!="succeeded" for status in statuses)
+    next_cursor=_discovery_session_cursor(persisted[0]["search_session_id"],20) if len(persisted)>20 else None
+    return DiscoverySearchResponse(provider="semantic_scholar", fetched_at=datetime.now(timezone.utc).isoformat(), total_estimate=len(persisted), next_cursor=next_cursor, items=items, search_session_id=persisted[0]["search_session_id"] if persisted else None, expires_at=persisted[0]["expires_at"] if persisted else None, providers=statuses, partial=partial, warnings=[status.warning for status in statuses if status.warning], query_plan=query_plan, search_plan={**search_plan,"mode":body.search_mode,"fallback_reason":planner_fallback_reason}, providers_used=[status.provider for status in statuses if status.status=="succeeded"], degraded_providers=[status.provider for status in statuses if status.status!="succeeded"], generation_provider=effective_generation_provider, generation_model=effective_generation_model)
+
+
+@app.post("/api/discovery/imports", response_model=DiscoveryImportResponse)
+def import_discovery_papers(
+    body: DiscoveryImportRequest, store: PaperStore = Depends(get_store),
+    context: WorkspaceContext = Depends(get_workspace_context),
+):
+    """Import explicitly selected provider abstracts with a durable accepted audit record."""
+    require_workspace_write(context)
+    results: list[DiscoveryImportItem] = []
+    if body.search_session_id:
+        embedding_provider, configured_embedding_model = embedding_config()
+        try:
+            candidates=store.discovery_session_candidates(context.workspace.id, body.search_session_id, body.candidate_ids)
+        except PaperNotFoundError as exc:
+            raise HTTPException(status_code=404, detail={"code":"discovery_session_not_found", "message":"検索セッションが見つからないか期限切れです。"}) from exc
+        for candidate in candidates:
+            snapshot=dict(candidate.snapshot or {})
+            try:
+                provider=str(candidate.provider)
+                ids=dict(candidate.provider_ids or {})
+                if provider == SEMANTIC_SCHOLAR_PROVIDER:
+                    # A session is a convenience cache, never authority to
+                    # create a paper from stale provider metadata.
+                    fresh=fetch_semantic_scholar_paper(candidate.provider_paper_id)
+                    if not isinstance(fresh, dict) or str(fresh.get("paperId") or "").strip() != candidate.provider_paper_id:
+                        raise ValueError("provider identity changed")
+                    snapshot={"title":str(fresh.get("title") or ""),"authors":_semantic_authors(fresh),"year":fresh.get("year") if isinstance(fresh.get("year"),int) else None,"abstract":str(fresh.get("abstract") or ""),"venue":str(fresh.get("venue") or ""),"source_url":_https_url(fresh.get("url")),"provider_snapshot":fresh}
+                    ids.update(_semantic_external_ids(fresh))
+                elif provider in {"openalex", "cinii", "jstage"}:
+                    fresh=fetch_discovery_provider_paper(provider, candidate.provider_paper_id, ids)
+                    fresh_ids=dict(fresh.get("external_ids") or {})
+                    snapshot={
+                        "title":str(fresh.get("title") or ""),
+                        "authors":list(fresh.get("authors") or []),
+                        "year":fresh.get("year") if isinstance(fresh.get("year"),int) else None,
+                        "publication_date":fresh.get("publication_date"),
+                        "abstract":str(fresh.get("abstract") or ""),
+                        "venue":str(fresh.get("venue") or ""),
+                        "citation_count":max(0, int(fresh.get("citation_count") or 0)),
+                        "source_url":_https_url(fresh.get("source_url")),
+                        "provider_snapshot":fresh.get("provider_snapshot", fresh),
+                    }
+                    ids.update({str(key).casefold():str(value).strip() for key,value in fresh_ids.items() if str(value).strip()})
+                else:
+                    raise ValueError("unsupported discovery provider")
+                if ids.get("doi") and os.getenv("DISCOVERY_CROSSREF_VERIFY_ENABLED", "").strip().casefold() in {"1","true","yes","on"}:
+                    snapshot["crossref_verification"]=verify_crossref_doi(ids["doi"])
+                title=str(snapshot.get("title") or "").strip()
+                if not title: raise ValueError("candidate title missing")
+                abstract=str(snapshot.get("abstract") or "")
+                ids.setdefault(provider, candidate.provider_paper_id)
+                primary=ids.get("doi") or candidate.provider_paper_id
+                paper=Paper(user_id=context.user.subject, workspace_id=context.workspace.id, created_by=context.user.id, title=title, authors=list(snapshot.get("authors") or []), year=snapshot.get("year") if isinstance(snapshot.get("year"),int) else None, abstract=abstract, source=provider, external_id=primary, content_scope="abstract_only", page_count=1 if abstract else 0, content_hash=hashlib.sha256(f"{provider}:{candidate.provider_paper_id.casefold()}".encode("utf-8")).hexdigest())
+                if abstract: paper.chunks=chunk_pages([(1,abstract)],paper.id)
+                stored, item, duplicate=store.import_discovery_paper(workspace_id=context.workspace.id,created_by=context.user.id,paper=paper,provider_paper_id=candidate.provider_paper_id,external_identifiers=list(ids.items()),snapshot=snapshot,search_context={"search_session_id":body.search_session_id},embedding_provider=embedding_provider,embedding_model=configured_embedding_model,provider=provider,license="provider_metadata",rate_limit_policy="provider_default",candidate_id=candidate.id)
+                results.append(DiscoveryImportItem(candidate_id=candidate.id, provider_paper_id=candidate.provider_paper_id,status="duplicate" if duplicate else "imported",paper_id=stored.id,discovery_item_id=item.id))
+            except (SemanticScholarError, DiscoveryProviderError) as exc:
+                code=exc.code
+                logger.warning(
+                    "discovery_import_provider_failure provider=%s candidate_id=%s code=%s",
+                    candidate.provider, candidate.id, code,
+                )
+                results.append(DiscoveryImportItem(
+                    candidate_id=candidate.id, provider_paper_id=candidate.provider_paper_id, status="failed",
+                    error="external_provider_rate_limited" if code=="rate_limited" else "invalid_provider_response" if code=="invalid_response" else "external_provider_unavailable",
+                ))
+            except (ValueError, TypeError) as exc:
+                logger.warning(
+                    "discovery_import_validation_failure provider=%s candidate_id=%s exception=%s detail=%s",
+                    candidate.provider, candidate.id, exc.__class__.__name__, str(exc)[:500],
+                )
+                results.append(DiscoveryImportItem(candidate_id=candidate.id,provider_paper_id=candidate.provider_paper_id,status="failed",error="invalid_provider_response"))
+        return DiscoveryImportResponse(items=results)
+    search_context = body.search_context.model_dump(mode="json")
+    embedding_provider, configured_embedding_model = embedding_config()
+    for requested_id in body.provider_paper_ids:
+        try:
+            snapshot = fetch_semantic_scholar_paper(requested_id)
+            canonical_id = str(snapshot.get("paperId") or requested_id).strip()
+            title = str(snapshot.get("title") or "").strip()
+            if not canonical_id or not title:
+                raise ValueError("provider response is missing a paper identity or title")
+            abstract = str(snapshot.get("abstract") or "")
+            external_ids = _semantic_external_ids(snapshot)
+            external_ids.setdefault(SEMANTIC_SCHOLAR_PROVIDER, canonical_id)
+            primary_external_id = external_ids.get("doi") or canonical_id
+            paper = Paper(
+                user_id=context.user.subject, workspace_id=context.workspace.id,
+                created_by=context.user.id, title=title, authors=_semantic_authors(snapshot),
+                year=snapshot.get("year") if isinstance(snapshot.get("year"), int) else None,
+                abstract=abstract, source="Semantic Scholar", external_id=primary_external_id,
+                content_scope="abstract_only", page_count=1 if abstract else 0,
+                content_hash=hashlib.sha256(
+                    f"semantic_scholar:{canonical_id.casefold()}".encode("utf-8")
+                ).hexdigest(),
+            )
+            if abstract:
+                paper.chunks = chunk_pages([(1, abstract)], paper.id)
+            stored, discovery_item, duplicate = store.import_discovery_paper(
+                workspace_id=context.workspace.id, created_by=context.user.id, paper=paper,
+                provider_paper_id=canonical_id, external_identifiers=list(external_ids.items()),
+                snapshot=snapshot, search_context=search_context,
+                embedding_provider=embedding_provider, embedding_model=configured_embedding_model,
+            )
+            results.append(DiscoveryImportItem(
+                provider_paper_id=requested_id,
+                status="duplicate" if duplicate else "imported", paper_id=stored.id,
+                discovery_item_id=discovery_item.id,
+            ))
+        except SemanticScholarError as exc:
+            # Batch imports deliberately retain successful selections.  A safe,
+            # per-item failure lets the researcher retry only the failed paper.
+            results.append(DiscoveryImportItem(
+                provider_paper_id=requested_id, status="failed",
+                error="external_provider_rate_limited" if exc.code == "rate_limited" else "external_provider_unavailable",
+            ))
+        except (ValueError, TypeError):
+            results.append(DiscoveryImportItem(
+                provider_paper_id=requested_id, status="failed", error="invalid_provider_response",
+            ))
+    return DiscoveryImportResponse(items=results)
 
 
 @app.get("/api/beliefs", response_model=list[BeliefEvent])
@@ -3093,7 +3778,7 @@ def list_notes(paper_id: str | None = None, origin_kind: Literal["mind_map"] | N
 @app.post("/api/notes", response_model=Note, status_code=201)
 def create_note(body: NoteCreate, store: PaperStore = Depends(get_store), context: WorkspaceContext = Depends(get_workspace_context)):
     require_workspace_write(context)
-    try: return store.create_note(context.workspace.id, context.user.id, body.paper_id, body.title, body.content, body.origin_kind)
+    try: return store.create_note(context.workspace.id, context.user.id, body.paper_id, body.title, body.content, body.origin_kind, body.mind_map_node_id, body.origin_snapshot)
     except PaperNotFoundError as exc: raise HTTPException(status_code=404, detail="paper not found") from exc
 
 
@@ -3131,10 +3816,64 @@ def save_comparison(body: SavedComparisonCreate, store: PaperStore = Depends(get
     require_workspace_write(context)
     papers = selected_papers(AnalysisRequest(paper_ids=body.paper_ids), store, context.workspace.id)
     if len(papers) != len(set(body.paper_ids)): raise HTTPException(status_code=404, detail="paper not found")
-    result = [row.model_dump(mode="json") for row in compare_papers(papers)]
-    snapshot = body.citation_snapshot or [evidence for row in result for evidence in row.get("evidence", [])]
+    canonical_errors=[]
+    if body.experiment_analysis:
+        if len(set(body.paper_ids)) < 2:
+            raise HTTPException(status_code=422, detail="at least two successful experiment profiles are required")
+        error_messages={
+            "full_text_required": "full text is required",
+            "empty_document": "document text is unavailable",
+            "paper_not_found": "paper not found",
+            "analysis_failed": "experiment analysis failed",
+        }
+        for error in body.analysis_errors:
+            try:
+                store.get_owned(context.workspace.id, error.paper_id)
+            except PaperNotFoundError as exc:
+                raise HTTPException(status_code=404, detail="experiment error paper not found") from exc
+            code=error.code if error.code in error_messages else "analysis_failed"
+            canonical_errors.append(ExperimentAnalysisErrorResponse(
+                paper_id=error.paper_id, code=code, message=error_messages[code],
+            ))
+        if len(body.experiment_profile_ids) != len(set(body.paper_ids)):
+            raise HTTPException(
+                status_code=422,
+                detail="one immutable experiment profile is required per successful paper",
+            )
+        try:
+            profile_snapshots = store.experiment_profile_snapshots_by_ids(
+                context.workspace.id, body.experiment_profile_ids,
+            )
+        except PaperNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="experiment profile not found") from exc
+        resolved_paper_ids = [str(item.get("paper_id") or "") for item in profile_snapshots]
+        if len(set(resolved_paper_ids)) != len(resolved_paper_ids) or set(resolved_paper_ids) != set(body.paper_ids):
+            raise HTTPException(
+                status_code=422,
+                detail="experiment profiles must match the successfully compared papers",
+            )
+        available_ids={str(item.get("paper_id") or "") for item in profile_snapshots}
+        if not profile_snapshots or set(body.paper_ids)-available_ids:
+            raise HTTPException(status_code=409, detail="experiment analysis must be completed before saving")
+        paper_titles={paper.id:paper.title for paper in papers}
+        profiles=[profile_from_snapshot(snapshot) for snapshot in profile_snapshots]
+        result=[{**asdict(row),"title":paper_titles.get(row.paper_id,row.paper_id)} for row in build_comparison_matrix(profiles)]
+        snapshot=[{
+            "paper_id":profile_snapshot.get("paper_id"),
+            "experiment_profile_id":profile_snapshot.get("profile_id"),
+            "source_version_id":profile_snapshot.get("derived_source_version_id"),
+            "source_span_ids":list(profile_snapshot.get("source_span_ids") or []),
+            "figure_table_refs":list(profile_snapshot.get("figure_table_refs") or []),
+            "generation_provider":profile_snapshot.get("generation_provider"),
+            "generation_model":profile_snapshot.get("generation_model"),
+            "generation_prompt_version":profile_snapshot.get("generation_prompt_version"),
+            "extraction_mode":profile_snapshot.get("extraction_mode"),
+        } for profile_snapshot in profile_snapshots]
+    else:
+        result = [row.model_dump(mode="json") for row in compare_papers(papers)]
+        snapshot = body.citation_snapshot or [evidence for row in result for evidence in row.get("evidence", [])]
     try:
-        return store.save_comparison(context.workspace.id, context.user.id, body.name, body.paper_ids, result, source_set_id=body.source_set_id, citation_snapshot=snapshot, human_judgment=body.human_judgment, judgment_reason=body.judgment_reason)
+        return store.save_comparison(context.workspace.id, context.user.id, body.name, body.paper_ids, result, source_set_id=body.source_set_id, citation_snapshot=snapshot, analysis_errors=canonical_errors, human_judgment=body.human_judgment, judgment_reason=body.judgment_reason)
     except PaperNotFoundError as exc:
         raise HTTPException(status_code=404, detail="source set not found") from exc
 

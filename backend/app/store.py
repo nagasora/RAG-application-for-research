@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta, timezone
 import hashlib
 import html
@@ -17,9 +17,9 @@ from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
 from .database import (
-    Base, BeliefEventRecord, CanvasLayoutRecord, ChunkEmbeddingRecord, ChunkRecord, DocumentElementRecord, ExperimentPlanRecord, HypothesisCardRecord, DiscoveryItemRecord, IdeaRecord, ResearchActionRecord,
+    Base, BeliefEventRecord, CanvasLayoutRecord, ChunkEmbeddingRecord, ChunkRecord, DocumentElementRecord, ExperimentPlanRecord, ExperimentProfileRecord, HypothesisCardRecord, DiscoveryItemRecord, DiscoverySearchCandidateRecord, DiscoverySearchSessionRecord, GenerationAuditRecord, WorkspaceGenerationSettingsRecord, PaperExternalIdentifierRecord, IdeaRecord, ResearchActionRecord,
     EmbeddingJobRecord, EvidenceRefRecord, IngestionJobRecord, KnowledgeEdgeRecord, KnowledgeEdgeStatusEventRecord,
-    KnowledgeNodeRecord, NodeFeedbackRecord, NoteRecord, PaperDecisionRecord, PaperPageRecord, PaperRecord,
+    KnowledgeNodeRecord, MindMapNodeEvidenceRecord, MindMapNodeRecord, MindMapRecord, NodeFeedbackRecord, NoteRecord, PaperDecisionRecord, PaperPageRecord, PaperRecord,
     PaperTagRecord, ReasoningRunInputRecord, ReasoningRunOutputRecord, ReasoningRunRecord,
     ResearchConversationRecord, ResearchMemoryEventRecord, ResearchMessageRecord,
     ResearchQuestionRecord, ResearchRunRecord, ReviewCommentRecord, ReviewDecisionRecord, ReviewThreadRecord, RunArtifactRecord, SourceSetPaperRecord, SourceSetRecord,
@@ -28,14 +28,16 @@ from .database import (
     create_database_engine, create_session_factory,
 )
 from .models import (
-    AnswerClaim, BeliefEvent, BeliefEventCreate, CanvasLayout, Chunk, Citation, DiscoveryItem, DiscoveryItemCreate, DocumentElement, EvidenceLinkCreate, EvidenceRef, ExperimentPlan, ExperimentPlanCreate, ExperimentPlanSnapshot, HypothesisCard, HypothesisCardCreate, IngestionJob,
-    ForwardPropagationResult, KnowledgeEdge, KnowledgeNode, NodeFeedback, Note, Paper, PaperDecision, PaperLibraryFacets, PaperLibraryItem, PaperLibraryPage, PaperPage, Principal, ResearchRunGraphSeed,
+    AnswerClaim, BeliefEvent, BeliefEventCreate, CanvasLayout, Chunk, Citation, DiscoveryItem, DiscoveryItemCreate, DocumentElement, EvidenceLinkCreate, EvidenceRef, ExperimentAnalysisErrorResponse, ExperimentPlan, ExperimentPlanCreate, ExperimentPlanSnapshot, HypothesisCard, HypothesisCardCreate, IngestionJob,
+    ForwardPropagationResult, KnowledgeEdge, KnowledgeNode, NodeFeedback, Note, Paper, PaperDecision, PaperLibraryFacets, PaperLibraryItem, PaperLibraryPage, PaperPage, Principal, ResearchRunGraphSeed, ResearchRunMindMapSeed,
     ReasoningRun, ReasoningRunLink, ResearchConversation, ResearchConversationDetail,
     ResearchMemoryEvent, ResearchMemoryPage, ResearchMessage, ResearchMessagePage,
     ConversationGraphExportCreate, GraphIdeaCandidate, Idea, IdeaCreate, IdeaUpdate, ResearchAction, ResearchActionCreate, ResearchActionUpdate, ResearchQuestion, ResearchRun, ReviewCandidate, ReviewComment, ReviewDecision, ReviewThread, ReviewThreadCreate, RunArtifact, SourceSet,
     SavedComparison, SearchHistory, SourceSpan, SourceVersion, Tag, User, Workspace,
-    WorkspaceMember,
+    WorkspaceMember, MindMap, MindMapCreate, MindMapNode, MindMapNodeDraft, MindMapNodeUpdate,
 )
+from .discovery_providers import _https_url
+from .store_ci032_034 import DiscoverySessionStoreMixin, ExperimentProfileStoreMixin, GenerationSettingsStoreMixin
 
 
 def _postgres_sqlstate(exc: BaseException) -> str | None:
@@ -240,6 +242,7 @@ def _to_model(record: PaperRecord) -> Paper:
         abstract=record.abstract,
         source=record.source,
         external_id=record.external_id,
+        content_scope=record.content_scope,
         status=record.status,
         page_count=record.page_count,
         created_at=record.created_at.isoformat(),
@@ -269,6 +272,7 @@ def _record_from_model(paper: Paper) -> PaperRecord:
         abstract=paper.abstract,
         source=paper.source,
         external_id=paper.external_id,
+        content_scope=paper.content_scope,
         status=paper.status,
         page_count=paper.page_count,
         created_at=_parse_created_at(paper.created_at),
@@ -335,6 +339,7 @@ def _research_run_model(record: ResearchRunRecord, artifacts: list[RunArtifactRe
         research_question=record.research_question, source_paper_ids=list(record.source_paper_ids or []),
         excluded_paper_ids=list(record.excluded_paper_ids or []), purpose=record.purpose,
         success_criteria=record.success_criteria, plan=record.plan, model=record.model,
+        generation_provider=record.generation_provider,
         prompt_version=record.prompt_version, status=record.status, cancel_requested=record.cancel_requested,
         started_at=record.started_at.isoformat() if record.started_at else None,
         completed_at=record.completed_at.isoformat() if record.completed_at else None,
@@ -460,7 +465,8 @@ def _research_action_model(record: ResearchActionRecord) -> ResearchAction:
         idea_id=record.idea_id, research_run_id=record.research_run_id,
         claim_id=record.claim_id, claim_snapshot=dict(record.claim_snapshot or {}) if record.claim_snapshot else None,
         source_span_id=record.source_span_id, evidence_ref_id=record.evidence_ref_id,
-        origin_node_id=record.origin_node_id, experiment_plan_id=record.experiment_plan_id,
+        origin_node_id=record.origin_node_id, mind_map_node_id=record.mind_map_node_id,
+        origin_kind=record.origin_kind, experiment_plan_id=record.experiment_plan_id,
         title=record.title, description=record.description, due_date=record.due_date,
         status=record.status, generation_class=record.generation_class,
         generation_metadata=dict(record.generation_metadata or {}),
@@ -490,7 +496,7 @@ def _markdown_block(value: str) -> str:
     return f"<pre>{html.escape(value, quote=True)}</pre>"
 
 
-class PaperStore:
+class PaperStore(DiscoverySessionStoreMixin, GenerationSettingsStoreMixin, ExperimentProfileStoreMixin):
     def create_experiment_plan(self, workspace_id: str, created_by: str, body: ExperimentPlanCreate) -> ExperimentPlan:
         now = datetime.now(timezone.utc)
         payload = body.model_dump()
@@ -576,13 +582,13 @@ class PaperStore:
             return [self._belief_event_model(row) for row in rows if row.belief_key not in rejected and (not terms or any(term in row.content.casefold() for term in terms))][:limit]
     @staticmethod
     def _discovery_item_model(record: DiscoveryItemRecord) -> DiscoveryItem:
-        return DiscoveryItem(id=record.id, workspace_id=record.workspace_id, created_by=record.created_by, provider=record.provider, provider_paper_id=record.provider_paper_id, classification=record.classification, review_status=record.review_status, title=record.title, abstract=record.abstract, source_quote=record.source_quote, source_url=record.source_url, license=record.license, rate_limit_policy=record.rate_limit_policy, snapshot=dict(record.snapshot or {}), fetched_at=record.fetched_at.isoformat(), created_at=record.created_at.isoformat())
+        return DiscoveryItem(id=record.id, workspace_id=record.workspace_id, created_by=record.created_by, paper_id=record.paper_id, provider=record.provider, provider_paper_id=record.provider_paper_id, classification=record.classification, review_status=record.review_status, title=record.title, abstract=record.abstract, source_quote=record.source_quote, source_url=record.source_url, license=record.license, rate_limit_policy=record.rate_limit_policy, snapshot=dict(record.snapshot or {}), search_context=dict(record.search_context or {}), fetched_at=record.fetched_at.isoformat(), created_at=record.created_at.isoformat())
 
     def create_discovery_item(self, workspace_id: str, created_by: str, body: DiscoveryItemCreate) -> DiscoveryItem:
         now = datetime.now(timezone.utc)
         with self.session_factory.begin() as session:
             self._require_workspace(session, workspace_id)
-            record = DiscoveryItemRecord(id=str(uuid4()), workspace_id=workspace_id, created_by=created_by, provider=body.provider, provider_paper_id=body.provider_paper_id, classification=body.classification, review_status="pending", title=body.title, abstract=body.abstract, source_quote=body.source_quote, source_url=body.source_url, license=body.license, rate_limit_policy=body.rate_limit_policy, snapshot=body.snapshot, fetched_at=now, created_at=now)
+            record = DiscoveryItemRecord(id=str(uuid4()), workspace_id=workspace_id, created_by=created_by, paper_id=None, provider=body.provider, provider_paper_id=body.provider_paper_id, classification=body.classification, review_status="pending", title=body.title, abstract=body.abstract, source_quote=body.source_quote, source_url=_https_url(body.source_url), license=body.license, rate_limit_policy=body.rate_limit_policy, snapshot=body.snapshot, search_context={}, fetched_at=now, created_at=now)
             session.add(record); session.flush()
             return self._discovery_item_model(record)
 
@@ -1176,7 +1182,7 @@ class PaperStore:
             excluded_ids = self._validate_workspace_paper_ids(session, workspace_id, excluded_paper_ids or [])
             if set(selected_ids) & set(excluded_ids):
                 raise ValueError("a source paper cannot also be excluded")
-            normalized_plan = self._normalize_research_run_plan(session, workspace_id, plan)
+            normalized_plan = self._normalize_research_run_plan(session, workspace_id, plan, selected_ids)
             now = datetime.now(timezone.utc)
             record = ResearchRunRecord(
                 id=str(uuid4()), workspace_id=workspace_id, created_by=created_by,
@@ -1184,7 +1190,8 @@ class PaperStore:
                 research_question=question, source_paper_ids=selected_ids,
                 excluded_paper_ids=excluded_ids, purpose=purpose.strip(),
                 success_criteria=success_criteria.strip(), plan=normalized_plan,
-                model=model.strip(), prompt_version=prompt_version.strip(), status="queued",
+                model=model.strip(), generation_provider="",
+                prompt_version=prompt_version.strip(), status="queued",
                 cancel_requested=False, created_at=now,
             )
             session.add(record)
@@ -1193,6 +1200,7 @@ class PaperStore:
     @staticmethod
     def _normalize_research_run_plan(
         session: Session, workspace_id: str, plan: dict | list | None,
+        source_paper_ids: list[str],
     ) -> dict | list:
         """Canonicalize optional graph provenance without constraining older plans."""
         if plan is None:
@@ -1204,21 +1212,64 @@ class PaperStore:
             # ResearchRunPlan supplies graph_seed=None by default. Do not let
             # that typed-input detail alter the persisted legacy plan shape.
             normalized.pop("graph_seed", None)
-            return normalized
-        seed = ResearchRunGraphSeed.model_validate(normalized["graph_seed"])
-        node = session.scalar(select(KnowledgeNodeRecord).where(
-            KnowledgeNodeRecord.id == seed.node_id,
-            KnowledgeNodeRecord.workspace_id == workspace_id,
-        ))
-        if node is None:
-            # A graph seed is user input, so do not turn a foreign ID into a
-            # workspace-existence oracle. It is simply an invalid plan (422).
-            raise ValueError("graph_seed node_id must reference a node in this workspace")
-        normalized["graph_seed"] = {
-            "intent": seed.intent,
-            "node_id": node.id,
-            "content": " ".join(node.content.split())[:1200],
-        }
+        else:
+            seed = ResearchRunGraphSeed.model_validate(normalized["graph_seed"])
+            node = session.scalar(select(KnowledgeNodeRecord).where(
+                KnowledgeNodeRecord.id == seed.node_id,
+                KnowledgeNodeRecord.workspace_id == workspace_id,
+            ))
+            if node is None:
+                raise ValueError("graph_seed node_id must reference a node in this workspace")
+            normalized["graph_seed"] = {"intent": seed.intent, "node_id": node.id, "content": " ".join(node.content.split())[:1200]}
+        if "mind_map_seed" not in normalized or normalized["mind_map_seed"] is None:
+            normalized.pop("mind_map_seed", None)
+        else:
+            seed = ResearchRunMindMapSeed.model_validate(normalized["mind_map_seed"])
+            mapping = session.scalar(select(MindMapRecord).where(MindMapRecord.id == seed.mind_map_id, MindMapRecord.workspace_id == workspace_id))
+            if mapping is None:
+                raise ValueError("mind_map_seed must reference a map in this workspace")
+            node = None
+            if seed.node_id:
+                node = session.scalar(select(MindMapNodeRecord).where(MindMapNodeRecord.id == seed.node_id, MindMapNodeRecord.mind_map_id == mapping.id))
+                if node is None:
+                    raise ValueError("mind_map_seed node_id must reference a node in the selected map")
+            scope = dict(mapping.source_scope or {})
+            allowed_paper_ids = set()
+            if isinstance(scope.get("paper_id"), str):
+                allowed_paper_ids.add(scope["paper_id"])
+            scoped_span_ids = {
+                value for value in (scope.get("source_span_ids") or [])
+                if isinstance(value, str)
+            }
+            scoped_ref_ids = {
+                value for value in (scope.get("evidence_ref_ids") or [])
+                if isinstance(value, str)
+            }
+            if node is not None:
+                node_evidence = session.scalars(select(MindMapNodeEvidenceRecord).where(
+                    MindMapNodeEvidenceRecord.mind_map_node_id == node.id,
+                )).all()
+                scoped_span_ids.update(item.source_span_id for item in node_evidence if item.source_span_id)
+                scoped_ref_ids.update(item.evidence_ref_id for item in node_evidence if item.evidence_ref_id)
+            if scoped_ref_ids:
+                scoped_span_ids.update(session.scalars(select(EvidenceRefRecord.source_span_id).where(
+                    EvidenceRefRecord.workspace_id == workspace_id,
+                    EvidenceRefRecord.id.in_(scoped_ref_ids),
+                )).all())
+            if scoped_span_ids:
+                allowed_paper_ids.update(value for value in session.scalars(
+                    select(SourceVersionRecord.paper_id)
+                    .join(SourceSpanRecord, SourceSpanRecord.source_version_id == SourceVersionRecord.id)
+                    .where(
+                        SourceVersionRecord.workspace_id == workspace_id,
+                        SourceSpanRecord.workspace_id == workspace_id,
+                        SourceSpanRecord.id.in_(scoped_span_ids),
+                        SourceVersionRecord.paper_id.is_not(None),
+                    )
+                ).all() if value)
+            if set(source_paper_ids) != allowed_paper_ids:
+                raise ValueError("mind_map_seed source_paper_ids must match the selected map evidence scope")
+            normalized["mind_map_seed"] = {"mind_map_id": mapping.id, "node_id": node.id if node else None, "title": node.title if node else mapping.title, "body": node.body if node else "", "source_scope": dict(mapping.source_scope or {})}
         return normalized
 
     def list_research_runs(self, workspace_id: str) -> list[ResearchRun]:
@@ -1327,6 +1378,10 @@ class PaperStore:
             KnowledgeNodeRecord.id == body.origin_node_id, KnowledgeNodeRecord.workspace_id == workspace_id,
         )):
             raise PaperNotFoundError(body.origin_node_id)
+        if body.mind_map_node_id and not session.scalar(select(MindMapNodeRecord.id).join(
+            MindMapRecord, MindMapRecord.id == MindMapNodeRecord.mind_map_id,
+        ).where(MindMapNodeRecord.id == body.mind_map_node_id, MindMapRecord.workspace_id == workspace_id)):
+            raise PaperNotFoundError(body.mind_map_node_id)
         if body.experiment_plan_id and not session.scalar(select(ExperimentPlanRecord.id).where(
             ExperimentPlanRecord.id == body.experiment_plan_id, ExperimentPlanRecord.workspace_id == workspace_id,
         )):
@@ -1340,12 +1395,13 @@ class PaperStore:
             metadata = dict(body.generation_metadata)
             extraction_source = None
             extraction_ordinal = None
-            if metadata.get("source") == "mind_map_task_extraction_v1":
-                extraction_source = "mind_map_task_extraction_v1"
+            if str(metadata.get("source") or "").startswith("mind_map_task_extraction_v1"):
+                extraction_source = str(metadata["source"])
                 extraction_ordinal = metadata["ordinal"]
                 existing = session.scalar(select(ResearchActionRecord).where(
                     ResearchActionRecord.workspace_id == workspace_id,
                     ResearchActionRecord.origin_node_id == node_id,
+                    ResearchActionRecord.mind_map_node_id == body.mind_map_node_id,
                     ResearchActionRecord.extraction_source == extraction_source,
                     ResearchActionRecord.extraction_ordinal == extraction_ordinal,
                 ))
@@ -1356,6 +1412,7 @@ class PaperStore:
                 id=str(uuid4()), workspace_id=workspace_id, created_by=user_id,
                 idea_id=idea_id, research_run_id=run_id, claim_id=claim_id, claim_snapshot=claim_snapshot,
                 source_span_id=span_id, evidence_ref_id=evidence_ref_id, origin_node_id=node_id,
+                mind_map_node_id=body.mind_map_node_id, origin_kind=body.origin_kind,
                 experiment_plan_id=experiment_id, title=body.title, description=body.description,
                 due_date=body.due_date, status="open", generation_class=body.generation_class,
                 generation_metadata=metadata, extraction_source=extraction_source,
@@ -1374,6 +1431,7 @@ class PaperStore:
                 existing = session.scalar(select(ResearchActionRecord).where(
                     ResearchActionRecord.workspace_id == workspace_id,
                     ResearchActionRecord.origin_node_id == node_id,
+                    ResearchActionRecord.mind_map_node_id == body.mind_map_node_id,
                     ResearchActionRecord.extraction_source == extraction_source,
                     ResearchActionRecord.extraction_ordinal == extraction_ordinal,
                 ))
@@ -2109,7 +2167,7 @@ class PaperStore:
                 created_by=paper.created_by, title=paper.title,
                 authors=list(paper.authors or []), year=paper.year,
                 abstract=paper.abstract, source=paper.source,
-                external_id=paper.external_id, status=paper.status,
+                external_id=paper.external_id, content_scope=paper.content_scope, status=paper.status,
                 page_count=paper.page_count, created_at=paper.created_at.isoformat(),
                 chunks=chunks, content_hash=paper.content_hash,
                 error_message=paper.error_message, storage_key=paper.storage_key,
@@ -2204,6 +2262,7 @@ class PaperStore:
             record.abstract = paper.abstract
             record.source = paper.source
             record.external_id = paper.external_id
+            record.content_scope = paper.content_scope
             record.status = paper.status
             record.page_count = paper.page_count
             record.error_message = None
@@ -2246,18 +2305,112 @@ class PaperStore:
                 record.byte_size = None
         return self.get(paper_id)
 
+    @staticmethod
+    def _canonical_external_identifier(provider: str, identifier: str) -> tuple[str, str]:
+        normalized_provider = provider.strip().casefold()
+        normalized_identifier = identifier.strip().casefold()
+        if normalized_provider == "doi":
+            for prefix in ("doi:", "https://doi.org/", "http://doi.org/", "https://www.doi.org/", "http://www.doi.org/"):
+                if normalized_identifier.startswith(prefix):
+                    normalized_identifier = normalized_identifier[len(prefix):]
+                    break
+            normalized_identifier = normalized_identifier.rstrip("/")
+        elif normalized_provider == "arxiv":
+            for prefix in ("arxiv:", "https://arxiv.org/abs/", "http://arxiv.org/abs/"):
+                if normalized_identifier.startswith(prefix):
+                    normalized_identifier = normalized_identifier[len(prefix):]
+                    break
+            normalized_identifier = normalized_identifier.split("?", 1)[0]
+            base, marker, version = normalized_identifier.rpartition("v")
+            if marker and version.isdigit():
+                normalized_identifier = base
+        return normalized_provider, normalized_identifier
+
+    @classmethod
+    def _external_identifiers(cls, values: list[tuple[str, str]] | None) -> list[tuple[str, str]]:
+        result: list[tuple[str, str]] = []
+        for provider, identifier in values or []:
+            normalized = cls._canonical_external_identifier(provider, identifier)
+            if normalized[0] and normalized[1] and normalized not in result:
+                result.append(normalized)
+        return result
+
+    @staticmethod
+    def _existing_external_paper(
+        session: Session, workspace_id: str, identifiers: list[tuple[str, str]],
+    ) -> PaperRecord | None:
+        if not identifiers:
+            return None
+        clauses = [
+            and_(PaperExternalIdentifierRecord.provider == provider, PaperExternalIdentifierRecord.identifier == identifier)
+            for provider, identifier in identifiers
+        ]
+        return session.scalar(
+            select(PaperRecord)
+            .join(PaperExternalIdentifierRecord, PaperExternalIdentifierRecord.paper_id == PaperRecord.id)
+            .where(PaperRecord.workspace_id == workspace_id, or_(*clauses))
+            .options(selectinload(PaperRecord.chunks))
+        )
+
+    @staticmethod
+    def _add_external_identifiers(
+        session: Session, *, workspace_id: str, paper_id: str, identifiers: list[tuple[str, str]], now: datetime,
+    ) -> None:
+        session.add_all([
+            PaperExternalIdentifierRecord(
+                id=str(uuid4()), workspace_id=workspace_id, paper_id=paper_id,
+                provider=provider, identifier=identifier, created_at=now,
+            )
+            for provider, identifier in identifiers
+        ])
+
+    def find_paper_by_external_identifiers(
+        self, workspace_id: str, identifiers: list[tuple[str, str]],
+    ) -> Paper | None:
+        normalized = self._external_identifiers(identifiers)
+        with self.session_factory() as session:
+            record = self._existing_external_paper(session, workspace_id, normalized)
+            return _to_model(record) if record is not None else None
+
     def upsert(
         self, paper: Paper, embedding_model: str | None = None,
         embedding_provider: str | None = None,
+        external_identifiers: list[tuple[str, str]] | None = None,
+        external_metadata_snapshot: dict | None = None,
+        external_metadata_provider: str | None = None,
+        external_metadata_id: str | None = None,
     ) -> Paper:
         """Compatibility path for external imports; insert atomically and deduplicate by hash."""
+        identifiers = self._external_identifiers(external_identifiers)
         existing = self.get_by_hash(paper.workspace_id, paper.content_hash or "") if paper.content_hash else None
+        if existing:
+            raise DuplicatePaperError(existing)
+        existing = self.find_paper_by_external_identifiers(paper.workspace_id, identifiers)
         if existing:
             raise DuplicatePaperError(existing)
         paper.status = "ready"
         try:
             with self.session_factory.begin() as session:
                 session.add(_record_from_model(paper))
+                # ``PaperExternalIdentifierRecord`` has no ORM relationship
+                # to this transient record.  Flush the parent explicitly so
+                # PostgreSQL never sees its FK rows before ``papers``.
+                # The surrounding transaction still rolls back all rows if a
+                # later identifier, provenance, or embedding write fails.
+                session.flush()
+                self._add_external_identifiers(
+                    session, workspace_id=paper.workspace_id, paper_id=paper.id,
+                    identifiers=identifiers, now=datetime.now(timezone.utc),
+                )
+                if external_metadata_snapshot is not None:
+                    self._ensure_external_metadata_source(
+                        session,
+                        paper=paper,
+                        provider=(external_metadata_provider or (identifiers[0][0] if identifiers else "external")),
+                        provider_paper_id=(external_metadata_id or paper.external_id or paper.id),
+                        snapshot=external_metadata_snapshot,
+                        now=datetime.now(timezone.utc),
+                    )
                 _queue_embedding_job(
                     session, paper_id=paper.id, workspace_id=paper.workspace_id,
                     provider=embedding_provider or os.getenv("EMBEDDING_PROVIDER", "openai"),
@@ -2266,10 +2419,324 @@ class PaperStore:
                 )
         except IntegrityError as exc:
             duplicate = self.get_by_hash(paper.workspace_id, paper.content_hash or "")
+            if duplicate is None:
+                # A simultaneous discovery import can win the canonical DOI
+                # identity while using a different content hash/provider.
+                duplicate = self.find_paper_by_external_identifiers(paper.workspace_id, identifiers)
             if duplicate is not None:
                 raise DuplicatePaperError(duplicate) from exc
             raise
         return paper
+
+    @staticmethod
+    def _ensure_external_metadata_source(
+        session: Session, *, paper: Paper, provider_paper_id: str,
+        snapshot: dict, now: datetime, provider: str = "semantic_scholar",
+    ) -> None:
+        """Anchor an imported abstract to the exact provider metadata snapshot."""
+        serialized = json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        content_hash = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+        normalized_provider = provider.strip().casefold() or "external"
+        locator = f"{normalized_provider}:{provider_paper_id}"
+        existing = session.scalar(select(SourceVersionRecord.id).where(
+            SourceVersionRecord.workspace_id == paper.workspace_id,
+            SourceVersionRecord.kind == "external_metadata",
+            SourceVersionRecord.locator == locator,
+            SourceVersionRecord.content_hash == content_hash,
+        ))
+        if existing is not None:
+            return
+        source = SourceVersionRecord(
+            id=str(uuid4()), workspace_id=paper.workspace_id, paper_id=paper.id,
+            kind="external_metadata", locator=locator, content_hash=content_hash,
+            metadata_json={
+                "provider": normalized_provider, "provider_paper_id": provider_paper_id,
+                "content_scope": "abstract_only", "evidence_scope": "abstract",
+                "fetched_at": now.isoformat(),
+                "license": str(snapshot.get("license") or "unknown"),
+                "rate_limit_policy": str(snapshot.get("rate_limit_policy") or ""),
+                "snapshot": snapshot,
+            },
+            created_at=now,
+        )
+        session.add(source)
+        if paper.abstract:
+            session.add(SourceSpanRecord(
+                id=str(uuid4()), workspace_id=paper.workspace_id, source_version_id=source.id,
+                page=1, locator_json={"paper_id": paper.id, "content_scope": "abstract_only"},
+                text=paper.abstract, created_at=now,
+            ))
+
+    def import_discovery_paper(
+        self, *, workspace_id: str, created_by: str, paper: Paper,
+        provider_paper_id: str, external_identifiers: list[tuple[str, str]],
+        snapshot: dict, search_context: dict, embedding_provider: str, embedding_model: str,
+        provider: str = "semantic_scholar", license: str = "semantic_scholar_api", rate_limit_policy: str = "api_key_intro_1_rps", candidate_id: str | None = None,
+    ) -> tuple[Paper, DiscoveryItem, bool]:
+        """Atomically persist a selected abstract and its accepted discovery record."""
+        identifiers = self._external_identifiers(external_identifiers)
+        now = datetime.now(timezone.utc)
+        try:
+            with self.session_factory.begin() as session:
+                self._require_workspace(session, workspace_id)
+                existing = self._existing_external_paper(session, workspace_id, identifiers)
+                if existing is not None:
+                    item = session.scalar(
+                        select(DiscoveryItemRecord)
+                        .where(
+                            DiscoveryItemRecord.workspace_id == workspace_id,
+                            DiscoveryItemRecord.paper_id == existing.id,
+                            DiscoveryItemRecord.provider == provider,
+                        )
+                        .order_by(DiscoveryItemRecord.created_at.desc())
+                    )
+                    if item is None:
+                        item = DiscoveryItemRecord(
+                            id=str(uuid4()), workspace_id=workspace_id, created_by=created_by,
+                            paper_id=existing.id, provider=provider, provider_paper_id=provider_paper_id,
+                            classification="unclassified", review_status="accepted", title=existing.title,
+                            abstract=existing.abstract, source_quote="", source_url=_https_url(snapshot.get("source_url") or snapshot.get("url")),
+                            license=license, rate_limit_policy=rate_limit_policy,
+                            snapshot=snapshot, search_context=search_context, fetched_at=now, created_at=now,
+                        )
+                        session.add(item)
+                        session.flush()
+                    self._ensure_external_metadata_source(
+                        session, paper=_to_model(existing), provider_paper_id=provider_paper_id,
+                        snapshot=snapshot, now=now, provider=provider,
+                    )
+                    if candidate_id:
+                        candidate=session.get(DiscoverySearchCandidateRecord,candidate_id)
+                        if candidate is None: raise PaperNotFoundError(candidate_id)
+                        candidate.imported_paper_id=existing.id
+                    return _to_model(existing), self._discovery_item_model(item), True
+                session.add(_record_from_model(paper))
+                # Keep the parent row ahead of external identifiers, the
+                # discovery item, provenance, and embedding job on PostgreSQL
+                # as well as SQLite.  The transaction remains atomic.
+                session.flush()
+                self._add_external_identifiers(
+                    session, workspace_id=workspace_id, paper_id=paper.id, identifiers=identifiers, now=now,
+                )
+                item = DiscoveryItemRecord(
+                    id=str(uuid4()), workspace_id=workspace_id, created_by=created_by, paper_id=paper.id,
+                    provider=provider, provider_paper_id=provider_paper_id,
+                    classification="unclassified", review_status="accepted", title=paper.title,
+                    abstract=paper.abstract, source_quote="", source_url=_https_url(snapshot.get("source_url") or snapshot.get("url")),
+                    license=license, rate_limit_policy=rate_limit_policy,
+                    snapshot=snapshot, search_context=search_context, fetched_at=now, created_at=now,
+                )
+                session.add(item)
+                self._ensure_external_metadata_source(
+                    session, paper=paper, provider_paper_id=provider_paper_id,
+                    snapshot=snapshot, now=now, provider=provider,
+                )
+                _queue_embedding_job(
+                    session, paper_id=paper.id, workspace_id=workspace_id,
+                    provider=embedding_provider, model=embedding_model,
+                    total_chunks=len(paper.chunks),
+                )
+                session.flush()
+                if candidate_id:
+                    candidate=session.get(DiscoverySearchCandidateRecord,candidate_id)
+                    if candidate is None: raise PaperNotFoundError(candidate_id)
+                    candidate.imported_paper_id=paper.id
+                return paper, self._discovery_item_model(item), False
+        except IntegrityError as exc:
+            existing = self.find_paper_by_external_identifiers(workspace_id, identifiers)
+            if existing is not None:
+                # A concurrent import won the identity. Retry as a duplicate to
+                # create/retrieve the corresponding accepted discovery record.
+                return self.import_discovery_paper(
+                    workspace_id=workspace_id, created_by=created_by, paper=paper,
+                    provider_paper_id=provider_paper_id, external_identifiers=identifiers,
+                    snapshot=snapshot, search_context=search_context,
+                    embedding_provider=embedding_provider, embedding_model=embedding_model,
+                    provider=provider, license=license, rate_limit_policy=rate_limit_policy,
+                    candidate_id=candidate_id,
+                )
+            raise exc
+
+    def create_discovery_search_session(
+        self, workspace_id: str, created_by: str, *, criteria: dict, query_plan: list[str],
+        generation_provider: str, generation_model: str, candidates: list[dict],
+    ) -> list[dict]:
+        """Persist a one-hour, workspace-private snapshot of federated candidates."""
+        with self.session_factory.begin() as session:
+            self._require_workspace(session, workspace_id)
+            return self._insert_discovery_session(
+                session, workspace_id, created_by, criteria=criteria, query_plan=query_plan,
+                generation_provider=generation_provider, generation_model=generation_model,
+                candidates=candidates,
+            )
+            # Kept below only for migration-era source context; the mixin above
+            # is the sole execution path.
+            now = datetime.now(timezone.utc)
+            expires = now + timedelta(hours=1)
+            record = DiscoverySearchSessionRecord(
+                id=str(uuid4()), workspace_id=workspace_id, created_by=created_by,
+                criteria=dict(criteria), query_plan=list(query_plan), generation_provider=generation_provider,
+                generation_model=generation_model, expires_at=expires, created_at=now,
+            )
+            session.add(record)
+            persisted=[]
+            for rank, candidate in enumerate(candidates, 1):
+                row=DiscoverySearchCandidateRecord(
+                    id=str(uuid4()), session_id=record.id, canonical_key=str(candidate["canonical_key"]),
+                    provider=str(candidate["provider"]), provider_paper_id=str(candidate["provider_paper_id"]),
+                    provider_ids=dict(candidate.get("provider_ids") or {}), snapshot=dict(candidate.get("snapshot") or {}),
+                    rank=rank, imported_paper_id=None, created_at=now,
+                )
+                session.add(row); persisted.append({
+                    **candidate,
+                    "candidate_id": row.id,
+                    "search_session_id": record.id,
+                    "expires_at": expires.isoformat(),
+                })
+            session.flush()
+            return persisted
+
+    def discovery_session_candidates(self, workspace_id: str, session_id: str, candidate_ids: list[str]) -> list[DiscoverySearchCandidateRecord]:
+        with self.session_factory() as session:
+            search_session=session.scalar(select(DiscoverySearchSessionRecord).where(
+                DiscoverySearchSessionRecord.id==session_id, DiscoverySearchSessionRecord.workspace_id==workspace_id,
+            ))
+            expires_at=search_session.expires_at.replace(tzinfo=timezone.utc) if search_session is not None and search_session.expires_at.tzinfo is None else (search_session.expires_at if search_session is not None else None)
+            if search_session is None or expires_at is None or expires_at < datetime.now(timezone.utc):
+                raise PaperNotFoundError(session_id)
+            rows=session.scalars(select(DiscoverySearchCandidateRecord).where(
+                DiscoverySearchCandidateRecord.session_id==session_id,
+                DiscoverySearchCandidateRecord.id.in_(candidate_ids),
+            )).all()
+            if len(rows)!=len(candidate_ids): raise PaperNotFoundError("discovery candidate")
+            return rows
+
+    def discovery_session_page(self, workspace_id: str, session_id: str, offset: int, limit: int = 20) -> tuple[list[DiscoverySearchCandidateRecord], int, datetime]:
+        with self.session_factory() as session:
+            search_session=session.scalar(select(DiscoverySearchSessionRecord).where(DiscoverySearchSessionRecord.id==session_id,DiscoverySearchSessionRecord.workspace_id==workspace_id))
+            expires_at=search_session.expires_at.replace(tzinfo=timezone.utc) if search_session is not None and search_session.expires_at.tzinfo is None else (search_session.expires_at if search_session is not None else None)
+            if search_session is None or expires_at is None or expires_at < datetime.now(timezone.utc): raise PaperNotFoundError(session_id)
+            total=session.scalar(select(func.count()).select_from(DiscoverySearchCandidateRecord).where(DiscoverySearchCandidateRecord.session_id==session_id)) or 0
+            rows=session.scalars(select(DiscoverySearchCandidateRecord).where(DiscoverySearchCandidateRecord.session_id==session_id).order_by(DiscoverySearchCandidateRecord.rank).offset(max(0,offset)).limit(limit)).all()
+            return rows, int(total), expires_at
+
+    def mark_discovery_candidate_imported(self, workspace_id: str, candidate_id: str, paper_id: str) -> None:
+        with self.session_factory.begin() as session:
+            row=session.scalar(select(DiscoverySearchCandidateRecord).join(DiscoverySearchSessionRecord).where(
+                DiscoverySearchCandidateRecord.id==candidate_id, DiscoverySearchSessionRecord.workspace_id==workspace_id,
+            ))
+            if row is None: raise PaperNotFoundError(candidate_id)
+            row.imported_paper_id=paper_id
+
+    def generation_settings(self, workspace_id: str) -> tuple[dict, str | None, str | None]:
+        from .generation_settings import defaults, migrate_persisted_scopes
+        with self.session_factory.begin() as session:
+            self._require_workspace(session, workspace_id)
+            row=session.get(WorkspaceGenerationSettingsRecord, workspace_id)
+            if row is None:
+                return defaults(), None, None
+            scopes=migrate_persisted_scopes(row.scopes)
+            if scopes != row.scopes:
+                # Do not alter updated_at/updated_by: this is a compatibility
+                # migration, not a user-initiated settings change.
+                row.scopes=scopes
+            return scopes, row.updated_at.isoformat(), row.updated_by
+
+    def set_generation_settings(self, workspace_id: str, user_id: str, scopes: dict) -> tuple[dict, str, str]:
+        now=datetime.now(timezone.utc)
+        with self.session_factory.begin() as session:
+            self._require_workspace(session, workspace_id)
+            row=session.get(WorkspaceGenerationSettingsRecord, workspace_id)
+            if row is None:
+                row=WorkspaceGenerationSettingsRecord(workspace_id=workspace_id, scopes=dict(scopes), updated_by=user_id, updated_at=now); session.add(row)
+            else:
+                row.scopes=dict(scopes); row.updated_by=user_id; row.updated_at=now
+            return dict(row.scopes), now.isoformat(), user_id
+
+    def record_generation_audit(self, workspace_id: str, user_id: str, *, scope: str, provider: str, model: str, outcome: str, reference_id: str | None = None, prompt_version: str = "", usage: dict | None = None) -> None:
+        with self.session_factory.begin() as session:
+            self._write_generation_audit(session, workspace_id=workspace_id, created_by=user_id, scope=scope, provider=provider, model=model, outcome=outcome, reference_id=reference_id, prompt_version=prompt_version, usage=dict(usage or {}))
+
+    def set_research_run_generation(self, workspace_id: str, run_id: str, provider: str, model: str) -> None:
+        with self.session_factory.begin() as session:
+            row=self._scoped_research_run(session, workspace_id, run_id)
+            row.generation_provider=provider; row.model=model
+
+    def paper_pages(self, workspace_id: str, paper_id: str) -> dict[int, str]:
+        self.get_owned(workspace_id, paper_id)
+        with self.session_factory() as session:
+            return {row.page: row.text for row in session.scalars(select(PaperPageRecord).where(PaperPageRecord.paper_id == paper_id)).all()}
+
+    def paper_source_version_id(self, workspace_id: str, paper_id: str) -> str:
+        with self.session_factory() as session:
+            row=session.scalar(select(SourceVersionRecord).where(SourceVersionRecord.workspace_id==workspace_id,SourceVersionRecord.paper_id==paper_id,SourceVersionRecord.kind=="paper").order_by(SourceVersionRecord.created_at.desc()))
+            if row is None: raise PaperNotFoundError("paper source version")
+            return row.id
+
+    def get_experiment_profile_snapshot(self, workspace_id: str, paper_id: str, *, source_version_id: str, content_hash: str, provider: str, model: str, prompt_version: str, cache_key: str) -> dict | None:
+        with self.session_factory() as session:
+            row=self._find_experiment_profile(session, workspace_id=workspace_id, paper_id=paper_id, source_version_id=source_version_id, content_hash=content_hash, provider=provider, model=model, prompt_version=prompt_version, cache_key=cache_key)
+            return {**dict(row.snapshot), "profile_id": row.id} if row else None
+
+    def save_experiment_profile_snapshot(self, workspace_id: str, profile, *, provider: str, snapshot_override: dict | None = None) -> dict:
+        snapshot=dict(snapshot_override) if snapshot_override is not None else asdict(profile)
+        with self.session_factory.begin() as session:
+            existing=session.scalar(select(ExperimentProfileRecord).where(ExperimentProfileRecord.workspace_id==workspace_id,ExperimentProfileRecord.paper_id==profile.paper_id,ExperimentProfileRecord.source_version_id==profile.source_version_id,ExperimentProfileRecord.content_hash==profile.content_hash,ExperimentProfileRecord.provider==provider,ExperimentProfileRecord.model==profile.model,ExperimentProfileRecord.prompt_version==profile.prompt_version,ExperimentProfileRecord.cache_key==profile.cache_key))
+            if existing is not None:
+                return {**dict(existing.snapshot), "profile_id": existing.id}
+            row = ExperimentProfileRecord(id=str(uuid4()),workspace_id=workspace_id,paper_id=profile.paper_id,source_version_id=profile.source_version_id,content_hash=profile.content_hash,provider=provider,model=profile.model,prompt_version=profile.prompt_version,cache_key=profile.cache_key,review_status=profile.review_status,snapshot=snapshot,created_at=datetime.now(timezone.utc))
+            session.add(row)
+            return {**snapshot, "profile_id": row.id}
+
+    def latest_experiment_profile_snapshots(self, workspace_id: str, paper_ids: list[str]) -> list[dict]:
+        """Return one newest immutable profile per requested paper, in request order."""
+        requested=list(dict.fromkeys(paper_ids))
+        with self.session_factory() as session:
+            self._require_workspace(session, workspace_id)
+            snapshots: list[dict] = []
+            for paper_id in requested:
+                row=session.scalar(select(ExperimentProfileRecord).where(
+                    ExperimentProfileRecord.workspace_id==workspace_id,
+                    ExperimentProfileRecord.paper_id==paper_id,
+                ).order_by(ExperimentProfileRecord.created_at.desc(), ExperimentProfileRecord.id.desc()))
+                if row is None:
+                    raise PaperNotFoundError(paper_id)
+                snapshots.append({**dict(row.snapshot), "profile_id": row.id})
+            return snapshots
+
+    def available_experiment_profile_snapshots(self, workspace_id: str, paper_ids: list[str]) -> list[dict]:
+        """Return available immutable experiment profiles without fabricating failures.
+
+        The caller owns the API-level partial-result contract; this method only
+        enforces workspace ownership and keeps the SQLAlchemy query boundary in
+        the store.
+        """
+        requested = list(dict.fromkeys(paper_ids))
+        with self.session_factory() as session:
+            self._require_workspace(session, workspace_id)
+            snapshots: list[dict] = []
+            for paper_id in requested:
+                row = session.scalar(select(ExperimentProfileRecord).where(
+                    ExperimentProfileRecord.workspace_id == workspace_id,
+                    ExperimentProfileRecord.paper_id == paper_id,
+                ).order_by(ExperimentProfileRecord.created_at.desc(), ExperimentProfileRecord.id.desc()))
+                if row is not None:
+                    snapshots.append({**dict(row.snapshot), "profile_id": row.id})
+            return snapshots
+
+    def experiment_profile_snapshots_by_ids(self, workspace_id: str, profile_ids: list[str]) -> list[dict]:
+        """Resolve exact immutable profiles in request order within one workspace."""
+        requested = list(dict.fromkeys(profile_ids))
+        with self.session_factory() as session:
+            self._require_workspace(session, workspace_id)
+            rows = session.scalars(select(ExperimentProfileRecord).where(
+                ExperimentProfileRecord.workspace_id == workspace_id,
+                ExperimentProfileRecord.id.in_(requested),
+            )).all()
+            by_id = {row.id: row for row in rows}
+            if len(by_id) != len(requested):
+                raise PaperNotFoundError("experiment profile not found")
+            return [{**dict(by_id[profile_id].snapshot), "profile_id": profile_id} for profile_id in requested]
 
     def get(self, paper_id: str) -> Paper:
         with self.session_factory() as session:
@@ -2406,7 +2873,7 @@ class PaperStore:
 
     @staticmethod
     def _note_model(r: NoteRecord) -> Note:
-        return Note(id=r.id, paper_id=r.paper_id, author_id=r.author_id, title=r.title, content=r.content, origin_kind=r.origin_kind, created_at=r.created_at.isoformat(), updated_at=r.updated_at.isoformat())
+        return Note(id=r.id, paper_id=r.paper_id, author_id=r.author_id, title=r.title, content=r.content, origin_kind=r.origin_kind, mind_map_node_id=r.mind_map_node_id, origin_snapshot=dict(r.origin_snapshot or {}) if r.origin_snapshot else None, created_at=r.created_at.isoformat(), updated_at=r.updated_at.isoformat())
 
     def list_notes(self, workspace_id: str, paper_id: str | None = None, origin_kind: str | None = None) -> list[Note]:
         with self.session_factory() as session:
@@ -2417,12 +2884,14 @@ class PaperStore:
                 stmt = stmt.where(NoteRecord.origin_kind == origin_kind)
             return [self._note_model(r) for r in session.scalars(stmt.order_by(NoteRecord.updated_at.desc())).all()]
 
-    def create_note(self, workspace_id: str, author_id: str, paper_id: str | None, title: str, content: str, origin_kind: str | None = None) -> Note:
+    def create_note(self, workspace_id: str, author_id: str, paper_id: str | None, title: str, content: str, origin_kind: str | None = None, mind_map_node_id: str | None = None, origin_snapshot: dict | None = None) -> Note:
         now = datetime.now(timezone.utc)
         with self.session_factory.begin() as session:
             if paper_id and session.scalar(select(PaperRecord.id).where(PaperRecord.workspace_id == workspace_id, PaperRecord.id == paper_id)) is None:
                 raise PaperNotFoundError(paper_id)
-            record = NoteRecord(id=str(uuid4()), workspace_id=workspace_id, paper_id=paper_id, author_id=author_id, title=title.strip(), content=content, origin_kind=origin_kind, created_at=now, updated_at=now)
+            if mind_map_node_id and session.scalar(select(MindMapNodeRecord.id).join(MindMapRecord, MindMapRecord.id == MindMapNodeRecord.mind_map_id).where(MindMapNodeRecord.id == mind_map_node_id, MindMapRecord.workspace_id == workspace_id)) is None:
+                raise PaperNotFoundError(mind_map_node_id)
+            record = NoteRecord(id=str(uuid4()), workspace_id=workspace_id, paper_id=paper_id, author_id=author_id, title=title.strip(), content=content, origin_kind=origin_kind, mind_map_node_id=mind_map_node_id, origin_snapshot=origin_snapshot, created_at=now, updated_at=now)
             session.add(record)
         return self._note_model(record)
 
@@ -2440,6 +2909,267 @@ class PaperStore:
         with self.session_factory.begin() as session:
             result = session.execute(delete(NoteRecord).where(NoteRecord.workspace_id == workspace_id, NoteRecord.id == note_id))
             return bool(result.rowcount)
+
+    @staticmethod
+    def _mind_map_node_model(session: Session, row: MindMapNodeRecord) -> MindMapNode:
+        evidence = session.scalars(select(MindMapNodeEvidenceRecord).where(
+            MindMapNodeEvidenceRecord.mind_map_node_id == row.id,
+        )).all()
+        return MindMapNode(
+            id=row.id, mind_map_id=row.mind_map_id, parent_id=row.parent_id, kind=row.kind,
+            title=row.title, body=row.body, depth=row.depth, order_index=row.sort_order,
+            status=row.status, generation_run_id=row.generation_run_id,
+            knowledge_node_id=row.knowledge_node_id,
+            evidence_ref_ids=[item.evidence_ref_id for item in evidence if item.evidence_ref_id],
+            source_span_ids=[item.source_span_id for item in evidence if item.source_span_id],
+            created_at=row.created_at.isoformat(), updated_at=row.updated_at.isoformat(),
+        )
+
+    def _mind_map_model(self, session: Session, record: MindMapRecord) -> MindMap:
+        rows = session.scalars(select(MindMapNodeRecord).where(
+            MindMapNodeRecord.mind_map_id == record.id,
+        ).order_by(MindMapNodeRecord.depth, MindMapNodeRecord.parent_id, MindMapNodeRecord.sort_order)).all()
+        return MindMap(
+            id=record.id, workspace_id=record.workspace_id, title=record.title,
+            source_scope=dict(record.source_scope or {}), generation_run_id=record.generation_run_id,
+            generation_kind=record.generation_kind, created_by=record.created_by,
+            created_at=record.created_at.isoformat(), updated_at=record.updated_at.isoformat(),
+            nodes=[self._mind_map_node_model(session, row) for row in rows],
+        )
+
+    @staticmethod
+    def _validate_mind_map_drafts(nodes: list[MindMapNodeDraft], *, parent_client_id: str | None = None) -> None:
+        if not nodes or len(nodes) > 250:
+            raise ValueError("mind map must contain 1 to 250 nodes")
+        ids = [node.client_id for node in nodes]
+        if len(ids) != len(set(ids)):
+            raise ValueError("mind map node client_id values must be unique")
+        roots = [node for node in nodes if node.parent_client_id is None]
+        if parent_client_id is None:
+            if len(roots) != 1 or roots[0].kind != "root":
+                raise ValueError("mind map must contain exactly one root node with kind=root")
+        else:
+            if roots or any(node.parent_client_id != parent_client_id for node in nodes):
+                raise ValueError("child confirmation must contain only direct children of the selected node")
+            if any(node.kind == "root" for node in nodes):
+                raise ValueError("only a map root may use kind=root")
+        parents = {node.client_id: node.parent_client_id for node in nodes}
+        for node in nodes:
+            if node.parent_client_id is not None and node.parent_client_id not in parents and node.parent_client_id != parent_client_id:
+                raise ValueError("mind map parent must be in the same tree")
+        for node in nodes:
+            seen: set[str] = set(); current = node.client_id; depth = 0
+            while parents.get(current) is not None:
+                current = parents[current]  # type: ignore[index]
+                if current in seen:
+                    raise ValueError("mind map tree cannot contain a cycle")
+                seen.add(current); depth += 1
+                if depth > 8:
+                    raise ValueError("mind map depth must not exceed 8")
+
+    @staticmethod
+    def _validate_mind_map_evidence(session: Session, workspace_id: str, evidence_ref_ids: list[str], source_span_ids: list[str]) -> None:
+        refs = list(dict.fromkeys(evidence_ref_ids)); spans = list(dict.fromkeys(source_span_ids))
+        if refs and len(session.scalars(select(EvidenceRefRecord.id).where(EvidenceRefRecord.workspace_id == workspace_id, EvidenceRefRecord.id.in_(refs))).all()) != len(refs):
+            raise PaperNotFoundError("mind map evidence_ref")
+        if spans and len(session.scalars(select(SourceSpanRecord.id).where(SourceSpanRecord.workspace_id == workspace_id, SourceSpanRecord.id.in_(spans))).all()) != len(spans):
+            raise PaperNotFoundError("mind map source_span")
+
+    @staticmethod
+    def _validate_mind_map_run_evidence(scope: dict | None, drafts: list[MindMapNodeDraft]) -> None:
+        if not scope:
+            return
+        allowed_refs = set(scope.get("evidence_ref_ids") or [])
+        allowed_spans = set(scope.get("source_span_ids") or [])
+        for draft in drafts:
+            if set(draft.evidence_ref_ids) - allowed_refs or set(draft.source_span_ids) - allowed_spans:
+                raise ValueError("mind map evidence must be within the generation run source scope")
+
+    def list_mind_maps(self, workspace_id: str) -> list[MindMap]:
+        with self.session_factory() as session:
+            self._require_workspace(session, workspace_id)
+            rows = session.scalars(select(MindMapRecord).where(MindMapRecord.workspace_id == workspace_id).order_by(MindMapRecord.updated_at.desc())).all()
+            return [self._mind_map_model(session, row) for row in rows]
+
+    def get_mind_map(self, workspace_id: str, mind_map_id: str) -> MindMap:
+        with self.session_factory() as session:
+            record = session.scalar(select(MindMapRecord).where(MindMapRecord.workspace_id == workspace_id, MindMapRecord.id == mind_map_id))
+            if record is None: raise PaperNotFoundError(mind_map_id)
+            return self._mind_map_model(session, record)
+
+    def create_mind_map(self, workspace_id: str, user_id: str, body: MindMapCreate) -> MindMap:
+        self._validate_mind_map_drafts(body.nodes)
+        now = datetime.now(timezone.utc)
+        with self.session_factory.begin() as session:
+            self._require_workspace(session, workspace_id)
+            if body.generation_run_id:
+                run = self._scoped_research_run(session, workspace_id, body.generation_run_id)
+                expected_scope = (run.plan or {}).get("mind_map_source_scope") if isinstance(run.plan, dict) else None
+                if expected_scope is not None and dict(body.source_scope) != expected_scope:
+                    raise ValueError("mind map source_scope must match its generation run")
+                self._validate_mind_map_run_evidence(expected_scope, body.nodes)
+                existing = session.scalar(select(MindMapRecord).where(
+                    MindMapRecord.workspace_id == workspace_id,
+                    MindMapRecord.generation_run_id == body.generation_run_id,
+                ))
+                if existing is not None:
+                    return self._mind_map_model(session, existing)
+            for draft in body.nodes:
+                self._validate_mind_map_evidence(session, workspace_id, draft.evidence_ref_ids, draft.source_span_ids)
+            record = MindMapRecord(id=str(uuid4()), workspace_id=workspace_id, title=body.title.strip(), source_scope=dict(body.source_scope), generation_kind=body.generation_kind, generation_run_id=body.generation_run_id, created_by=user_id, created_at=now, updated_at=now)
+            try:
+                with session.begin_nested():
+                    session.add(record)
+                    session.flush()
+            except IntegrityError:
+                if not body.generation_run_id:
+                    raise
+                existing = session.scalar(select(MindMapRecord).where(
+                    MindMapRecord.workspace_id == workspace_id,
+                    MindMapRecord.generation_run_id == body.generation_run_id,
+                ))
+                if existing is None:
+                    raise
+                return self._mind_map_model(session, existing)
+            ids = {draft.client_id: str(uuid4()) for draft in body.nodes}
+            depths: dict[str, int] = {}
+            orders: dict[str | None, int] = {}
+            rows: list[tuple[MindMapNodeRecord, MindMapNodeDraft]] = []
+            pending = list(body.nodes)
+            while pending:
+                progress = False
+                for draft in pending[:]:
+                    if draft.parent_client_id is not None and draft.parent_client_id not in depths: continue
+                    depth = 0 if draft.parent_client_id is None else depths[draft.parent_client_id] + 1
+                    parent_id = ids.get(draft.parent_client_id) if draft.parent_client_id else None
+                    order = orders.get(parent_id, 0); orders[parent_id] = order + 1; depths[draft.client_id] = depth
+                    row = MindMapNodeRecord(id=ids[draft.client_id], mind_map_id=record.id, parent_id=parent_id, kind=draft.kind, title=draft.title, body=draft.body, depth=depth, sort_order=order, status="review_pending", generation_run_id=body.generation_run_id, created_at=now, updated_at=now)
+                    session.add(row); rows.append((row, draft)); pending.remove(draft); progress = True
+                if not progress: raise ValueError("mind map tree contains unresolved parents")
+            session.flush()
+            for row, draft in rows:
+                session.add_all([MindMapNodeEvidenceRecord(id=str(uuid4()), mind_map_node_id=row.id, evidence_ref_id=ref, source_span_id=None, created_at=now) for ref in dict.fromkeys(draft.evidence_ref_ids)])
+                session.add_all([MindMapNodeEvidenceRecord(id=str(uuid4()), mind_map_node_id=row.id, evidence_ref_id=None, source_span_id=span, created_at=now) for span in dict.fromkeys(draft.source_span_ids)])
+            session.flush(); return self._mind_map_model(session, record)
+
+    def append_mind_map_children(self, workspace_id: str, user_id: str, node_id: str, drafts: list[MindMapNodeDraft], generation_run_id: str | None = None) -> list[MindMapNode]:
+        self._validate_mind_map_drafts(drafts, parent_client_id=node_id)
+        now = datetime.now(timezone.utc)
+        with self.session_factory.begin() as session:
+            parent = session.scalar(select(MindMapNodeRecord).join(MindMapRecord, MindMapRecord.id == MindMapNodeRecord.mind_map_id).where(MindMapNodeRecord.id == node_id, MindMapRecord.workspace_id == workspace_id))
+            if parent is None: raise PaperNotFoundError(node_id)
+            mapping = session.scalar(select(MindMapRecord).where(
+                MindMapRecord.id == parent.mind_map_id,
+                MindMapRecord.workspace_id == workspace_id,
+            ))
+            if mapping is None: raise PaperNotFoundError(parent.mind_map_id)
+            if parent.depth >= 8: raise ValueError("mind map depth must not exceed 8")
+            existing_rows = session.scalars(select(MindMapNodeRecord).where(
+                MindMapNodeRecord.parent_id == parent.id,
+                MindMapNodeRecord.confirmation_client_id.in_([draft.client_id for draft in drafts]),
+            )).all()
+            existing_by_client = {row.confirmation_client_id: row for row in existing_rows}
+            missing_drafts = [draft for draft in drafts if draft.client_id not in existing_by_client]
+            total = session.scalar(select(func.count()).select_from(MindMapNodeRecord).where(MindMapNodeRecord.mind_map_id == parent.mind_map_id)) or 0
+            if total + len(missing_drafts) > 250: raise ValueError("mind map must contain at most 250 nodes")
+            if generation_run_id:
+                run = self._scoped_research_run(session, workspace_id, generation_run_id)
+                scope = (run.plan or {}).get("mind_map_source_scope") if isinstance(run.plan, dict) else None
+                if scope != dict(mapping.source_scope or {}):
+                    raise ValueError("child generation run source scope must match the selected map")
+                if (run.plan or {}).get("mind_map_parent_id") != parent.id:
+                    raise ValueError("child generation run must belong to the selected parent")
+                self._validate_mind_map_run_evidence(scope, drafts)
+            elif mapping.generation_kind == "ai":
+                raise ValueError("AI mind map children require their generation run")
+            if mapping.generation_kind == "ai":
+                self._validate_mind_map_run_evidence(dict(mapping.source_scope or {}), drafts)
+            if not missing_drafts:
+                return [self._mind_map_node_model(session, existing_by_client[draft.client_id]) for draft in drafts]
+            for draft in missing_drafts: self._validate_mind_map_evidence(session, workspace_id, draft.evidence_ref_ids, draft.source_span_ids)
+            start = session.scalar(select(func.count()).select_from(MindMapNodeRecord).where(MindMapNodeRecord.parent_id == parent.id)) or 0
+            rows=[]
+            for ordinal, draft in enumerate(missing_drafts):
+                row=MindMapNodeRecord(id=str(uuid4()), mind_map_id=parent.mind_map_id, parent_id=parent.id, kind=draft.kind, title=draft.title, body=draft.body, depth=parent.depth+1, sort_order=start+ordinal, status="review_pending", generation_run_id=generation_run_id, confirmation_client_id=draft.client_id, created_at=now, updated_at=now)
+                session.add(row); rows.append((row,draft))
+            session.flush()
+            for row,draft in rows:
+                session.add_all([MindMapNodeEvidenceRecord(id=str(uuid4()), mind_map_node_id=row.id, evidence_ref_id=ref, source_span_id=None, created_at=now) for ref in dict.fromkeys(draft.evidence_ref_ids)])
+                session.add_all([MindMapNodeEvidenceRecord(id=str(uuid4()), mind_map_node_id=row.id, evidence_ref_id=None, source_span_id=span, created_at=now) for span in dict.fromkeys(draft.source_span_ids)])
+            created_by_client = {draft.client_id: row for row, draft in rows}
+            return [self._mind_map_node_model(session, existing_by_client.get(draft.client_id) or created_by_client[draft.client_id]) for draft in drafts]
+
+    def update_mind_map_node(self, workspace_id: str, node_id: str, body: MindMapNodeUpdate) -> MindMapNode:
+        with self.session_factory.begin() as session:
+            row=session.scalar(select(MindMapNodeRecord).join(MindMapRecord, MindMapRecord.id == MindMapNodeRecord.mind_map_id).where(MindMapNodeRecord.id == node_id, MindMapRecord.workspace_id == workspace_id))
+            if row is None: raise PaperNotFoundError(node_id)
+            mapping=session.scalar(select(MindMapRecord).where(
+                MindMapRecord.id == row.mind_map_id,
+                MindMapRecord.workspace_id == workspace_id,
+            ))
+            if mapping is None: raise PaperNotFoundError(row.mind_map_id)
+            data=body.model_dump(exclude_unset=True)
+            if row.parent_id is None and data.get("kind") not in (None,"root"): raise ValueError("the root node kind cannot be changed")
+            if row.parent_id is not None and data.get("kind") == "root": raise ValueError("only the root node may use kind=root")
+            for key in ("title","body","kind","status"):
+                if key in data: setattr(row,key,data[key])
+            if "evidence_ref_ids" in data or "source_span_ids" in data:
+                refs=data.get("evidence_ref_ids") or []; spans=data.get("source_span_ids") or []
+                self._validate_mind_map_evidence(session, workspace_id, refs, spans)
+                if mapping.generation_kind == "ai":
+                    self._validate_mind_map_run_evidence(
+                        dict(mapping.source_scope or {}),
+                        [MindMapNodeDraft(
+                            client_id=row.id,
+                            parent_client_id=row.parent_id,
+                            kind=data.get("kind", row.kind),
+                            title=data.get("title", row.title),
+                            body=data.get("body", row.body),
+                            evidence_ref_ids=refs,
+                            source_span_ids=spans,
+                        )],
+                    )
+                session.execute(delete(MindMapNodeEvidenceRecord).where(MindMapNodeEvidenceRecord.mind_map_node_id == row.id))
+                session.add_all([MindMapNodeEvidenceRecord(id=str(uuid4()), mind_map_node_id=row.id, evidence_ref_id=value, source_span_id=None, created_at=datetime.now(timezone.utc)) for value in dict.fromkeys(refs)])
+                session.add_all([MindMapNodeEvidenceRecord(id=str(uuid4()), mind_map_node_id=row.id, evidence_ref_id=None, source_span_id=value, created_at=datetime.now(timezone.utc)) for value in dict.fromkeys(spans)])
+            row.updated_at=datetime.now(timezone.utc); return self._mind_map_node_model(session,row)
+
+    def delete_mind_map_node(self, workspace_id: str, node_id: str) -> None:
+        with self.session_factory.begin() as session:
+            row=session.scalar(select(MindMapNodeRecord).join(MindMapRecord, MindMapRecord.id == MindMapNodeRecord.mind_map_id).where(MindMapNodeRecord.id == node_id, MindMapRecord.workspace_id == workspace_id))
+            if row is None: raise PaperNotFoundError(node_id)
+            if row.parent_id is None: raise ValueError("root node cannot be deleted; delete the mind map instead")
+            ids=[item[0] for item in session.execute(text("WITH RECURSIVE subtree(id) AS (SELECT id FROM mind_map_nodes WHERE id=:root UNION ALL SELECT n.id FROM mind_map_nodes n JOIN subtree s ON n.parent_id=s.id) SELECT id FROM subtree"),{"root":node_id}).all()]
+            session.execute(update(NoteRecord).where(NoteRecord.mind_map_node_id.in_(ids)).values(mind_map_node_id=None))
+            session.execute(update(ResearchActionRecord).where(ResearchActionRecord.mind_map_node_id.in_(ids)).values(mind_map_node_id=None))
+            session.execute(delete(MindMapNodeRecord).where(MindMapNodeRecord.id.in_(ids)))
+
+    def delete_mind_map(self, workspace_id: str, mind_map_id: str) -> bool:
+        with self.session_factory.begin() as session:
+            row=session.scalar(select(MindMapRecord).where(MindMapRecord.id==mind_map_id, MindMapRecord.workspace_id==workspace_id))
+            if row is None: return False
+            ids=session.scalars(select(MindMapNodeRecord.id).where(MindMapNodeRecord.mind_map_id==mind_map_id)).all()
+            if ids:
+                session.execute(update(NoteRecord).where(NoteRecord.mind_map_node_id.in_(ids)).values(mind_map_node_id=None))
+                session.execute(update(ResearchActionRecord).where(ResearchActionRecord.mind_map_node_id.in_(ids)).values(mind_map_node_id=None))
+            session.delete(row); return True
+
+    def promote_mind_map_node(self, workspace_id: str, user_id: str, node_id: str, node_type: str) -> KnowledgeNode:
+        with self.session_factory.begin() as session:
+            row=session.scalar(select(MindMapNodeRecord).join(MindMapRecord, MindMapRecord.id == MindMapNodeRecord.mind_map_id).where(MindMapNodeRecord.id==node_id, MindMapRecord.workspace_id==workspace_id))
+            if row is None: raise PaperNotFoundError(node_id)
+            if row.knowledge_node_id:
+                existing=session.scalar(select(KnowledgeNodeRecord).where(KnowledgeNodeRecord.id==row.knowledge_node_id, KnowledgeNodeRecord.workspace_id==workspace_id))
+                if existing is not None: return _knowledge_node_model(existing, self._node_evidence_map(session, [existing.id]).get(existing.id, []))
+            now=datetime.now(timezone.utc)
+            node=KnowledgeNodeRecord(id=str(uuid4()), workspace_id=workspace_id, created_by=user_id, node_type=node_type, status="review_pending", layer=row.depth, content=(row.title + ("\n"+row.body if row.body else "")), phase="mind_map", confidence=None, metadata_json={"origin":"mind_map","mind_map_node_id":row.id}, created_at=now, updated_at=now)
+            session.add(node); session.flush()
+            spans=session.scalars(select(MindMapNodeEvidenceRecord.source_span_id).where(MindMapNodeEvidenceRecord.mind_map_node_id==row.id, MindMapNodeEvidenceRecord.source_span_id.is_not(None))).all()
+            refs=session.scalars(select(EvidenceRefRecord).join(MindMapNodeEvidenceRecord, MindMapNodeEvidenceRecord.evidence_ref_id==EvidenceRefRecord.id).where(MindMapNodeEvidenceRecord.mind_map_node_id==row.id)).all()
+            evidence_spans=list(dict.fromkeys([*spans, *[ref.source_span_id for ref in refs]]))
+            evidence=self._add_evidence_refs(session, workspace_id, evidence_spans, knowledge_node_id=node.id, default_target_claim=node.content)
+            row.knowledge_node_id=node.id; row.updated_at=now
+            return _knowledge_node_model(node,evidence)
 
     def add_search_history(self, workspace_id: str, user_id: str, query: str, paper_ids: list[str], result_summary: dict) -> SearchHistory:
         record = SearchHistoryRecord(id=str(uuid4()), workspace_id=workspace_id, user_id=user_id, query=query, paper_ids=paper_ids, result_summary=result_summary, created_at=datetime.now(timezone.utc))
@@ -2559,6 +3289,10 @@ class PaperStore:
         draft = None
         claims: list[AnswerClaim] = []
         research_run_id = None
+        generation_provider = None
+        generation_model = None
+        generation_mode = None
+        fallback_reason = None
         if record.role == "assistant" and metadata:
             candidate_mode = metadata.get("interaction_mode")
             if candidate_mode in {"evidence", "synthesis", "explore", "challenge", "design", "update"}:
@@ -2578,13 +3312,27 @@ class PaperStore:
             candidate_run_id = metadata.get("research_run_id")
             if isinstance(candidate_run_id, str) and candidate_run_id.strip():
                 research_run_id = candidate_run_id
+            candidate_provider = metadata.get("generation_provider")
+            if isinstance(candidate_provider, str) and candidate_provider.strip():
+                generation_provider = candidate_provider
+            candidate_model = metadata.get("generation_model")
+            if isinstance(candidate_model, str) and candidate_model.strip():
+                generation_model = candidate_model
+            candidate_mode = metadata.get("generation_mode")
+            if candidate_mode in {"agentic_rag", "local_fallback"}:
+                generation_mode = candidate_mode
+            candidate_fallback = metadata.get("fallback_reason")
+            if isinstance(candidate_fallback, str) and candidate_fallback.strip():
+                fallback_reason = candidate_fallback
         return ResearchMessage(
             id=record.id, conversation_id=record.conversation_id, role=record.role,
             ordinal=record.ordinal,
             content=record.content,
             citations=[Citation.model_validate(item) for item in (record.citations or [])],
             interaction_mode=interaction_mode, draft=draft, claims=claims,
-            research_run_id=research_run_id,
+            research_run_id=research_run_id, generation_provider=generation_provider,
+            generation_model=generation_model, generation_mode=generation_mode,
+            fallback_reason=fallback_reason,
             created_at=record.created_at.isoformat(),
         )
 
@@ -2911,18 +3659,19 @@ class PaperStore:
             _check_rag_db_deadline(deadline_monotonic)
             return [self._memory_event_model(row) for row in rows]
 
-    def save_comparison(self, workspace_id: str, user_id: str, name: str, paper_ids: list[str], result: list[dict], *, source_set_id: str | None = None, citation_snapshot: list[dict] | None = None, human_judgment: str = "unreviewed", judgment_reason: str = "") -> SavedComparison:
+    def save_comparison(self, workspace_id: str, user_id: str, name: str, paper_ids: list[str], result: list[dict], *, source_set_id: str | None = None, citation_snapshot: list[dict] | None = None, analysis_errors: list[ExperimentAnalysisErrorResponse] | None = None, human_judgment: str = "unreviewed", judgment_reason: str = "") -> SavedComparison:
         if source_set_id:
             with self.session_factory() as session:
                 self._scoped_source_set(session, workspace_id, source_set_id)
-        record = SavedComparisonRecord(id=str(uuid4()), workspace_id=workspace_id, user_id=user_id, name=name.strip(), paper_ids=paper_ids, result=result, source_set_id=source_set_id, citation_snapshot=citation_snapshot or [], human_judgment=human_judgment, judgment_reason=judgment_reason, created_at=datetime.now(timezone.utc))
+        errors=[item.model_dump(mode="json") for item in (analysis_errors or [])]
+        record = SavedComparisonRecord(id=str(uuid4()), workspace_id=workspace_id, user_id=user_id, name=name.strip(), paper_ids=paper_ids, result=result, source_set_id=source_set_id, citation_snapshot=citation_snapshot or [], analysis_errors=errors, human_judgment=human_judgment, judgment_reason=judgment_reason, created_at=datetime.now(timezone.utc))
         with self.session_factory.begin() as session: session.add(record)
-        return SavedComparison(id=record.id, user_id=user_id, name=record.name, paper_ids=paper_ids, result=result, source_set_id=source_set_id, citation_snapshot=record.citation_snapshot, human_judgment=human_judgment, judgment_reason=judgment_reason, created_at=record.created_at.isoformat())
+        return SavedComparison(id=record.id, user_id=user_id, name=record.name, paper_ids=paper_ids, result=result, source_set_id=source_set_id, citation_snapshot=record.citation_snapshot, analysis_errors=[ExperimentAnalysisErrorResponse.model_validate(item) for item in errors], human_judgment=human_judgment, judgment_reason=judgment_reason, created_at=record.created_at.isoformat())
 
     def list_comparisons(self, workspace_id: str) -> list[SavedComparison]:
         with self.session_factory() as session:
             rows = session.scalars(select(SavedComparisonRecord).where(SavedComparisonRecord.workspace_id == workspace_id).order_by(SavedComparisonRecord.created_at.desc())).all()
-            return [SavedComparison(id=r.id, user_id=r.user_id, name=r.name, paper_ids=r.paper_ids, result=r.result, source_set_id=r.source_set_id, citation_snapshot=r.citation_snapshot, human_judgment=r.human_judgment, judgment_reason=r.judgment_reason, created_at=r.created_at.isoformat()) for r in rows]
+            return [SavedComparison(id=r.id, user_id=r.user_id, name=r.name, paper_ids=r.paper_ids, result=r.result, source_set_id=r.source_set_id, citation_snapshot=r.citation_snapshot, analysis_errors=[ExperimentAnalysisErrorResponse.model_validate(item) for item in (r.analysis_errors or [])], human_judgment=r.human_judgment, judgment_reason=r.judgment_reason, created_at=r.created_at.isoformat()) for r in rows]
 
     def delete_comparison(self, workspace_id: str, comparison_id: str) -> bool:
         with self.session_factory.begin() as session:
@@ -3532,7 +4281,7 @@ class PaperStore:
 
     def create_source_import(
         self, workspace_id: str, *, kind: str, locator: str, content_hash: str,
-        metadata: dict | None, spans: list[dict],
+        metadata: dict | None, spans: list[dict], paper_id: str | None = None,
     ) -> tuple[SourceVersion, list[SourceSpan]]:
         """Atomically create one parsed immutable source and all of its spans.
 
@@ -3547,6 +4296,11 @@ class PaperStore:
         incoming_span_set_hash = _source_span_set_hash(spans)
         with self.session_factory.begin() as session:
             self._require_workspace(session, workspace_id)
+            if paper_id is not None and session.scalar(select(PaperRecord.id).where(
+                PaperRecord.workspace_id == workspace_id,
+                PaperRecord.id == paper_id,
+            )) is None:
+                raise PaperNotFoundError(paper_id)
             existing = session.scalar(select(SourceVersionRecord).where(
                 SourceVersionRecord.workspace_id == workspace_id,
                 SourceVersionRecord.kind == normalized_kind,
@@ -3554,6 +4308,13 @@ class PaperStore:
                 SourceVersionRecord.content_hash == content_hash,
             ))
             if existing is not None:
+                if paper_id is not None and existing.paper_id is None:
+                    # Older in-progress experiment snapshots were created
+                    # before derived sources were paper-owned. The locator
+                    # already contains the paper identity, so attaching it is
+                    # a lifecycle repair rather than a content mutation.
+                    existing.paper_id = paper_id
+                    session.flush()
                 existing_spans = session.scalars(select(SourceSpanRecord).where(
                     SourceSpanRecord.workspace_id == workspace_id,
                     SourceSpanRecord.source_version_id == existing.id,
@@ -3573,7 +4334,7 @@ class PaperStore:
             source_metadata = dict(metadata or {})
             source_metadata["span_set_hash"] = incoming_span_set_hash
             source = SourceVersionRecord(
-                id=str(uuid4()), workspace_id=workspace_id, paper_id=None,
+                id=str(uuid4()), workspace_id=workspace_id, paper_id=paper_id,
                 kind=normalized_kind, locator=normalized_locator, content_hash=content_hash,
                 metadata_json=source_metadata, created_at=datetime.now(timezone.utc),
             )
@@ -3627,6 +4388,68 @@ class PaperStore:
     def get_source_span(self, workspace_id: str, source_span_id: str) -> SourceSpan:
         with self.session_factory() as session:
             return _source_span_model(self._scoped_span(session, workspace_id, source_span_id))
+
+    def mind_map_generation_material(
+        self,
+        workspace_id: str,
+        evidence_ref_ids: list[str],
+        source_span_ids: list[str],
+    ) -> tuple[str, list[str], list[str], list[str]]:
+        """Resolve only the explicitly selected, workspace-scoped evidence."""
+        ref_ids = list(dict.fromkeys(evidence_ref_ids))
+        requested_span_ids = list(dict.fromkeys(source_span_ids))
+        with self.session_factory() as session:
+            self._require_workspace(session, workspace_id)
+            refs = session.scalars(select(EvidenceRefRecord).where(
+                EvidenceRefRecord.workspace_id == workspace_id,
+                EvidenceRefRecord.id.in_(ref_ids),
+            )).all() if ref_ids else []
+            if len(refs) != len(ref_ids):
+                raise PaperNotFoundError("mind map evidence_ref")
+            material_span_ids = list(dict.fromkeys([
+                *requested_span_ids,
+                *(record.source_span_id for record in refs),
+            ]))
+            spans = session.scalars(select(SourceSpanRecord).where(
+                SourceSpanRecord.workspace_id == workspace_id,
+                SourceSpanRecord.id.in_(material_span_ids),
+            )).all() if material_span_ids else []
+            if len(spans) != len(material_span_ids):
+                raise PaperNotFoundError("mind map source_span")
+            source_ids = list(dict.fromkeys(record.source_version_id for record in spans))
+            sources = session.scalars(select(SourceVersionRecord).where(
+                SourceVersionRecord.workspace_id == workspace_id,
+                SourceVersionRecord.id.in_(source_ids),
+            )).all() if source_ids else []
+            source_by_id = {record.id: record for record in sources}
+            paper_ids = list(dict.fromkeys(
+                source_by_id[span.source_version_id].paper_id
+                for span in spans
+                if source_by_id.get(span.source_version_id) is not None
+                and source_by_id[span.source_version_id].paper_id
+            ))
+            ref_by_span: dict[str, list[EvidenceRefRecord]] = {}
+            for ref in refs:
+                ref_by_span.setdefault(ref.source_span_id, []).append(ref)
+            blocks: list[str] = []
+            included_span_ids: list[str] = []
+            included_ref_ids: list[str] = []
+            used = 0
+            for span in spans:
+                ref_labels = "; ".join(
+                    f"evidence_ref_id={ref.id} claim={ref.target_claim} quote={ref.verbatim_quote}"
+                    for ref in ref_by_span.get(span.id, [])
+                )
+                prefix = f"source_span_id={span.id}"
+                block = f"{prefix}\n{ref_labels}\n{span.text}".strip()
+                remaining = 12_000 - used - (2 if blocks else 0)
+                if remaining <= 0:
+                    break
+                blocks.append(block[:remaining])
+                used += len(blocks[-1]) + (2 if len(blocks) > 1 else 0)
+                included_span_ids.append(span.id)
+                included_ref_ids.extend(ref.id for ref in ref_by_span.get(span.id, []))
+            return "\n\n".join(blocks), paper_ids, list(dict.fromkeys(included_ref_ids)), included_span_ids
 
     def get_source_materials(
         self, workspace_id: str, source_version_ids: list[str], source_span_ids: list[str],
@@ -3707,7 +4530,7 @@ class PaperStore:
                 created_by=paper.created_by, title=paper.title,
                 authors=list(paper.authors or []), year=paper.year,
                 abstract=paper.abstract, source=paper.source,
-                external_id=paper.external_id, status=paper.status,
+                external_id=paper.external_id, content_scope=paper.content_scope, status=paper.status,
                 page_count=paper.page_count, created_at=paper.created_at.isoformat(),
                 chunks=chunks, content_hash=paper.content_hash,
                 error_message=paper.error_message, storage_key=paper.storage_key,

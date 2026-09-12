@@ -85,7 +85,7 @@ def test_paper_summary_uses_bounded_llm_and_preserves_citations(tmp_path, monkey
         assert response.status_code == 200
         payload = response.json()
         assert payload["generation_mode"] == "llm"
-        assert payload["model"] == "gpt-5.4-nano"
+        assert payload["model"] == "gpt-5.6-luna"
         assert payload["citations"] and payload["citations"][0]["page"] == 1
         assert 0 < captured["timeout"] <= 20
         assert 0 < captured["citation_count"] <= 6

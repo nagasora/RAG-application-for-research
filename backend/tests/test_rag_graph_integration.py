@@ -140,6 +140,35 @@ def test_negative_graph_path_keeps_evidence_role_and_challenge_uses_stance():
     assert claims[1]["classification"] == "evidence_backed"
 
 
+def test_abstract_only_graph_evidence_keeps_abstract_scope():
+    paper = _paper(text="external abstract quote").model_copy(update={"content_scope": "abstract_only"})
+    version = SourceVersion(
+        id="external-version", workspace_id="workspace", paper_id=paper.id,
+        kind="external_metadata", locator="semantic_scholar:s2", content_hash="b" * 64,
+        metadata={"evidence_scope": "abstract"},
+        created_at="2026-07-27T00:00:00+00:00",
+    )
+    span = SourceSpan(
+        id="external-span", workspace_id="workspace", source_version_id=version.id,
+        page=1, text="external abstract quote",
+        created_at="2026-07-27T00:00:00+00:00",
+    )
+    evidence = SimpleNamespace(
+        source_version_id=version.id, source_span_id=span.id,
+        verbatim_quote=span.text, role="supports", extraction_quality="high",
+    )
+    citation = main._paper_backed_graph_citation(
+        SimpleNamespace(
+            get_source_version=lambda workspace_id, source_version_id: version,
+            get_source_span=lambda workspace_id, source_span_id: span,
+        ),
+        "workspace", {paper.id: paper}, evidence=evidence,
+        source_kind="graph_node", score=0.7, knowledge_node_id="node",
+    )
+    assert citation is not None
+    assert citation.evidence_scope == "abstract"
+
+
 def test_same_chunk_high_score_graph_candidate_keeps_matching_provenance():
     weak = _citation(
         "shared", 0.2, source_kind="graph_edge", knowledge_edge_id="weak",

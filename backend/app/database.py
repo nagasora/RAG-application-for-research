@@ -116,6 +116,7 @@ class ResearchRunRecord(Base):
     success_criteria: Mapped[str] = mapped_column(Text, nullable=False, default="")
     plan: Mapped[dict | list] = mapped_column(JSON, nullable=False, default=dict)
     model: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    generation_provider: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     prompt_version: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="queued")
     cancel_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -174,6 +175,10 @@ class ResearchActionRecord(Base):
             "workspace_id", "origin_node_id", "extraction_source", "extraction_ordinal",
             name="uq_research_actions_mind_map_extraction",
         ),
+        UniqueConstraint(
+            "workspace_id", "mind_map_node_id", "extraction_source", "extraction_ordinal",
+            name="uq_research_actions_mind_map_node_extraction",
+        ),
     )
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -185,6 +190,8 @@ class ResearchActionRecord(Base):
     source_span_id: Mapped[str | None] = mapped_column(ForeignKey("source_spans.id", ondelete="SET NULL"))
     evidence_ref_id: Mapped[str | None] = mapped_column(ForeignKey("evidence_refs.id", ondelete="SET NULL"))
     origin_node_id: Mapped[str | None] = mapped_column(ForeignKey("knowledge_nodes.id", ondelete="SET NULL"))
+    mind_map_node_id: Mapped[str | None] = mapped_column(ForeignKey("mind_map_nodes.id", ondelete="SET NULL"), index=True)
+    origin_kind: Mapped[str | None] = mapped_column(String(32))
     experiment_plan_id: Mapped[str | None] = mapped_column(ForeignKey("experiment_plans.id", ondelete="SET NULL"))
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
@@ -295,6 +302,7 @@ class PaperRecord(Base):
     abstract: Mapped[str] = mapped_column(Text, nullable=False, default="")
     source: Mapped[str] = mapped_column(String(32), nullable=False, default="upload")
     external_id: Mapped[str | None] = mapped_column(Text)
+    content_scope: Mapped[str] = mapped_column(String(32), nullable=False, default="full_text")
     status: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
     page_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -372,6 +380,8 @@ class NoteRecord(Base):
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     origin_kind: Mapped[str | None] = mapped_column(String(32))
+    mind_map_node_id: Mapped[str | None] = mapped_column(ForeignKey("mind_map_nodes.id", ondelete="SET NULL"), index=True)
+    origin_snapshot: Mapped[dict | None] = mapped_column(JSON(none_as_null=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
@@ -471,6 +481,7 @@ class SavedComparisonRecord(Base):
     result: Mapped[list[dict]] = mapped_column(JSON, nullable=False)
     source_set_id: Mapped[str | None] = mapped_column(ForeignKey("source_sets.id", ondelete="SET NULL"), index=True)
     citation_snapshot: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
+    analysis_errors: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
     human_judgment: Mapped[str] = mapped_column(String(16), nullable=False, default="unreviewed")
     judgment_reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -614,6 +625,7 @@ class DiscoveryItemRecord(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
     created_by: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    paper_id: Mapped[str | None] = mapped_column(ForeignKey("papers.id", ondelete="SET NULL"), index=True)
     provider: Mapped[str] = mapped_column(String(64), nullable=False)
     provider_paper_id: Mapped[str] = mapped_column(String(256), nullable=False)
     classification: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -625,7 +637,93 @@ class DiscoveryItemRecord(Base):
     license: Mapped[str] = mapped_column(String(128), nullable=False, default="unknown")
     rate_limit_policy: Mapped[str] = mapped_column(String(128), nullable=False, default="")
     snapshot: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    search_context: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class DiscoverySearchSessionRecord(Base):
+    __tablename__ = "discovery_search_sessions"
+    __table_args__ = (Index("ix_discovery_search_sessions_workspace_expires", "workspace_id", "expires_at"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_by: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    criteria: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    query_plan: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    generation_provider: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    generation_model: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class DiscoverySearchCandidateRecord(Base):
+    __tablename__ = "discovery_search_candidates"
+    __table_args__ = (UniqueConstraint("session_id", "canonical_key", name="uq_discovery_candidates_session_key"), Index("ix_discovery_candidates_session_rank", "session_id", "rank"))
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    session_id: Mapped[str] = mapped_column(ForeignKey("discovery_search_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    canonical_key: Mapped[str] = mapped_column(String(600), nullable=False)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider_paper_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    provider_ids: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    snapshot: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    rank: Mapped[int] = mapped_column(Integer, nullable=False)
+    imported_paper_id: Mapped[str | None] = mapped_column(ForeignKey("papers.id", ondelete="SET NULL"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class WorkspaceGenerationSettingsRecord(Base):
+    __tablename__ = "workspace_generation_settings"
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), primary_key=True)
+    scopes: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    updated_by: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class GenerationAuditRecord(Base):
+    __tablename__ = "generation_audits"
+    __table_args__ = (Index("ix_generation_audits_workspace_created", "workspace_id", "created_at"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_by: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    scope: Mapped[str] = mapped_column(String(32), nullable=False)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    model: Mapped[str] = mapped_column(String(128), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(32), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    usage: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    reference_id: Mapped[str | None] = mapped_column(String(36))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ExperimentProfileRecord(Base):
+    __tablename__ = "experiment_profiles"
+    __table_args__ = (UniqueConstraint("workspace_id", "paper_id", "source_version_id", "content_hash", "provider", "model", "prompt_version", "cache_key", name="uq_experiment_profiles_snapshot"), Index("ix_experiment_profiles_workspace_paper", "workspace_id", "paper_id"))
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    paper_id: Mapped[str] = mapped_column(ForeignKey("papers.id", ondelete="CASCADE"), nullable=False)
+    source_version_id: Mapped[str] = mapped_column(ForeignKey("source_versions.id", ondelete="RESTRICT"), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    model: Mapped[str] = mapped_column(String(128), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    cache_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    review_status: Mapped[str] = mapped_column(String(32), nullable=False, default="review_pending")
+    snapshot: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class PaperExternalIdentifierRecord(Base):
+    __tablename__ = "paper_external_identifiers"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "provider", "identifier", name="uq_paper_external_identifier_workspace"),
+        Index("ix_paper_external_identifiers_paper", "paper_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    paper_id: Mapped[str] = mapped_column(ForeignKey("papers.id", ondelete="CASCADE"), nullable=False)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    identifier: Mapped[str] = mapped_column(String(512), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
@@ -832,6 +930,65 @@ class CanvasLayoutRecord(Base):
     z_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     collapsed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+# Mind maps are intentionally separate from the knowledge graph.  The graph is
+# a reviewed, cross-paper model; a mind map is a user-editable research
+# artifact which may later be promoted to it.
+class MindMapRecord(Base):
+    __tablename__ = "mind_maps"
+    __table_args__ = (
+        Index("ix_mind_maps_workspace_created", "workspace_id", "created_at"),
+        UniqueConstraint("workspace_id", "generation_run_id", name="uq_mind_maps_generation_confirmation"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    source_scope: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    generation_run_id: Mapped[str | None] = mapped_column(ForeignKey("research_runs.id", ondelete="SET NULL"), index=True)
+    generation_kind: Mapped[str] = mapped_column(String(32), nullable=False, default="manual")
+    created_by: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class MindMapNodeRecord(Base):
+    __tablename__ = "mind_map_nodes"
+    __table_args__ = (
+        CheckConstraint("kind IN ('root', 'theme', 'claim', 'question', 'method', 'finding', 'task', 'note', 'link')", name="ck_mind_map_nodes_kind"),
+        CheckConstraint("status IN ('review_pending', 'active', 'rejected')", name="ck_mind_map_nodes_status"),
+        UniqueConstraint("mind_map_id", "parent_id", "sort_order", name="uq_mind_map_nodes_parent_order"),
+        UniqueConstraint("parent_id", "confirmation_client_id", name="uq_mind_map_nodes_confirmation"),
+        Index("ix_mind_map_nodes_map_parent", "mind_map_id", "parent_id", "sort_order"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    mind_map_id: Mapped[str] = mapped_column(ForeignKey("mind_maps.id", ondelete="CASCADE"), nullable=False, index=True)
+    parent_id: Mapped[str | None] = mapped_column(ForeignKey("mind_map_nodes.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False, default="theme")
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    depth: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="review_pending")
+    generation_run_id: Mapped[str | None] = mapped_column(ForeignKey("research_runs.id", ondelete="SET NULL"), index=True)
+    confirmation_client_id: Mapped[str | None] = mapped_column(String(128))
+    knowledge_node_id: Mapped[str | None] = mapped_column(ForeignKey("knowledge_nodes.id", ondelete="SET NULL"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class MindMapNodeEvidenceRecord(Base):
+    __tablename__ = "mind_map_node_evidence"
+    __table_args__ = (
+        CheckConstraint("(evidence_ref_id IS NOT NULL AND source_span_id IS NULL) OR (evidence_ref_id IS NULL AND source_span_id IS NOT NULL)", name="ck_mind_map_node_evidence_one_anchor"),
+        UniqueConstraint("mind_map_node_id", "evidence_ref_id", name="uq_mind_map_evidence_ref"),
+        UniqueConstraint("mind_map_node_id", "source_span_id", name="uq_mind_map_source_span"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    mind_map_node_id: Mapped[str] = mapped_column(ForeignKey("mind_map_nodes.id", ondelete="CASCADE"), nullable=False, index=True)
+    evidence_ref_id: Mapped[str | None] = mapped_column(ForeignKey("evidence_refs.id", ondelete="RESTRICT"), index=True)
+    source_span_id: Mapped[str | None] = mapped_column(ForeignKey("source_spans.id", ondelete="RESTRICT"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 def create_database_engine(database_url: str) -> Engine:

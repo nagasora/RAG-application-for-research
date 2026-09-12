@@ -1,4 +1,4 @@
-import { API_BASE_URL, type AnswerClaim, type Citation, type SearchRequest, type SearchResponse } from "./client";
+import { apiUrl, type AnswerClaim, type Citation, type SearchRequest, type SearchResponse } from "./client";
 import { authenticatedHeaders } from "./auth";
 import { ApiError, errorFromFetchResponse, toApiError } from "./error";
 
@@ -13,11 +13,12 @@ export type SearchStreamEvent =
   | { type: "error"; message: string };
 
 export type SearchStreamMeta = Required<Pick<SearchResponse,
-  "generation_mode" | "model" | "retrieval_queries" | "grounded" | "llm_attempted"
+  "generation_mode" | "model" | "generation_provider" | "retrieval_queries" | "grounded" | "llm_attempted"
   | "llm_succeeded" | "grounding_status" | "fallback_reason" | "claims" | "memory_delta" | "model_calls"
   | "research_run_id" | "interaction_mode" | "draft"
 >> & {
   model: string | null;
+  generation_provider: string | null;
   fallback_reason: string | null;
   research_run_id: string | null;
 };
@@ -91,6 +92,10 @@ function isMemoryDelta(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+function isNullableNonBlankString(value: unknown): value is string | null {
+  return value === null || (typeof value === "string" && value.trim().length > 0);
+}
+
 function decodeEvent(dataLines: string[]): SearchStreamEvent | null {
   if (!dataLines.length) return null;
   const raw = dataLines.join("\n");
@@ -121,11 +126,17 @@ function decodeEvent(dataLines: string[]): SearchStreamEvent | null {
   }
   if (event.type === "meta" && event.value && typeof event.value === "object") {
     const meta = event.value as Partial<SearchStreamMeta>;
+    // Provider/model were added to streamed metadata after the initial Ask
+    // contract. Normalize absent legacy fields rather than abandoning an
+    // otherwise valid answer during a rolling API deployment.
+    const generationProvider = meta.generation_provider === undefined ? null : meta.generation_provider;
+    const model = meta.model === undefined ? null : meta.model;
     if ((meta.generation_mode === "agentic_rag" || meta.generation_mode === "local_fallback")
       && (typeof meta.research_run_id === "string" || meta.research_run_id === null)
       && ["evidence", "synthesis", "explore", "challenge", "design", "update"].includes(meta.interaction_mode ?? "")
       && typeof meta.draft === "boolean"
-      && (typeof meta.model === "string" || meta.model === null)
+      && isNullableNonBlankString(model)
+      && isNullableNonBlankString(generationProvider)
       && Array.isArray(meta.retrieval_queries) && meta.retrieval_queries.every(item => typeof item === "string")
       && typeof meta.grounded === "boolean"
       && typeof meta.llm_attempted === "boolean"
@@ -135,7 +146,7 @@ function decodeEvent(dataLines: string[]): SearchStreamEvent | null {
       && Array.isArray(meta.claims) && meta.claims.every(isAnswerClaim)
       && isMemoryDelta(meta.memory_delta)
       && typeof meta.model_calls === "number" && Number.isInteger(meta.model_calls) && meta.model_calls >= 0) {
-      return { type: "meta", value: meta as SearchStreamMeta };
+      return { type: "meta", value: { ...meta, model, generation_provider:generationProvider } as SearchStreamMeta };
     }
   }
   if (event.type === "done") return { type: "done" };
@@ -192,7 +203,7 @@ export async function* parseEventStream(stream: ReadableStream<Uint8Array>): Asy
 export async function* streamSearch(request: SearchRequest, signal?: AbortSignal): AsyncGenerator<SearchStreamEvent> {
   let response: Response;
   try {
-    response = await fetch(`${API_BASE_URL}/api/search/stream`, {
+    response = await fetch(apiUrl("/api/search/stream"), {
       method: "POST",
       headers: authenticatedHeaders({ Accept: "text/event-stream", "Content-Type": "application/json" }),
       body: JSON.stringify(request),
